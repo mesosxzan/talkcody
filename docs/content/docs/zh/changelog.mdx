@@ -8,6 +8,24 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 TalkCody 的所有重要更新都记录在这里。
 
+## [0.7.0] - 2026-05-06
+
+### 新增
+
+- **OpenAI 订阅 支持 WebSocket 传输，性能大幅提升**：通过 ChatGPT 订阅使用 Codex 请求时，现可使用持久 WebSocket 连接增量传输消息，大幅缩短长时间运行的 Agent 总耗时
+- **多模型轮训**：Small Model 与 Message Compaction 现支持按优先级配置备用模型链，并可手动调整顺序
+
+### 改动
+
+- **思考过程展示优化**：模型 reasoning 现在会显示在独立的可折叠区域中，并改进长响应过程中的实时流式展示与持久化效果
+- **本地 Skills 路径级管理**：编辑和删除本地 Skills 时现在会精确定位到磁盘路径，支持项目级与用户级技能目录
+
+### 修复
+
+- 修复响应仍在加载或流式返回时无法删除聊天消息的 bug
+- 修复存放在默认 app data 目录之外的本地 Skills 可能无法正确查找的问题
+- 提升长任务场景下 keep-awake 的可靠性，减少防休眠状态过早释放的问题
+
 ## [0.6.0] - 2026-04-25
 
 ### 新增

@@ -8,6 +8,24 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 All notable changes to TalkCody are documented here.
 
+## [0.7.0] - 2026-05-06
+
+### Added
+
+- **OpenAI Subscription WebSocket Transport with Major Performance Gains**: ChatGPT subscription Codex requests can now stream messages incrementally over a persistent WebSocket connection, significantly reducing total runtime for long-running agent tasks
+- **Multi-Model Rotation**: Small Model and Message Compaction now support ordered fallback model chains with manual priority control
+
+### Changed
+
+- **Reasoning Display Improvements**: Model reasoning is now shown in a dedicated collapsible section, with better live streaming and persistence during long responses
+- **Path-Aware Local Skill Management**: Editing and deleting local skills now targets the exact on-disk path, including project-local and user-local skill folders
+
+### Fixed
+
+- Fixed a bug related to deleting chat messages while a response was still loading or streaming
+- Fixed local skill lookup failures for skills stored outside the default app data directory
+- Improved keep-awake reliability for long-running tasks so sleep prevention is less likely to be released too early
+
 ## [0.6.0] - 2026-04-25
 
 ### Added

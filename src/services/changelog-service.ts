@@ -26,46 +26,36 @@ export interface ChangelogEntry {
 // Only include the most recent versions that users care about
 export const CHANGELOG_DATA: ChangelogEntry[] = [
   {
-    version: '0.6.0',
-    date: '2026-04-25',
+    version: '0.7.0',
+    date: '2026-05-06',
     en: {
       added: [
-        'Task Queue: Queue the current prompt as the next task and import todo items from Markdown with `/import-tasks`.',
-        'WeChat Remote Control: Connect TalkCody to personal WeChat chats through iLink.',
-        'Auto Git Commit & Auto Check Finish: New optional completion hooks can verify results and commit code automatically after a task ends.',
-        'Local Agent & Skill Import: Import Agents and Skills directly from local folders.',
-        'Model Updates: Added GPT-5.5, Claude Opus 4.7, Kimi K2.6, DeepSeek V4 Pro, and DeepSeek V4 Flash.',
+        'OpenAI Subscription WebSocket Transport with Major Performance Gains: ChatGPT subscription Codex requests can now stream messages incrementally over a persistent WebSocket connection, significantly reducing total runtime for long-running agent tasks.',
+        'Multi-Model Rotation: Small Model and Message Compaction now support ordered fallback model chains with manual priority control.',
       ],
       changed: [
-        'Normalized Skill Install Directories: Unified installed skill folder naming for more consistent local and GitHub imports.',
-        'Search & Glob Improvements: Improved pattern matching and automatically fall back to literal search when a regex is invalid.',
-        'Agent Loop Retry Improvements: Improved retry stability for longer and more complex runs.',
+        'Reasoning Display Improvements: Model reasoning is now shown in a dedicated collapsible section, with better live streaming and persistence during long responses.',
+        'Path-Aware Local Skill Management: Editing and deleting local skills now targets the exact on-disk path, including project-local and user-local skill folders.',
       ],
       fixed: [
-        'Fixed task queue state issues that could prevent queued tasks from starting correctly.',
-        'Fixed Auto Code Review hook continuation behavior.',
-        'Fixed code-search handling when `file_types` is empty.',
-        'Fixed cached input token accounting in some model responses.',
+        'Fixed a bug related to deleting chat messages while a response was still loading or streaming.',
+        'Fixed local skill lookup failures for skills stored outside the default app data directory.',
+        'Improved keep-awake reliability for long-running tasks so sleep prevention is less likely to be released too early.',
       ],
     },
     zh: {
       added: [
-        '任务队列：支持将当前输入排队为下一项任务，并通过 `/import-tasks` 从 Markdown 待办清单批量导入任务。',
-        '微信远程控制：支持通过 iLink 绑定个人微信私聊来远程控制 TalkCody。',
-        '自动 Git 提交与自动完成检查：新增可选的完成钩子，可在任务结束后自动校验结果并提交代码。',
-        '本地导入 Agents / Skills：支持直接从本地目录导入 Agents 和 Skills。',
-        '模型更新：新增 GPT-5.5、Claude Opus 4.7、Kimi K2.6、DeepSeek V4 Pro 和 DeepSeek V4 Flash。',
+        'OpenAI 订阅 支持 WebSocket 传输，性能大幅提升：通过 ChatGPT 订阅使用 Codex 请求时，现可使用持久 WebSocket 连接增量传输消息，大幅缩短长时间运行的 Agent 总耗时。',
+        '多模型轮训：Small Model 与 Message Compaction 现支持按优先级配置备用模型链，并可手动调整顺序。',
       ],
       changed: [
-        'Skills 安装目录规范化：统一 Skills 安装目录命名，提升本地导入和 GitHub 导入的一致性。',
-        '搜索与 Glob 工具增强：改进模式匹配能力，并在正则表达式无效时自动回退为字面量搜索。',
-        'Agent Loop 重试优化：增强长任务和复杂任务场景下的重试稳定性。',
+        '思考过程展示优化：模型 reasoning 现在会显示在独立的可折叠区域中，并改进长响应过程中的实时流式展示与持久化效果。',
+        '本地 Skills 路径级管理：编辑和删除本地 Skills 时现在会精确定位到磁盘路径，支持项目级与用户级技能目录。',
       ],
       fixed: [
-        '修复任务队列状态问题，避免排队任务无法正常启动。',
-        '修复 Auto Code Review Hook 的续跑逻辑问题。',
-        '修复 code-search 在空 `file_types` 过滤条件下的处理问题。',
-        '修复部分模型响应中的 cached input token 统计问题。',
+        '修复响应仍在加载或流式返回时无法删除聊天消息的 bug。',
+        '修复存放在默认 app data 目录之外的本地 Skills 可能无法正确查找的问题。',
+        '提升长任务场景下 keep-awake 的可靠性，减少防休眠状态过早释放的问题。',
       ],
     },
   },
