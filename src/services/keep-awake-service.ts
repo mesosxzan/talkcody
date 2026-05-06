@@ -14,6 +14,16 @@ import { getLocale, type SupportedLocale } from '@/locales';
 // Platform check - only enable on desktop platforms
 const SUPPORTED_PLATFORMS = ['macos', 'windows', 'linux'];
 
+export type KeepAwakeAcquireResult = {
+  success: boolean;
+  wasFirst: boolean;
+};
+
+export type KeepAwakeReleaseResult = {
+  success: boolean;
+  wasLast: boolean;
+};
+
 /**
  * Keep awake service for preventing system sleep
  */
@@ -91,14 +101,14 @@ export class KeepAwakeService {
   /**
    * Acquire sleep prevention (increment reference count)
    *
-   * Returns true if sleep prevention was just enabled (first request)
-   * Returns false if sleep prevention was already active
+   * Returns status for whether the acquire succeeded and whether this was the
+   * first global keep-awake request.
    */
-  public async acquire(): Promise<boolean> {
+  public async acquireWithResult(): Promise<KeepAwakeAcquireResult> {
     try {
       if (!(await this.isSupported())) {
         logger.warn('[KeepAwakeService] Platform not supported:', this.currentPlatform);
-        return false;
+        return { success: false, wasFirst: false };
       }
 
       // Call Rust backend to increment reference count
@@ -116,30 +126,44 @@ export class KeepAwakeService {
         });
       }
 
-      return wasFirst;
+      return { success: true, wasFirst };
     } catch (error) {
       const t = this.getTranslations().KeepAwake;
       logger.error('[KeepAwakeService] Failed to acquire sleep prevention:', error);
       this.showToast('error', t.error);
-      return false;
+      return { success: false, wasFirst: false };
     }
+  }
+
+  /**
+   * Acquire sleep prevention (increment reference count)
+   *
+   * Returns true if sleep prevention was just enabled (first request)
+   * Returns false if sleep prevention was already active or acquisition failed
+   */
+  public async acquire(): Promise<boolean> {
+    const { wasFirst } = await this.acquireWithResult();
+    return wasFirst;
   }
 
   /**
    * Release sleep prevention (decrement reference count)
    *
-   * Returns true if sleep prevention can now be disabled (last release)
-   * Returns false if other tasks are still active
+   * Returns status for whether the release succeeded and whether this removed
+   * the final global keep-awake request.
    */
-  public async release(): Promise<boolean> {
+  public async releaseWithResult(): Promise<KeepAwakeReleaseResult> {
     try {
       if (!(await this.isSupported())) {
         logger.warn('[KeepAwakeService] Platform not supported:', this.currentPlatform);
-        return false;
+        return { success: false, wasLast: false };
       }
 
       // Call Rust backend to decrement reference count
       const wasLast = await invoke<boolean>('keep_awake_release');
+      if (typeof wasLast !== 'boolean') {
+        throw new Error('Invalid keep_awake_release response');
+      }
 
       if (this.refCount > 0) {
         this.refCount -= 1;
@@ -153,13 +177,24 @@ export class KeepAwakeService {
         });
       }
 
-      return wasLast;
+      return { success: true, wasLast };
     } catch (error) {
       const t = this.getTranslations().KeepAwake;
       logger.error('[KeepAwakeService] Failed to release sleep prevention:', error);
       this.showToast('error', t.error);
-      return false;
+      return { success: false, wasLast: false };
     }
+  }
+
+  /**
+   * Release sleep prevention (decrement reference count)
+   *
+   * Returns true if sleep prevention can now be disabled (last release)
+   * Returns false if other tasks are still active or release failed
+   */
+  public async release(): Promise<boolean> {
+    const { wasLast } = await this.releaseWithResult();
+    return wasLast;
   }
 
   /**

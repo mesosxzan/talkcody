@@ -1,7 +1,8 @@
 // keep-awake-manager.ts - Orchestrates keep-awake state from execution store
 //
-// This manager subscribes to execution store updates and adjusts keep-awake
-// ref counts outside of React, so keep-awake isn't tied to component lifecycle.
+// This manager reacts to task activity in the current window only.
+// Each window owns at most one keep-awake reference while it has running tasks,
+// which avoids releasing references held by other windows or subsystems.
 
 import { logger } from '@/lib/logger';
 import { keepAwakeService } from '@/services/keep-awake-service';
@@ -15,9 +16,7 @@ export type KeepAwakeSnapshot = {
 
 class KeepAwakeManager {
   private isStarted = false;
-  private isInitialized = false;
   private runningCount = 0;
-  private previousRunningCount = 0;
   private refCount = 0;
   private isPreventing = false;
   private unsubscribe: (() => void) | null = null;
@@ -31,7 +30,6 @@ class KeepAwakeManager {
 
     this.isStarted = true;
     this.runningCount = useExecutionStore.getState().getRunningCount();
-    this.previousRunningCount = this.runningCount;
     this.emit();
 
     this.unsubscribe = useExecutionStore.subscribe((state) => {
@@ -40,29 +38,30 @@ class KeepAwakeManager {
         return;
       }
 
+      const previousRunningCount = this.runningCount;
       this.runningCount = nextRunningCount;
       this.emit();
 
-      if (!this.isInitialized) {
-        this.previousRunningCount = nextRunningCount;
+      if (previousRunningCount === 0 && nextRunningCount > 0) {
+        this.enqueue(() => this.acquireForRunningTasks());
         return;
       }
 
-      const delta = nextRunningCount - this.previousRunningCount;
-      this.previousRunningCount = nextRunningCount;
-      this.enqueue(() => this.applyDelta(delta));
+      if (previousRunningCount > 0 && nextRunningCount === 0) {
+        this.enqueue(() => this.releaseForRunningTasks());
+      }
     });
 
-    this.enqueue(() => this.syncToRunningCount());
+    if (this.runningCount > 0) {
+      this.enqueue(() => this.acquireForRunningTasks());
+    }
   };
 
   public stop = (): void => {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.isStarted = false;
-    this.isInitialized = false;
     this.runningCount = 0;
-    this.previousRunningCount = 0;
     this.refCount = 0;
     this.isPreventing = false;
     this.operationQueue = Promise.resolve();
@@ -90,11 +89,13 @@ class KeepAwakeManager {
     }
   }
 
-  private setRefCount(count: number): void {
-    const preventing = count > 0;
-    const changed = count !== this.refCount || preventing !== this.isPreventing;
-    this.refCount = count;
-    this.isPreventing = preventing;
+  private setHeldReference(held: boolean): void {
+    const nextRefCount = held ? 1 : 0;
+    const nextPreventing = held;
+    const changed = nextRefCount !== this.refCount || nextPreventing !== this.isPreventing;
+
+    this.refCount = nextRefCount;
+    this.isPreventing = nextPreventing;
 
     if (changed) {
       this.emit();
@@ -107,43 +108,30 @@ class KeepAwakeManager {
     });
   }
 
-  private async syncToRunningCount(): Promise<void> {
-    try {
-      const count = await keepAwakeService.getRefCount();
-      this.setRefCount(count);
-
-      const targetCount = this.runningCount;
-      this.previousRunningCount = targetCount;
-      // Allow deltas while the initial sync is in flight.
-      this.isInitialized = true;
-
-      const delta = targetCount - count;
-      if (delta !== 0) {
-        await this.applyDelta(delta);
-      }
-    } catch (error) {
-      logger.error('[KeepAwakeManager] Failed to sync keep-awake state:', error);
-    }
-  }
-
-  private async applyDelta(delta: number): Promise<void> {
-    if (delta === 0) {
+  private async acquireForRunningTasks(): Promise<void> {
+    if (this.refCount > 0 || this.runningCount === 0) {
       return;
     }
 
-    const steps = Math.abs(delta);
-    if (delta > 0) {
-      for (let i = 0; i < steps; i += 1) {
-        await keepAwakeService.acquire();
-      }
-    } else {
-      for (let i = 0; i < steps; i += 1) {
-        await keepAwakeService.release();
-      }
+    const result = await keepAwakeService.acquireWithResult();
+    if (!result.success) {
+      return;
     }
 
-    const count = await keepAwakeService.getRefCount();
-    this.setRefCount(count);
+    this.setHeldReference(true);
+  }
+
+  private async releaseForRunningTasks(): Promise<void> {
+    if (this.refCount === 0) {
+      return;
+    }
+
+    const result = await keepAwakeService.releaseWithResult();
+    if (!result.success) {
+      return;
+    }
+
+    this.setHeldReference(false);
   }
 }
 

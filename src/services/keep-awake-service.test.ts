@@ -76,6 +76,15 @@ describe('KeepAwakeService', () => {
       expect(toast).not.toHaveBeenCalled();
     });
 
+    it('should expose successful non-first acquires to manager callers', async () => {
+      vi.mocked(invoke).mockResolvedValue(false);
+      vi.mocked(platform).mockResolvedValue('macos');
+
+      const result = await service.acquireWithResult();
+
+      expect(result).toEqual({ success: true, wasFirst: false });
+    });
+
     it('should return false on subsequent acquire calls', async () => {
       vi.mocked(invoke).mockResolvedValue(false);
       vi.mocked(platform).mockResolvedValue('macos');
@@ -85,6 +94,19 @@ describe('KeepAwakeService', () => {
 
       expect(result).toBe(false);
       expect(toast).not.toHaveBeenCalled();
+    });
+
+    it('should separate acquire failure from a non-first acquire result', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Plugin error'));
+      vi.mocked(platform).mockResolvedValue('macos');
+
+      const result = await service.acquireWithResult();
+
+      expect(result).toEqual({ success: false, wasFirst: false });
+      expect(toast).toHaveBeenCalledWith(
+        'Failed to prevent system sleep',
+        expect.any(Object)
+      );
     });
 
     it('should handle errors gracefully', async () => {
@@ -142,6 +164,15 @@ describe('KeepAwakeService', () => {
       expect(result).toBe(true);
     });
 
+    it('should expose successful non-last releases to manager callers', async () => {
+      vi.mocked(invoke).mockResolvedValue(false);
+      vi.mocked(platform).mockResolvedValue('macos');
+
+      const result = await service.releaseWithResult();
+
+      expect(result).toEqual({ success: true, wasLast: false });
+    });
+
     it('should return false when other tasks are still active', async () => {
       vi.mocked(invoke).mockResolvedValue(false);
       vi.mocked(platform).mockResolvedValue('macos');
@@ -151,6 +182,19 @@ describe('KeepAwakeService', () => {
 
       expect(result).toBe(false);
       expect(toast).not.toHaveBeenCalled();
+    });
+
+    it('should separate release failure from a non-last release result', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Plugin error'));
+      vi.mocked(platform).mockResolvedValue('macos');
+
+      const result = await service.releaseWithResult();
+
+      expect(result).toEqual({ success: false, wasLast: false });
+      expect(toast).toHaveBeenCalledWith(
+        'Failed to prevent system sleep',
+        expect.any(Object)
+      );
     });
 
     it('should handle errors gracefully', async () => {

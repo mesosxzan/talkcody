@@ -257,7 +257,7 @@ export async function convertMessages(
         convertedMessages.push({
           role: 'assistant' as const,
           content: [toolCallPart],
-          ...(msg.reasoningContent
+          ...(msg.reasoningContent !== undefined
             ? {
                 providerOptions: {
                   openaiCompatible: {
@@ -387,14 +387,14 @@ export async function convertMessages(
     } else {
       // For messages without attachments, use string content
       if (msg.role === 'user' || msg.role === 'assistant') {
-        // Skip assistant messages with empty or whitespace-only content
-        if (msg.role === 'assistant' && !contentStr.trim()) {
+        // Skip assistant messages with no visible text or reasoning content
+        if (msg.role === 'assistant' && !contentStr.trim() && msg.reasoningContent === undefined) {
           continue;
         }
         convertedMessages.push({
           role: msg.role,
           content: contentStr,
-          ...(msg.reasoningContent
+          ...(msg.reasoningContent !== undefined
             ? {
                 providerOptions: {
                   openaiCompatible: {

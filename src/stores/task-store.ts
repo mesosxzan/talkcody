@@ -645,6 +645,9 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
         if ('renderDoingUI' in msg && msg.renderDoingUI) {
           updates.renderDoingUI = false;
         }
+        if ('isReasoningStreaming' in msg && msg.isReasoningStreaming) {
+          updates.isReasoningStreaming = false;
+        }
 
         return Object.keys(updates).length > 0 ? { ...msg, ...updates } : msg;
       });

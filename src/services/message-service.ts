@@ -53,8 +53,15 @@ interface StoredToolResult {
 
 type StoredToolContent = StoredToolCall | StoredToolResult;
 
+type StreamingMessageBuffer = {
+  messageId: string;
+  content?: string;
+  reasoningContent?: string;
+  isReasoningStreaming?: boolean;
+};
+
 class MessageService {
-  private streamingBuffers = new Map<string, { content: string; messageId: string }>();
+  private streamingBuffers = new Map<string, StreamingMessageBuffer>();
   private rafScheduled = false;
 
   private flushStreamingBuffers(): void {
@@ -68,10 +75,19 @@ class MessageService {
     this.rafScheduled = false;
 
     for (const [taskId, payload] of buffers) {
-      useTaskStore
-        .getState()
-        .updateMessageContent(taskId, payload.messageId, payload.content, true);
-      useExecutionStore.getState().updateStreamingContent(taskId, payload.content);
+      useTaskStore.getState().updateMessage(taskId, payload.messageId, {
+        ...(payload.content !== undefined ? { content: payload.content } : {}),
+        ...(payload.reasoningContent !== undefined
+          ? { reasoningContent: payload.reasoningContent }
+          : {}),
+        ...(payload.isReasoningStreaming !== undefined
+          ? { isReasoningStreaming: payload.isReasoningStreaming }
+          : {}),
+        isStreaming: true,
+      });
+      if (payload.content !== undefined) {
+        useExecutionStore.getState().updateStreamingContent(taskId, payload.content);
+      }
     }
   }
 
@@ -173,7 +189,28 @@ class MessageService {
    * Use finalizeMessage when streaming is complete.
    */
   updateStreamingContent(taskId: string, messageId: string, content: string): void {
-    this.streamingBuffers.set(taskId, { content, messageId });
+    const existing = this.streamingBuffers.get(taskId);
+    this.streamingBuffers.set(taskId, {
+      ...(existing ?? {}),
+      messageId,
+      content,
+    });
+    this.scheduleStreamingFlush();
+  }
+
+  updateStreamingReasoning(
+    taskId: string,
+    messageId: string,
+    reasoningContent: string,
+    isReasoningStreaming: boolean
+  ): void {
+    const existing = this.streamingBuffers.get(taskId);
+    this.streamingBuffers.set(taskId, {
+      ...(existing ?? {}),
+      messageId,
+      reasoningContent,
+      isReasoningStreaming,
+    });
     this.scheduleStreamingFlush();
   }
 
@@ -193,6 +230,7 @@ class MessageService {
       content,
       isStreaming: false,
       reasoningContent,
+      isReasoningStreaming: false,
     });
 
     // 2. Clear streaming state in ExecutionStore

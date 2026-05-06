@@ -1,11 +1,13 @@
 // src/components/chat/message-item.tsx
 
-import { Check, CopyIcon, RefreshCcwIcon, Trash2 } from 'lucide-react';
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, CopyIcon, RefreshCcwIcon, Trash2 } from 'lucide-react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilePreview } from '@/components/chat/file-preview';
 import { ToolErrorBoundary } from '@/components/tools/tool-error-boundary';
 import { ToolErrorFallback } from '@/components/tools/tool-error-fallback';
 import { UnifiedToolResult } from '@/components/tools/unified-tool-result';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { getToolUIRenderers } from '@/lib/tool-adapter';
 import type { StoredToolCall, StoredToolContent } from '@/types';
@@ -35,7 +37,37 @@ function MessageItemComponent({
   onRegenerate,
   onDelete,
 }: MessageItemProps) {
+  const { t } = useLocale();
   const [hasCopied, setHasCopied] = useState(false);
+  const reasoningText =
+    typeof message.reasoningContent === 'string' ? message.reasoningContent : '';
+  const hasReasoning = reasoningText.trim().length > 0;
+  const [isReasoningExpanded, setIsReasoningExpanded] = useState(
+    Boolean(message.isReasoningStreaming && hasReasoning)
+  );
+  const previousMessageIdRef = useRef(message.id);
+  const previousReasoningStreamingRef = useRef(
+    Boolean(message.isReasoningStreaming && hasReasoning)
+  );
+
+  useEffect(() => {
+    const isReasoningStreaming = Boolean(message.isReasoningStreaming && hasReasoning);
+
+    if (previousMessageIdRef.current !== message.id) {
+      previousMessageIdRef.current = message.id;
+      previousReasoningStreamingRef.current = isReasoningStreaming;
+      setIsReasoningExpanded(isReasoningStreaming);
+      return;
+    }
+
+    if (isReasoningStreaming) {
+      setIsReasoningExpanded(true);
+    } else if (previousReasoningStreamingRef.current) {
+      setIsReasoningExpanded(false);
+    }
+
+    previousReasoningStreamingRef.current = isReasoningStreaming;
+  }, [hasReasoning, message.id, message.isReasoningStreaming]);
 
   useEffect(() => {
     if (hasCopied) {
@@ -297,6 +329,32 @@ function MessageItemComponent({
       <MyMarkdown content={assistantText} />
     );
 
+  const reasoningContent = hasReasoning ? (
+    <Collapsible
+      className="mb-3 w-full rounded-lg border border-border/60 bg-muted/30"
+      onOpenChange={setIsReasoningExpanded}
+      open={isReasoningExpanded}
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/50 transition-colors">
+        <div className="flex-shrink-0 text-muted-foreground">
+          {isReasoningExpanded ? (
+            <ChevronDown className="size-4" />
+          ) : (
+            <ChevronRight className="size-4" />
+          )}
+        </div>
+        <div className="min-w-0 flex-1 text-muted-foreground text-sm font-medium">
+          {t.Chat.reasoning.title}
+        </div>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="border-t border-border/60 px-3 py-3">
+        <div className="prose prose-neutral dark:prose-invert max-w-none text-sm opacity-90">
+          <MyMarkdown content={reasoningText} />
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  ) : null;
+
   return (
     <div className={'flex w-full min-w-0 gap-1'}>
       <div className={'w-full min-w-0 rounded-lg'}>
@@ -312,7 +370,12 @@ function MessageItemComponent({
             </div>
           )}
           {message.role === 'assistant' && typeof message.content === 'string' && (
-            <div className={assistantContentClass}>{assistantContent}</div>
+            <>
+              {reasoningContent}
+              {assistantText.length > 0 && (
+                <div className={assistantContentClass}>{assistantContent}</div>
+              )}
+            </>
           )}
           {message.role === 'tool' && Array.isArray(message.content) && (
             <div className="w-full min-w-0">{toolMessageNodes}</div>
@@ -366,8 +429,12 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
   if (prevMessage.isStreaming || nextMessage.isStreaming) {
     const prevLen = typeof prevMessage.content === 'string' ? prevMessage.content.length : 0;
     const nextLen = typeof nextMessage.content === 'string' ? nextMessage.content.length : 0;
+    const prevReasoningLen = prevMessage.reasoningContent?.length ?? 0;
+    const nextReasoningLen = nextMessage.reasoningContent?.length ?? 0;
     return (
       prevLen === nextLen &&
+      prevReasoningLen === nextReasoningLen &&
+      prevMessage.isReasoningStreaming === nextMessage.isReasoningStreaming &&
       prevMessage.renderDoingUI === nextMessage.renderDoingUI &&
       prevMessage.outputFormat === nextMessage.outputFormat
     );
@@ -395,6 +462,12 @@ export const MessageItem = memo(MessageItemComponent, (prevProps, nextProps) => 
 
   const prevLen = typeof prevMessage.content === 'string' ? prevMessage.content.length : 0;
   const nextLen = typeof nextMessage.content === 'string' ? nextMessage.content.length : 0;
+  const prevReasoningLen = prevMessage.reasoningContent?.length ?? 0;
+  const nextReasoningLen = nextMessage.reasoningContent?.length ?? 0;
 
-  return prevLen === nextLen;
+  return (
+    prevLen === nextLen &&
+    prevReasoningLen === nextReasoningLen &&
+    prevMessage.isReasoningStreaming === nextMessage.isReasoningStreaming
+  );
 });

@@ -33,6 +33,7 @@ export interface UIMessage {
   isStreaming?: boolean;
   assistantId?: string;
   reasoningContent?: string;
+  isReasoningStreaming?: boolean;
   attachments?: MessageAttachment[];
   toolCallId?: string;
   toolName?: string;
@@ -106,6 +107,7 @@ export interface AgentLoopCallbacks {
   onToolMessage?: (message: UIMessage) => void;
   onAssistantMessageStart?: () => void;
   onAssistantReasoning?: (reasoningContent?: string) => void;
+  onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
   onAttachment?: (attachment: MessageAttachment) => void;
   onStepFinish?: (result: AgentLoopState) => void | Promise<void>;
   onToolCall?: (toolName: string, args: ToolInput) => void | Promise<void>;

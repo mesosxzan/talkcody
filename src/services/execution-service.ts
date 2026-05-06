@@ -126,6 +126,7 @@ class ExecutionService {
     let currentMessageId = '';
     let streamedContent = '';
     let currentReasoningContent: string | undefined;
+    let currentStreamingReasoningContent: string | undefined;
     let llmService: LLMService | undefined;
 
     try {
@@ -133,21 +134,28 @@ class ExecutionService {
       llmService = createLLMService(taskId);
       this.llmServiceInstances.set(taskId, llmService);
 
+      const hasCurrentAssistantOutput = () => {
+        return (
+          streamedContent.length > 0 || (currentStreamingReasoningContent?.trim().length ?? 0) > 0
+        );
+      };
+
       const finalizeExecution = async (finalText?: string) => {
         // Prefer finalText if it's longer (complete) over potentially truncated streamedContent
         const text =
           finalText && finalText.length >= streamedContent.length
             ? finalText
             : streamedContent || '';
-        if (currentMessageId && text) {
+        if (currentMessageId && hasCurrentAssistantOutput()) {
           await messageService.finalizeMessage(
             taskId,
             currentMessageId,
             text,
-            currentReasoningContent
+            currentReasoningContent ?? currentStreamingReasoningContent
           );
           streamedContent = '';
           currentReasoningContent = undefined;
+          currentStreamingReasoningContent = undefined;
         }
 
         const runningUsage = useTaskStore.getState().runningTaskUsage.get(taskId);
@@ -216,24 +224,31 @@ class ExecutionService {
           onAssistantMessageStart: () => {
             if (abortController.signal.aborted) return;
 
-            // Skip if a message was just created but hasn't received content
-            if (currentMessageId && !streamedContent) {
+            // Skip if a message was just created but hasn't received visible content yet
+            if (currentMessageId && !hasCurrentAssistantOutput()) {
               logger.info('[ExecutionService] Skipping duplicate message start', { taskId });
               return;
             }
 
             // Finalize previous message if any
-            if (currentMessageId && streamedContent) {
+            if (currentMessageId && hasCurrentAssistantOutput()) {
               messageService
-                .finalizeMessage(taskId, currentMessageId, streamedContent, currentReasoningContent)
+                .finalizeMessage(
+                  taskId,
+                  currentMessageId,
+                  streamedContent,
+                  currentReasoningContent ?? currentStreamingReasoningContent
+                )
                 .catch((err) => logger.error('Failed to finalize previous message:', err));
               currentReasoningContent = undefined;
+              currentStreamingReasoningContent = undefined;
             }
 
             // Reset for new message
             streamedContent = '';
             currentMessageId = messageService.createAssistantMessage(taskId, agentId);
             currentReasoningContent = undefined;
+            currentStreamingReasoningContent = undefined;
           },
 
           onChunk: (chunk: string) => {
@@ -290,6 +305,19 @@ class ExecutionService {
           onAssistantReasoning: (reasoningContent?: string) => {
             if (abortController.signal.aborted) return;
             currentReasoningContent = reasoningContent;
+          },
+
+          onReasoningUpdate: ({ reasoningContent, isStreaming }) => {
+            if (abortController.signal.aborted) return;
+            currentStreamingReasoningContent = reasoningContent;
+            if (currentMessageId) {
+              messageService.updateStreamingReasoning(
+                taskId,
+                currentMessageId,
+                reasoningContent,
+                isStreaming
+              );
+            }
           },
 
           onAttachment: async (attachment) => {

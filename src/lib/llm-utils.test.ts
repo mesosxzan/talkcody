@@ -105,6 +105,36 @@ describe('convertMessages', () => {
       });
     });
 
+    it('should preserve reasoning-only assistant messages with empty content', async () => {
+      const messages: UIMessage[] = [
+        {
+          id: '1',
+          role: 'user',
+          content: 'Hello',
+          timestamp: new Date(),
+        },
+        {
+          id: '2',
+          role: 'assistant',
+          content: '',
+          reasoningContent: 'thinking only',
+          timestamp: new Date(),
+        },
+      ];
+
+      const result = await convertMessages(messages, defaultOptions);
+
+      expect(result[2]).toEqual({
+        role: 'assistant',
+        content: '',
+        providerOptions: {
+          openaiCompatible: {
+            reasoning_content: 'thinking only',
+          },
+        },
+      });
+    });
+
     it('should skip system messages from input', async () => {
       const messages: UIMessage[] = [
         {
@@ -687,7 +717,8 @@ describe('convertMessages', () => {
         {
           id: '2',
           role: 'assistant',
-          content: '> Reasoning: thinking...',
+          content: '',
+          reasoningContent: 'thinking...',
           timestamp: new Date(),
         },
         {
@@ -710,7 +741,12 @@ describe('convertMessages', () => {
       expect(result.length).toBe(3); // system + user + merged assistant
       expect(result[2].role).toBe('assistant');
       expect(Array.isArray(result[2].content)).toBe(true);
-      expect(result[2].content).toHaveLength(3);
+      expect(result[2].content).toHaveLength(2);
+      expect(result[2].providerOptions).toEqual({
+        openaiCompatible: {
+          reasoning_content: 'thinking...',
+        },
+      });
     });
 
     it('should filter out empty text parts when merging assistant messages', async () => {

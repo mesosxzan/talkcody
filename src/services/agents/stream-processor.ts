@@ -1,6 +1,5 @@
 // src/services/agents/stream-processor.ts
 
-import { formatReasoningText } from '@/lib/llm-utils';
 import { logger } from '@/lib/logger';
 import { decodeObjectHtmlEntities } from '@/lib/utils';
 import { getLocale, type SupportedLocale } from '@/locales';
@@ -17,6 +16,7 @@ export interface StreamProcessorCallbacks {
   onChunk: (chunk: string) => void;
   onStatus?: (status: string) => void;
   onAssistantMessageStart?: () => void;
+  onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
 }
 
 export interface StreamProcessorContext {
@@ -140,6 +140,10 @@ export class StreamProcessor {
 
   getCurrentStepText(): string {
     return this.state.currentStepText;
+  }
+
+  getCurrentReasoningText(): string {
+    return this.state.reasoningBlocks.map((block) => block.text).join('');
   }
 
   /**
@@ -430,11 +434,10 @@ export class StreamProcessor {
     }
 
     if (!context.suppressReasoning) {
-      // Format for UI display
-      const formattedText = formatReasoningText(text, this.state.isFirstReasoning);
-      this.state.currentStepText += formattedText;
-      this.state.fullText += formattedText;
-      callbacks.onChunk(formattedText);
+      callbacks.onReasoningUpdate?.({
+        reasoningContent: this.getCurrentReasoningText(),
+        isStreaming: true,
+      });
       this.state.isFirstReasoning = false;
     }
 
@@ -450,6 +453,14 @@ export class StreamProcessor {
     // Clear current reasoning ID
     if (this.state.currentReasoningId === id) {
       this.state.currentReasoningId = null;
+    }
+
+    const reasoningContent = this.getCurrentReasoningText();
+    if (reasoningContent.trim().length > 0) {
+      callbacks.onReasoningUpdate?.({
+        reasoningContent,
+        isStreaming: false,
+      });
     }
 
     const t = getTranslations();

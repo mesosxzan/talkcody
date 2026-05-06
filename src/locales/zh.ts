@@ -64,6 +64,9 @@ const zh: LocaleDefinition = {
     copied: '已复制！',
     newChat: '新对话',
     clearHistory: '清除历史',
+    reasoning: {
+      title: '思考过程',
+    },
     chatHistory: 'Task 历史',
     searchConversations: '搜索对话...',
     searchTasks: '搜索任务...',

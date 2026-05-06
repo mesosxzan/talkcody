@@ -197,6 +197,7 @@ describe('ChatService.runManualAgentLoop', () => {
     onComplete: ReturnType<typeof vi.fn>;
     onError: ReturnType<typeof vi.fn>;
     onStatus: ReturnType<typeof vi.fn>;
+    onReasoningUpdate: ReturnType<typeof vi.fn>;
   };
   let mockStreamText: any;
 
@@ -261,6 +262,7 @@ describe('ChatService.runManualAgentLoop', () => {
       onComplete: vi.fn(),
       onError: vi.fn(),
       onStatus: vi.fn(),
+      onReasoningUpdate: vi.fn(),
     };
   });
 
@@ -319,9 +321,10 @@ describe('ChatService.runManualAgentLoop', () => {
 
       await chatService.runAgentLoop(options, mockCallbacks);
 
-      expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
-        '\n<thinking>\nLet me think about this...'
-      );
+      expect(mockCallbacks.onReasoningUpdate).toHaveBeenCalledWith({
+        reasoningContent: 'Let me think about this...',
+        isStreaming: true,
+      });
       expect(mockCallbacks.onChunk).toHaveBeenCalledWith(
         'Based on my reasoning, here is the answer.'
       );

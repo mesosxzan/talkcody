@@ -65,6 +65,9 @@ export interface LocaleDefinition {
     copied: string;
     newChat: string;
     clearHistory: string;
+    reasoning: {
+      title: string;
+    };
     emptyState: {
       title: string;
       description: string;

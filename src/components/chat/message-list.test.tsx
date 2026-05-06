@@ -27,6 +27,9 @@ vi.mock('@/components/chat/message-item', () => ({
       {typeof message.content === 'string' && (
         <span data-testid="content">{message.content}</span>
       )}
+      {message.reasoningContent && (
+        <span data-testid="reasoning-content">{message.reasoningContent}</span>
+      )}
     </div>
   ),
 }));
@@ -155,6 +158,23 @@ describe('MessageList', () => {
     render(<MessageList messages={messages} />);
 
     expect(screen.getByTestId('message-user-1')).toBeInTheDocument();
+  });
+
+  it('should not skip reasoning-only assistant messages', () => {
+    const messages: UIMessage[] = [
+      {
+        id: 'assistant-reasoning-1',
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'OpenAI summary reasoning',
+        timestamp: new Date(),
+      },
+    ];
+
+    render(<MessageList messages={messages} />);
+
+    expect(screen.getByTestId('message-assistant-reasoning-1')).toBeInTheDocument();
+    expect(screen.getByTestId('reasoning-content')).toHaveTextContent('OpenAI summary reasoning');
   });
 
   it('should skip empty messages', () => {

@@ -22,8 +22,15 @@ const hasActualContent = (content: string): boolean => {
   return cleaned.length > 0;
 };
 
+const hasReasoningContent = (reasoningContent?: string): boolean => {
+  return typeof reasoningContent === 'string' && reasoningContent.trim().length > 0;
+};
+
 const isEmptyMessage = (message: UIMessage): boolean => {
   if (message.attachments && message.attachments.length > 0) {
+    return false;
+  }
+  if (hasReasoningContent(message.reasoningContent)) {
     return false;
   }
   if (typeof message.content === 'string') {

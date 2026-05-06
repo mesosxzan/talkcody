@@ -49,7 +49,7 @@ describe('Conversation Isolation - Critical Bug Tests', () => {
 
       // Verify content was accumulated
       expect(processor.getFullText()).toContain('Hello from conversation A');
-      expect(processor.getFullText()).toContain('Some reasoning');
+      expect(processor.getCurrentReasoningText()).toContain('Some reasoning');
       expect(processor.getFullText().length).toBeGreaterThan(0);
 
       // Call fullReset (should clear everything)
@@ -58,6 +58,7 @@ describe('Conversation Isolation - Critical Bug Tests', () => {
       // Verify everything is cleared
       expect(processor.getFullText()).toBe('');
       expect(processor.getCurrentStepText()).toBe('');
+      expect(processor.getCurrentReasoningText()).toBe('');
       expect(processor.getToolCalls()).toHaveLength(0);
       expect(processor.hasError()).toBe(false);
       expect(processor.getConsecutiveToolErrors()).toBe(0);

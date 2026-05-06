@@ -72,6 +72,8 @@ export interface AgentLoopCallbacks {
   onToolMessage?: (message: UIMessage) => void;
   /** Called when an assistant turn's raw reasoning_content is finalized */
   onAssistantReasoning?: (reasoningContent?: string) => void;
+  /** Called when streamed reasoning text updates or finishes */
+  onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
   /** Called when an attachment is generated (e.g., images) */
   onAttachment?: (attachment: MessageAttachment) => void;
 }
@@ -716,6 +718,7 @@ export class LLMService {
         onToolMessage,
         onAssistantMessageStart,
         onAssistantReasoning,
+        onReasoningUpdate,
       } = callbacks;
 
       const rejectOnAbort = (message: string) => {
@@ -1139,7 +1142,12 @@ export class LLMService {
                 abortController?.signal
               );
 
-              const streamCallbacks = { onChunk, onStatus, onAssistantMessageStart };
+              const streamCallbacks = {
+                onChunk,
+                onStatus,
+                onAssistantMessageStart,
+                onReasoningUpdate,
+              };
               const streamContext = { suppressReasoning };
 
               // Process current step stream

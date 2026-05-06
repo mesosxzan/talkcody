@@ -3,13 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { keepAwakeManager } from './keep-awake-manager';
 import { keepAwakeService } from './keep-awake-service';
-import { useExecutionStore } from '@/stores/execution-store';
 
 vi.mock('./keep-awake-service', () => ({
   keepAwakeService: {
-    acquire: vi.fn(),
-    release: vi.fn(),
-    getRefCount: vi.fn(),
+    acquireWithResult: vi.fn(),
+    releaseWithResult: vi.fn(),
   },
 }));
 
@@ -43,9 +41,14 @@ describe('keepAwakeManager', () => {
   beforeEach(() => {
     executionState.runningCount = 0;
     listeners.clear();
-    vi.mocked(keepAwakeService.acquire).mockResolvedValue(true);
-    vi.mocked(keepAwakeService.release).mockResolvedValue(true);
-    vi.mocked(keepAwakeService.getRefCount).mockResolvedValue(0);
+    vi.mocked(keepAwakeService.acquireWithResult).mockResolvedValue({
+      success: true,
+      wasFirst: true,
+    });
+    vi.mocked(keepAwakeService.releaseWithResult).mockResolvedValue({
+      success: true,
+      wasLast: true,
+    });
     keepAwakeManager.stop();
     vi.clearAllMocks();
   });
@@ -55,37 +58,61 @@ describe('keepAwakeManager', () => {
     listeners.forEach((listener) => listener(state));
   };
 
-  it('should sync to running count on start', async () => {
+  it('should acquire once on start when tasks are already running', async () => {
     executionState.runningCount = 2;
-    vi.mocked(keepAwakeService.getRefCount).mockResolvedValue(0);
 
     keepAwakeManager.start();
     await keepAwakeManager.waitForIdle();
 
-    expect(keepAwakeService.acquire).toHaveBeenCalledTimes(2);
+    expect(keepAwakeService.acquireWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeService.releaseWithResult).not.toHaveBeenCalled();
+    expect(keepAwakeManager.getSnapshot()).toMatchObject({
+      runningCount: 2,
+      refCount: 1,
+      isPreventing: true,
+    });
   });
 
-  it('should apply deltas when running count changes', async () => {
-    executionState.runningCount = 1;
-    vi.mocked(keepAwakeService.getRefCount).mockResolvedValue(1);
-
+  it('should only toggle keep-awake on zero-to-nonzero transitions', async () => {
     keepAwakeManager.start();
     await keepAwakeManager.waitForIdle();
 
-    vi.clearAllMocks();
+    executionState.runningCount = 1;
+    emit();
+    await keepAwakeManager.waitForIdle();
+
+    expect(keepAwakeService.acquireWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeService.releaseWithResult).not.toHaveBeenCalled();
 
     executionState.runningCount = 3;
     emit();
     await keepAwakeManager.waitForIdle();
 
-    expect(keepAwakeService.acquire).toHaveBeenCalledTimes(2);
-
-    vi.clearAllMocks();
     executionState.runningCount = 1;
     emit();
     await keepAwakeManager.waitForIdle();
 
-    expect(keepAwakeService.release).toHaveBeenCalledTimes(2);
+    expect(keepAwakeService.acquireWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeService.releaseWithResult).not.toHaveBeenCalled();
+
+    executionState.runningCount = 0;
+    emit();
+    await keepAwakeManager.waitForIdle();
+
+    expect(keepAwakeService.releaseWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeManager.getSnapshot()).toMatchObject({
+      runningCount: 0,
+      refCount: 0,
+      isPreventing: false,
+    });
+  });
+
+  it('should not release shared keep-awake state when this window starts idle', async () => {
+    keepAwakeManager.start();
+    await keepAwakeManager.waitForIdle();
+
+    expect(keepAwakeService.acquireWithResult).not.toHaveBeenCalled();
+    expect(keepAwakeService.releaseWithResult).not.toHaveBeenCalled();
   });
 
   it('should be idempotent on start', async () => {
@@ -95,6 +122,7 @@ describe('keepAwakeManager', () => {
     await keepAwakeManager.waitForIdle();
 
     expect(listeners.size).toBe(1);
+    expect(keepAwakeService.acquireWithResult).toHaveBeenCalledTimes(1);
   });
 
   it('should stop and reset state', () => {
@@ -104,10 +132,14 @@ describe('keepAwakeManager', () => {
     keepAwakeManager.stop();
 
     expect(listeners.size).toBe(0);
-    expect(keepAwakeManager.getSnapshot().runningCount).toBe(0);
+    expect(keepAwakeManager.getSnapshot()).toMatchObject({
+      runningCount: 0,
+      refCount: 0,
+      isPreventing: false,
+    });
   });
 
-  it('should reconcile running count changes during initial sync', async () => {
+  it('should release after an in-flight startup acquire when tasks stop', async () => {
     executionState.runningCount = 1;
 
     let resolveAcquire: (() => void) | null = null;
@@ -120,11 +152,10 @@ describe('keepAwakeManager', () => {
       notifyAcquireStarted = resolve;
     });
 
-    vi.mocked(keepAwakeService.getRefCount).mockResolvedValue(0);
-    vi.mocked(keepAwakeService.acquire).mockImplementation(async () => {
+    vi.mocked(keepAwakeService.acquireWithResult).mockImplementation(async () => {
       notifyAcquireStarted?.();
       await acquirePromise;
-      return true;
+      return { success: true, wasFirst: true };
     });
 
     keepAwakeManager.start();
@@ -136,8 +167,30 @@ describe('keepAwakeManager', () => {
     resolveAcquire?.();
     await keepAwakeManager.waitForIdle();
 
-    expect(keepAwakeService.acquire).toHaveBeenCalledTimes(1);
-    expect(keepAwakeService.release).toHaveBeenCalledTimes(1);
-    expect(keepAwakeManager.getSnapshot().runningCount).toBe(0);
+    expect(keepAwakeService.acquireWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeService.releaseWithResult).toHaveBeenCalledTimes(1);
+    expect(keepAwakeManager.getSnapshot()).toMatchObject({
+      runningCount: 0,
+      refCount: 0,
+      isPreventing: false,
+    });
+  });
+
+  it('should keep state cleared when acquire fails', async () => {
+    executionState.runningCount = 1;
+    vi.mocked(keepAwakeService.acquireWithResult).mockResolvedValue({
+      success: false,
+      wasFirst: false,
+    });
+
+    keepAwakeManager.start();
+    await keepAwakeManager.waitForIdle();
+
+    expect(keepAwakeManager.getSnapshot()).toMatchObject({
+      runningCount: 1,
+      refCount: 0,
+      isPreventing: false,
+    });
+    expect(keepAwakeService.releaseWithResult).not.toHaveBeenCalled();
   });
 });

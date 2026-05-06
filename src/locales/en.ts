@@ -64,6 +64,9 @@ const en: LocaleDefinition = {
     copied: 'Copied!',
     newChat: 'New Chat',
     clearHistory: 'Clear History',
+    reasoning: {
+      title: 'Reasoning',
+    },
     chatHistory: 'Task History',
     searchConversations: 'Search conversations...',
     searchTasks: 'Search tasks...',
