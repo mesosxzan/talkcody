@@ -4,11 +4,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { generateId } from '@/lib/utils';
+import { getLocale, type SupportedLocale } from '@/locales';
+import { useProviderStore } from '@/providers/stores/provider-store';
 import { executionService } from '@/services/execution-service';
+import { messageService } from '@/services/message-service';
 import { notificationService } from '@/services/notification-service';
 import { scheduledTaskDeliveryService } from '@/services/scheduled-tasks/scheduled-task-delivery-service';
 import { taskService } from '@/services/task-service';
 import { useSettingsStore } from '@/stores/settings-store';
+import type { UIMessage } from '@/types/agent';
 import type {
   CreateScheduledTaskInput,
   DEFAULT_DELIVERY_POLICY,
@@ -48,6 +53,11 @@ interface ScheduledTaskState {
   syncOfflineRunner: (enabled: boolean) => Promise<void>;
   claimPendingRuns: () => Promise<void>;
   _onTrigger: (event: ScheduledTaskTriggerEvent) => Promise<void>;
+}
+
+function getTranslations() {
+  const language = useSettingsStore.getState().language || 'en';
+  return getLocale(language as SupportedLocale);
 }
 
 const DEFAULTS = {
@@ -218,16 +228,82 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
     const { jobId, runId, payload, projectId } = event;
     logger.info('[ScheduledTaskStore] Job triggered:', { jobId, runId });
 
+    let createdTaskId: string | null = null;
     try {
       const settingsState = useSettingsStore.getState();
-      const model = payload.model ?? settingsState.model ?? '';
-      const taskId = await taskService.createTask(payload.message, {
+      if (settingsState.isInitialized !== true) {
+        await settingsState.initialize?.();
+      }
+
+      const providerStore = useProviderStore.getState();
+      if (providerStore.isInitialized !== true) {
+        await providerStore.initialize();
+      }
+
+      const requestedModel = (payload.model ?? settingsState.model ?? '').trim();
+      let model = requestedModel;
+
+      if (!model) {
+        const fallback =
+          providerStore.getAvailableModel()?.key ?? providerStore.availableModels[0]?.key ?? '';
+        if (!fallback) {
+          throw new Error(
+            'No model is configured and no models are available. Configure API keys in Settings → Models.\n定时任务未配置模型且当前没有可用模型，请在 设置 → 模型 中配置 API Key。'
+          );
+        }
+        model = fallback;
+        logger.warn('[ScheduledTaskStore] No model configured; using fallback model', {
+          jobId,
+          runId,
+          fallbackModel: model,
+        });
+      }
+
+      if (!providerStore.isModelAvailable(model)) {
+        const fallback =
+          providerStore.getAvailableModel()?.key ?? providerStore.availableModels[0]?.key ?? '';
+        if (fallback && providerStore.isModelAvailable(fallback)) {
+          logger.warn('[ScheduledTaskStore] Model not available; using fallback model', {
+            jobId,
+            runId,
+            requestedModel: model,
+            fallbackModel: fallback,
+          });
+          model = fallback;
+        }
+      }
+
+      if (!providerStore.isModelAvailable(model)) {
+        const t = getTranslations();
+        const providerHint =
+          providerStore.availableModels.length === 0
+            ? 'no models available'
+            : `available models: ${providerStore.availableModels
+                .slice(0, 5)
+                .map((m) => m.key)
+                .join(', ')}${providerStore.availableModels.length > 5 ? ', ...' : ''}`;
+        throw new Error(
+          `${t.LLMService.errors.noProvider(model || requestedModel || 'unknown', 'unknown')}\n` +
+            `Reason: ${providerHint}\n` +
+            `原因：${providerHint}`
+        );
+      }
+
+      createdTaskId = await taskService.createTask(payload.message, {
         projectId: projectId ?? undefined,
       });
 
+      const userChatMessage: UIMessage = {
+        id: generateId(),
+        role: 'user',
+        content: payload.message,
+        timestamp: new Date(),
+      };
+      await messageService.addUserMessage(createdTaskId, payload.message);
+
       await executionService.startExecution({
-        taskId,
-        messages: [],
+        taskId: createdTaskId,
+        messages: [userChatMessage],
         model,
         isNewTask: true,
         userMessage: payload.message,
@@ -251,7 +327,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
       const completePayload: ScheduledTaskRunCompletePayload = {
         jobId,
         runId,
-        taskId,
+        taskId: createdTaskId,
         success: true,
         deliveryStatus: deliveryResult.status,
         deliveryError: deliveryResult.error,
@@ -274,7 +350,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
       const failPayload: ScheduledTaskRunCompletePayload = {
         jobId,
         runId,
-        taskId: null,
+        taskId: createdTaskId,
         success: false,
         error: errMsg,
       };
