@@ -54,7 +54,7 @@ jobs:
   build-windows:
     name: Build Windows MSI
     needs: create-release
-    if: always() && github.repository == 'talkcody/talkcody'
+    #if: always() && github.repository == 'talkcody/talkcody'
     runs-on: windows-latest
     steps:
       - name: Checkout code
