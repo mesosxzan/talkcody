@@ -76,32 +76,12 @@ export function NavigationSidebar({ activeView, onViewChange }: NavigationSideba
     onViewChange(NavigationView.AGENTS_MARKETPLACE);
   };
 
-  const handleGitHubClick = () => {
-    open('https://github.com/talkcody/talkcody');
-  };
-
-  const handleXClick = () => {
-    open('https://twitter.com/talkcody');
-  };
-
   const bottomNavigationItems = [
     {
       id: NavigationView.TOOLS_PLAYGROUND,
       icon: Wrench,
       tooltip: `${t.Navigation.toolsPlaygroundTooltip}`,
       action: () => onViewChange(NavigationView.TOOLS_PLAYGROUND),
-    },
-    {
-      id: 'github',
-      icon: Github,
-      tooltip: t.Navigation.githubTooltip,
-      action: handleGitHubClick,
-    },
-    {
-      id: 'x',
-      icon: SiX,
-      tooltip: 'Twitter',
-      action: handleXClick,
     },
     {
       id: NavigationView.LLM_TRACING,

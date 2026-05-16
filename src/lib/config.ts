@@ -1,7 +1,7 @@
 // Application configuration
 
 export const API_BASE_URL = import.meta.env.DEV
-  ? import.meta.env.VITE_API_URL_LOCAL || 'http://localhost:3000'
+  ? import.meta.env.VITE_API_URL_LOCAL || 'https://api.talkcody.com'
   : import.meta.env.VITE_API_URL_PROD || 'https://api.talkcody.com';
 
 /**
