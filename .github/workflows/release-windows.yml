@@ -15,46 +15,46 @@ permissions:
   contents: write
 
 jobs:
-  # create-release:
-  #   name: Create Release
-  #   runs-on: ubuntu-latest
-  #   #if: github.event_name == 'push' && github.repository == 'talkcody/talkcody'
-  #   outputs:
-  #     upload_url: ${{ steps.create_release.outputs.upload_url }}
-  #     version: ${{ steps.get_version.outputs.version }}
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' 
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  #     - name: Get version from tag
-  #       id: get_version
-  #       run: |
-  #         # Extract version from tag (e.g., v0.1.8-windows -> 0.1.8)
-  #         VERSION=${GITHUB_REF#refs/tags/v}
-  #         VERSION=${VERSION%-windows}
-  #         echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Get version from tag
+        id: get_version
+        run: |
+          # Extract version from tag (e.g., v0.1.8-windows -> 0.1.8)
+          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION=${VERSION%-windows}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-  #     - name: Create Release
-  #       id: create_release
-  #       uses: actions/create-release@v1
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       with:
-  #         tag_name: ${{ github.ref_name }}
-  #         release_name: Release ${{ github.ref_name }} (Windows)
-  #         draft: false
-  #         prerelease: false
-  #         body: |
-  #           ## What's Changed (Windows Release)
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: Release ${{ github.ref_name }} (Windows)
+          draft: false
+          prerelease: false
+          body: |
+            ## What's Changed (Windows Release)
 
-  #           Download packages for all platforms at: https://www.talkcody.com/docs/introduction/client-downloads
+            Download packages for all platforms at: https://www.talkcody.com/docs/introduction/client-downloads
 
   build-windows:
     name: Build Windows MSI
-    #needs: create-release
-    #if: always() && github.repository == 'talkcody/talkcody'
+    needs: create-release
+    if: always()
     runs-on: windows-latest
     steps:
       - name: Checkout code
