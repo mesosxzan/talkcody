@@ -18,7 +18,7 @@ jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.repository == 'talkcody/talkcody'
+    #if: github.event_name == 'push' && github.repository == 'talkcody/talkcody'
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ steps.get_version.outputs.version }}
