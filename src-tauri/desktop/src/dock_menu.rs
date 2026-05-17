@@ -1,4 +1,4 @@
-#![cfg_attr(target_os = "macos", allow(unexpected_cfgs))]
+#![allow(unexpected_cfgs)]
 
 use crate::database::Database;
 use crate::window_manager::create_window;

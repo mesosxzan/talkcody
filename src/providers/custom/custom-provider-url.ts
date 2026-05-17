@@ -8,12 +8,6 @@ const CUSTOM_PROVIDER_ENDPOINT_SUFFIXES = [
   '/models',
 ];
 
-const V1_SEGMENT = 'v1';
-
-function hasV1Segment(baseUrl: string): boolean {
-  return baseUrl.split('/').some((segment) => segment === V1_SEGMENT);
-}
-
 export function normalizeCustomProviderBaseUrl(baseUrl: string): string {
   let normalized = baseUrl.trim();
 
@@ -28,10 +22,6 @@ export function normalizeCustomProviderBaseUrl(baseUrl: string): string {
       normalized = normalized.slice(0, -suffix.length).replace(/\/+$/, '');
       break;
     }
-  }
-
-  if (!hasV1Segment(normalized)) {
-    normalized = `${normalized}/v1`;
   }
 
   return normalized;

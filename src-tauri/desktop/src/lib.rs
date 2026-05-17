@@ -1,3 +1,4 @@
+#![allow(unexpected_cfgs)]
 // Re-export desktop app implementation from core modules.
 
 pub mod dock_menu;

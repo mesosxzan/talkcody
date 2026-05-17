@@ -306,19 +306,11 @@ fn normalize_provider_base_url(base_url: &str, provider_config: &ProviderConfig)
         trimmed
     };
 
-    if has_v1_segment(without_endpoint) {
-        return without_endpoint.to_string();
-    }
-
-    format!("{}/v1", without_endpoint.trim_end_matches('/'))
+    without_endpoint.to_string()
 }
 
 fn is_custom_provider_id(provider_id: &str) -> bool {
     provider_id.starts_with("openai-compatible-") || provider_id.starts_with("anthropic-")
-}
-
-fn has_v1_segment(base_url: &str) -> bool {
-    base_url.split('/').any(|segment| segment == "v1")
 }
 
 #[cfg(test)]
@@ -361,18 +353,18 @@ mod tests {
     }
 
     #[test]
-    fn normalize_custom_provider_base_url_appends_v1_for_anthropic_root() {
+    fn normalize_custom_provider_base_url_keeps_root_for_anthropic() {
         let config = custom_provider_config("anthropic-test", ProtocolType::Claude);
         let normalized = normalize_provider_base_url("https://api.example.com", &config);
-        assert_eq!(normalized, "https://api.example.com/v1");
+        assert_eq!(normalized, "https://api.example.com");
     }
 
     #[test]
-    fn normalize_custom_provider_base_url_appends_v1_for_openai_root() {
+    fn normalize_custom_provider_base_url_keeps_root_for_openai() {
         let config =
             custom_provider_config("openai-compatible-test", ProtocolType::OpenAiCompatible);
         let normalized = normalize_provider_base_url("https://api.example.com", &config);
-        assert_eq!(normalized, "https://api.example.com/v1");
+        assert_eq!(normalized, "https://api.example.com");
     }
 
     #[test]
