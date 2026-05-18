@@ -7,6 +7,7 @@ import { getLocale, type SupportedLocale } from '@/locales';
 import { databaseService } from '@/services/database-service';
 import { fastDirectoryTreeService } from '@/services/fast-directory-tree-service';
 import { repositoryService } from '@/services/repository-service';
+import { arePathsEqual } from '@/services/repository-utils';
 import { WindowManagerService } from '@/services/window-manager-service';
 import { WindowRestoreService } from '@/services/window-restore-service';
 import { settingsManager, useSettingsStore } from '@/stores/settings-store';
@@ -335,7 +336,7 @@ function createRepositoryStore() {
       await expandToFile(filePath);
 
       // Check if file is already open
-      const existingIndex = openFiles.findIndex((file) => file.path === filePath);
+      const existingIndex = openFiles.findIndex((file) => arePathsEqual(file.path, filePath));
       if (existingIndex !== -1) {
         // File is already open, just switch to it and update line number
         set({
@@ -375,7 +376,9 @@ function createRepositoryStore() {
 
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath ? { ...file, content, isLoading: false, error: null } : file
+            arePathsEqual(file.path, filePath)
+              ? { ...file, content, isLoading: false, error: null }
+              : file
           ),
           isLoading: false,
         }));
@@ -391,7 +394,9 @@ function createRepositoryStore() {
         const errorMessage = (error as Error).message;
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath ? { ...file, error: errorMessage, isLoading: false } : file
+            arePathsEqual(file.path, filePath)
+              ? { ...file, error: errorMessage, isLoading: false }
+              : file
           ),
           isLoading: false,
         }));
@@ -462,22 +467,22 @@ function createRepositoryStore() {
     updateFileContent: (filePath: string, content: string, hasUnsavedChanges = false) => {
       set((state) => ({
         openFiles: state.openFiles.map((file) =>
-          file.path === filePath ? { ...file, content, hasUnsavedChanges } : file
+          arePathsEqual(file.path, filePath) ? { ...file, content, hasUnsavedChanges } : file
         ),
       }));
     },
 
-    // Save a file
     saveFile: async (filePath: string, content: string) => {
       try {
-        // Mark this file as recently saved BEFORE writing to avoid race condition
         get().markRecentSave(filePath);
 
         await repositoryService.writeFile(filePath, content);
 
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath ? { ...file, content, hasUnsavedChanges: false } : file
+            arePathsEqual(file.path, filePath)
+              ? { ...file, content, hasUnsavedChanges: false }
+              : file
           ),
         }));
 
@@ -591,20 +596,20 @@ function createRepositoryStore() {
 
       set((state) => ({
         openFiles: state.openFiles.map((file) =>
-          file.path === filePath ? { ...file, isLoading: true, error: null } : file
+          arePathsEqual(file.path, filePath) ? { ...file, isLoading: true, error: null } : file
         ),
       }));
 
       try {
-        // First clear cache to force fresh read from disk
         repositoryService.invalidateCache(filePath);
 
-        // Then read the file content from disk
         const content = await repositoryService.readFileWithCache(filePath);
 
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath ? { ...file, content, isLoading: false, error: null } : file
+            arePathsEqual(file.path, filePath)
+              ? { ...file, content, isLoading: false, error: null }
+              : file
           ),
         }));
 
@@ -615,7 +620,9 @@ function createRepositoryStore() {
 
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath ? { ...file, error: errorMessage, isLoading: false } : file
+            arePathsEqual(file.path, filePath)
+              ? { ...file, error: errorMessage, isLoading: false }
+              : file
           ),
         }));
 
@@ -773,7 +780,7 @@ function createRepositoryStore() {
       }
 
       const { openFiles } = get();
-      const openFile = openFiles.find((file) => file.path === filePath);
+      const openFile = openFiles.find((file) => arePathsEqual(file.path, filePath));
 
       // If file is not open, just invalidate cache
       if (!openFile) {
@@ -807,7 +814,7 @@ function createRepositoryStore() {
           logger.info(`Auto-updating editor content for: ${filePath}`);
           set((state) => ({
             openFiles: state.openFiles.map((file) =>
-              file.path === filePath ? { ...file, content: diskContent } : file
+              arePathsEqual(file.path, filePath) ? { ...file, content: diskContent } : file
             ),
           }));
         }
@@ -824,11 +831,10 @@ function createRepositoryStore() {
       const { filePath, diskContent } = pendingExternalChange;
 
       if (!keepLocal) {
-        // User chose to load disk version
         logger.info(`User chose to load disk version for: ${filePath}`);
         set((state) => ({
           openFiles: state.openFiles.map((file) =>
-            file.path === filePath
+            arePathsEqual(file.path, filePath)
               ? { ...file, content: diskContent, hasUnsavedChanges: false }
               : file
           ),

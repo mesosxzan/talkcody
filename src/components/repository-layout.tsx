@@ -8,7 +8,7 @@ import { useRepositoryWatcher } from '@/hooks/use-repository-watcher';
 import { logger } from '@/lib/logger';
 import { databaseService } from '@/services/database-service';
 import type { LintDiagnostic } from '@/services/lint-service';
-import { getRelativePath } from '@/services/repository-utils';
+import { arePathsEqual, getRelativePath } from '@/services/repository-utils';
 import { taskService } from '@/services/task-service';
 import { WindowManagerService } from '@/services/window-manager-service';
 import { settingsManager } from '@/stores/settings-store';
@@ -224,7 +224,7 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
 
   const handleFileDelete = async (filePath: string) => {
     refreshFileTree();
-    const fileIndex = openFiles.findIndex((file) => file.path === filePath);
+    const fileIndex = openFiles.findIndex((file) => arePathsEqual(file.path, filePath));
     if (fileIndex !== -1) {
       closeTab(fileIndex);
     }
