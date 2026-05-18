@@ -11,6 +11,9 @@ import { createTextModelService } from '@/services/monaco-text-model-service';
 import { repositoryService } from '@/services/repository-service';
 import { setupMonacoDiagnostics, setupMonacoTheme } from '@/utils/monaco-utils';
 
+const MONACO_LOAD_RETRY_INTERVAL = 100;
+const MONACO_LOAD_MAX_RETRIES = 50;
+
 // Image file extensions with MIME types
 const IMAGE_EXTENSIONS: Record<string, string> = {
   jpg: 'image/jpeg',
@@ -182,19 +185,59 @@ export function FileEditorContent({
   // This allows us to create overrideServices with the Monaco instance
   const monacoFromHook = useMonaco();
 
+  // Track Monaco loading state with retry logic
+  const [monacoReady, setMonacoReady] = useState(false);
+  const retryCountRef = useRef(0);
+
+  // Retry logic to wait for Monaco to be available
+  // This is needed because useMonaco() may return undefined on Windows
+  // when the Monaco worker loads slower than the React component
+  useEffect(() => {
+    if (monacoFromHook) {
+      setMonacoReady(true);
+      return;
+    }
+
+    const checkMonaco = () => {
+      const windowMonaco = (window as unknown as { monaco?: typeof import('monaco-editor') })
+        .monaco;
+      if (windowMonaco) {
+        logger.info('[TextModelService] Monaco found on window after retry');
+        setMonacoReady(true);
+        return;
+      }
+
+      retryCountRef.current++;
+      if (retryCountRef.current < MONACO_LOAD_MAX_RETRIES) {
+        setTimeout(checkMonaco, MONACO_LOAD_RETRY_INTERVAL);
+      } else {
+        logger.warn('[TextModelService] Monaco failed to load after max retries');
+      }
+    };
+
+    checkMonaco();
+  }, [monacoFromHook]);
+
   // Create overrideServices for cross-file peek widget support
   // This is required because Monaco standalone mode cannot resolve models by URI
   // See: https://github.com/microsoft/monaco-editor/issues/935
   const overrideServices = useMemo(() => {
-    if (!monacoFromHook) {
-      logger.info('[TextModelService] Monaco not yet loaded, overrideServices will be empty');
+    if (!monacoReady) {
       return {};
     }
+
+    const monacoInstance =
+      monacoFromHook || (window as unknown as { monaco?: typeof import('monaco-editor') }).monaco;
+
+    if (!monacoInstance) {
+      return {};
+    }
+
     logger.info('[TextModelService] Creating textModelService with Monaco instance');
     return {
-      textModelService: createTextModelService(monacoFromHook),
+      textModelService: createTextModelService(monacoInstance),
     };
-  }, [monacoFromHook]);
+  }, [monacoReady, monacoFromHook]);
 
   // Handle theme changes
   useEffect(() => {
@@ -285,22 +328,29 @@ export function FileEditorContent({
     );
   }
 
+  // Show loading state while waiting for Monaco to initialize
+  if (!monacoReady) {
+    return (
+      <div className="flex h-full items-center justify-center bg-muted/30 p-4">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
   // Render Monaco editor for text files
   return (
     <div className="min-h-0 flex-1">
       <Editor
-        key={resolvedTheme}
+        key={`${resolvedTheme}-${monacoReady}`}
         path={filePath}
         className="h-full"
         language={language}
         loading={false}
         onChange={onContentChange}
         beforeMount={(monaco) => {
-          // Ensure themes exist before the editor is created
           monacoRef.current = monaco;
           setupMonacoTheme(resolvedTheme, monaco);
 
-          // Enable TypeScript/JavaScript diagnostics globally before editor mounts
           setupMonacoDiagnostics(null, monaco);
         }}
         onMount={handleEditorDidMount}
