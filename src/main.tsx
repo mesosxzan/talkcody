@@ -1,10 +1,16 @@
 // src/main.tsx
+import { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './app';
 import './index.css';
 import { startKeepAwakeManager } from '@/services/keep-awake-manager';
+
+// Configure Monaco to load from local files instead of CDN
+// This is required for offline support in Tauri
+loader.config({ monaco });
 
 // Configure Monaco Environment before app starts
 // TypeScript worker is removed to reduce bundle size (~6MB)
