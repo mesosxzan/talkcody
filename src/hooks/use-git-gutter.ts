@@ -1,24 +1,19 @@
-import type * as Monaco from 'monaco-editor';
+import type { Monaco } from '@monaco-editor/react';
+import type * as MonacoTypes from 'monaco-editor';
 import { useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
 import { useGitStore } from '@/stores/git-store';
 import { DiffLineType } from '@/types/git';
-
-// Extend Window interface for Monaco
-declare global {
-  interface Window {
-    monaco: typeof Monaco;
-  }
-}
 
 /**
  * Hook to add Git gutter indicators to Monaco editor
  * Shows green bars for additions, blue bars for modifications, and red triangles for deletions
  */
 export function useGitGutter(
-  editor: Monaco.editor.IStandaloneCodeEditor | null,
+  editor: MonacoTypes.editor.IStandaloneCodeEditor | null,
   filePath: string | null,
-  repositoryPath: string | null
+  repositoryPath: string | null,
+  monaco: Monaco | null
 ) {
   const decorationsRef = useRef<string[]>([]);
 
@@ -44,18 +39,18 @@ export function useGitGutter(
         // Get line changes from Git (with caching)
         const lineChanges = await useGitStore.getState().getLineChanges(filePath);
 
-        if (!window.monaco) {
-          logger.error('Monaco is not available on window');
+        if (!monaco) {
+          logger.error('Monaco instance not available for Git gutter');
           return;
         }
 
         // Convert line changes to Monaco decorations
-        const decorations: Monaco.editor.IModelDeltaDecoration[] = lineChanges.map(
+        const decorations: MonacoTypes.editor.IModelDeltaDecoration[] = lineChanges.map(
           ([lineNumber, changeType]) => {
             const decorationOptions = getDecorationOptions(changeType);
 
             return {
-              range: new window.monaco.Range(lineNumber, 1, lineNumber, 1),
+              range: new monaco.Range(lineNumber, 1, lineNumber, 1),
               options: decorationOptions,
             };
           }
@@ -85,11 +80,11 @@ export function useGitGutter(
         decorationsRef.current = [];
       }
     };
-  }, [editor, filePath, repositoryPath]);
+  }, [editor, filePath, repositoryPath, monaco]);
 
   return {
     refreshGutterIndicators: async () => {
-      if (!editor || !filePath || !repositoryPath) {
+      if (!editor || !filePath || !repositoryPath || !monaco) {
         return;
       }
 
@@ -102,12 +97,12 @@ export function useGitGutter(
 
       try {
         const lineChanges = await useGitStore.getState().getLineChanges(filePath);
-        const decorations: Monaco.editor.IModelDeltaDecoration[] = lineChanges.map(
+        const decorations: MonacoTypes.editor.IModelDeltaDecoration[] = lineChanges.map(
           ([lineNumber, changeType]) => {
             const decorationOptions = getDecorationOptions(changeType);
 
             return {
-              range: new window.monaco.Range(lineNumber, 1, lineNumber, 1),
+              range: new monaco.Range(lineNumber, 1, lineNumber, 1),
               options: decorationOptions,
             };
           }
@@ -125,7 +120,9 @@ export function useGitGutter(
 /**
  * Get Monaco decoration options based on Git change type
  */
-function getDecorationOptions(changeType: DiffLineType): Monaco.editor.IModelDecorationOptions {
+function getDecorationOptions(
+  changeType: DiffLineType
+): MonacoTypes.editor.IModelDecorationOptions {
   switch (changeType) {
     case DiffLineType.Addition:
       return {

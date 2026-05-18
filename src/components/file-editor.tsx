@@ -46,6 +46,7 @@ export function FileEditor({
 
   // Editor state for Git gutter and lint diagnostics (using state instead of ref to trigger re-renders)
   const [editor, setEditor] = React.useState<monacoEditor.IStandaloneCodeEditor | null>(null);
+  const [monacoInstance, setMonacoInstance] = React.useState<Monaco | null>(null);
 
   // AI completion logic
   const {
@@ -186,12 +187,13 @@ export function FileEditor({
   });
 
   // Git gutter indicators (will run when editor state changes)
-  useGitGutter(editor, filePath, rootPath);
+  useGitGutter(editor, filePath, rootPath, monacoInstance);
 
-  // Wrap handleEditorDidMount to capture editor in state
+  // Wrap handleEditorDidMount to capture editor and monaco in state
   const handleEditorDidMountWithGit = React.useCallback(
     (editorInstance: monacoEditor.IStandaloneCodeEditor, monaco: Monaco) => {
       setEditor(editorInstance);
+      setMonacoInstance(monaco);
       handleEditorDidMount(editorInstance, monaco);
     },
     [handleEditorDidMount]
