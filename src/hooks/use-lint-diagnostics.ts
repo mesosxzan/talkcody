@@ -1,3 +1,4 @@
+import type { Monaco } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
 import { useCallback, useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
@@ -6,6 +7,7 @@ import { useLintStore } from '@/stores/lint-store';
 
 interface UseLintDiagnosticsProps {
   editor: editor.IStandaloneCodeEditor | null;
+  monaco: Monaco | null;
   filePath: string | null;
   rootPath: string | null;
   enabled?: boolean;
@@ -21,6 +23,7 @@ interface UseLintDiagnosticsProps {
  */
 export function useLintDiagnostics({
   editor,
+  monaco,
   filePath,
   rootPath,
   enabled = true,
@@ -67,8 +70,8 @@ export function useLintDiagnostics({
       setFileDiagnostics(filePath, filteredDiagnostics);
 
       // Apply to editor if enabled
-      if (currentSettings.showInEditor && editor) {
-        lintService.applyDiagnosticsToEditor(editor, filteredDiagnostics);
+      if (currentSettings.showInEditor && editor && monaco) {
+        lintService.applyDiagnosticsToEditor(editor, monaco, filteredDiagnostics);
       }
 
       logger.debug('[Lint] Lint completed for:', filePath, {
@@ -86,6 +89,7 @@ export function useLintDiagnostics({
     filePath,
     rootPath,
     editor,
+    monaco,
     enabled,
     setFileDiagnostics,
     setFileDiagnosticsLoading,
@@ -117,11 +121,11 @@ export function useLintDiagnostics({
   // Clear diagnostics when file changes or editor is disabled
   useEffect(() => {
     if (!filePath || !enabled || !settings.enabled) {
-      if (editor && filePath) {
-        lintService.clearDiagnostics(editor);
+      if (editor && filePath && monaco) {
+        lintService.clearDiagnostics(editor, monaco);
       }
     }
-  }, [filePath, enabled, settings.enabled, editor]);
+  }, [filePath, enabled, settings.enabled, editor, monaco]);
 
   // Manual trigger function - call this after file is saved
   const triggerLint = useCallback(() => {
@@ -134,10 +138,10 @@ export function useLintDiagnostics({
 
   // Clear all diagnostics
   const clearDiagnostics = useCallback(() => {
-    if (filePath && editor) {
-      lintService.clearDiagnostics(editor);
+    if (filePath && editor && monaco) {
+      lintService.clearDiagnostics(editor, monaco);
     }
-  }, [filePath, editor]);
+  }, [filePath, editor, monaco]);
 
   return {
     triggerLint,

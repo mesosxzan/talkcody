@@ -115,6 +115,7 @@ describe('Lint Functionality', () => {
       const TestComponent = () => {
         const { triggerLint } = useLintDiagnostics({
           editor: mockEditor as any,
+          monaco: null,
           filePath: '/test/file.ts',
           rootPath: '/test',
           enabled: true,
@@ -146,13 +147,12 @@ describe('Lint Functionality', () => {
     it('should handle full lint workflow', async () => {
       const { lintService } = await import('@/services/lint-service');
 
-      // Mock Monaco editor on window
+      // Mock Monaco editor
       const mockMonaco = {
         editor: {
           setModelMarkers: vi.fn(),
         },
       };
-      (window as any).monaco = mockMonaco;
 
       const mockEditor = {
         getModel: () => ({
@@ -192,11 +192,12 @@ describe('Lint Functionality', () => {
       expect(result.diagnostics[0].message).toBe('Unused variable');
 
       // Apply diagnostics to editor
-      lintService.applyDiagnosticsToEditor(mockEditor as any, result.diagnostics);
-      expect(lintService.applyDiagnosticsToEditor).toHaveBeenCalledWith(mockEditor, mockDiagnostics);
-
-      // Clean up
-      delete (window as any).monaco;
+      lintService.applyDiagnosticsToEditor(mockEditor as any, mockMonaco, result.diagnostics);
+      expect(lintService.applyDiagnosticsToEditor).toHaveBeenCalledWith(
+        mockEditor,
+        mockMonaco,
+        mockDiagnostics
+      );
     });
   });
 });

@@ -105,6 +105,7 @@ export function FileEditor({
   // Lint diagnostics
   const { triggerLint, clearDiagnostics } = useLintDiagnostics({
     editor,
+    monaco: monacoInstance,
     filePath,
     rootPath,
     enabled: lintEnabled,

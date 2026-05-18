@@ -241,6 +241,7 @@ class LintService {
    */
   applyDiagnosticsToEditor(
     editorInstance: editor.IStandaloneCodeEditor,
+    monaco: typeof import('monaco-editor'),
     diagnostics: LintDiagnostic[]
   ): void {
     logger.info('[LintService] applyDiagnosticsToEditor called', {
@@ -250,12 +251,6 @@ class LintService {
     const model = editorInstance.getModel();
     if (!model) {
       logger.warn('[LintService] No model found in editor');
-      return;
-    }
-
-    const monaco = (window as unknown as { monaco?: typeof import('monaco-editor') }).monaco;
-    if (!monaco) {
-      logger.warn('[LintService] Monaco not found on window');
       return;
     }
 
@@ -274,12 +269,12 @@ class LintService {
   /**
    * Clear all diagnostics for a model
    */
-  clearDiagnostics(editor: editor.IStandaloneCodeEditor): void {
+  clearDiagnostics(
+    editor: editor.IStandaloneCodeEditor,
+    monaco: typeof import('monaco-editor')
+  ): void {
     const model = editor.getModel();
     if (!model) return;
-
-    const monaco = (window as unknown as { monaco?: typeof import('monaco-editor') }).monaco;
-    if (!monaco) return;
 
     monaco.editor.setModelMarkers(model, 'biome', []);
   }
