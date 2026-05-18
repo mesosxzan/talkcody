@@ -400,7 +400,7 @@ function AppContent() {
       <Toaster richColors />
 
       {/* Update Notification */}
-      <UpdateNotification checkOnMount={true} periodicCheck={true} />
+      <UpdateNotification checkOnMount={false} periodicCheck={false} />
 
       {/* What's New Dialog - shown after app update */}
       <WhatsNewDialog />
