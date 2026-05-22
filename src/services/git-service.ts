@@ -141,6 +141,13 @@ export class GitService {
   async checkoutTag(repoPath: string, tagName: string): Promise<void> {
     return invoke<void>('git_checkout_tag', { repoPath, tagName });
   }
+
+  /**
+   * Get file content at HEAD (committed version)
+   */
+  async getFileContentAtHead(repoPath: string, filePath: string): Promise<string> {
+    return invoke<string>('git_get_file_content_at_head', { repoPath, filePath });
+  }
 }
 
 // Export a singleton instance

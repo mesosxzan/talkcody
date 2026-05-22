@@ -1067,6 +1067,7 @@ pub fn run() {
             git::git_get_tags,
             git::git_checkout_branch,
             git::git_checkout_tag,
+            git::git_get_file_content_at_head,
             websocket::ws_connect,
             websocket::ws_send,
             websocket::ws_disconnect,

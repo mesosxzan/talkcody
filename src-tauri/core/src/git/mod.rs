@@ -309,3 +309,16 @@ pub async fn git_checkout_branch(repo_path: String, branch_name: String) -> Resu
 pub async fn git_checkout_tag(repo_path: String, tag_name: String) -> Result<(), String> {
     repository::checkout_tag(&repo_path, &tag_name)
 }
+
+/// Get file content at HEAD (committed version)
+#[tauri::command]
+pub async fn git_get_file_content_at_head(
+    repo_path: String,
+    file_path: String,
+) -> Result<String, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    diff::get_file_content_at_head(&repo, &file_path)
+        .map_err(|e| format!("Failed to get file content at HEAD: {}", e))
+}

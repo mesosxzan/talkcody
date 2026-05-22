@@ -17,6 +17,15 @@ export interface OpenFile {
   error: string | null;
   hasUnsavedChanges?: boolean;
   lineNumber?: number;
+  // Diff mode support
+  isDiffMode?: boolean;
+  originalContent?: string;
+  diffInfo?: {
+    additions: number;
+    deletions: number;
+    status: string;
+    oldPath?: string;
+  };
 }
 
 export type LoadingPhase =

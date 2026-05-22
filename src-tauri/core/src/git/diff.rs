@@ -291,6 +291,44 @@ fn format_diff_as_text(diff: Diff) -> Result<String, GitError> {
     Ok(result)
 }
 
+/// Gets the content of a file at HEAD (committed version)
+/// Returns empty string for untracked files or if the file doesn't exist at HEAD
+pub fn get_file_content_at_head(repo: &Repository, file_path: &str) -> Result<String, GitError> {
+    // Try to get HEAD reference
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => {
+            // No HEAD yet (empty repository)
+            return Ok(String::new());
+        }
+    };
+
+    // Get the commit at HEAD
+    let commit = head.peel_to_commit()?;
+
+    // Get the tree at HEAD
+    let tree = commit.tree()?;
+
+    // Try to find the file in the tree
+    let entry = match tree.get_path(std::path::Path::new(file_path)) {
+        Ok(e) => e,
+        Err(_) => {
+            // File doesn't exist at HEAD (new file or deleted)
+            return Ok(String::new());
+        }
+    };
+
+    // Get the blob object
+    let blob = repo.find_blob(entry.id())?;
+
+    // Convert blob content to string
+    let content = std::str::from_utf8(blob.content())
+        .unwrap_or("") // Return empty string if not valid UTF-8
+        .to_string();
+
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

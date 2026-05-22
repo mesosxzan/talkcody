@@ -2453,6 +2453,16 @@ export interface LocaleDefinition {
     switchedToTag: string;
     failedToSwitchBranch: string;
     failedToSwitchTag: string;
+    diffView: string;
+    original: string;
+    current: string;
+    additions: string;
+    deletions: string;
+    backToChanges: string;
+    previousChange: string;
+    nextChange: string;
+    changeNavigation: string;
+    noChangesToNavigate: string;
     fileStatus: {
       added: string;
       deleted: string;

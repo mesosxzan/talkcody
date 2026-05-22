@@ -11,6 +11,7 @@ import { logger } from '@/lib/logger';
 import { useLintStore } from '@/stores/lint-store';
 import { useRepositoryStore } from '@/stores/window-scoped-repository-store';
 import type { FileEditorProps } from '@/types/file-editor';
+import { DiffFileEditor } from './file-editor/diff-file-editor';
 import { FileEditorContent } from './file-editor/file-editor-content';
 import { FileEditorEmptyState } from './file-editor/file-editor-empty-state';
 import { FileEditorErrorState } from './file-editor/file-editor-error-state';
@@ -27,6 +28,9 @@ export function FileEditor({
   onFileSaved,
   lineNumber,
   onGlobalSearch,
+  isDiffMode,
+  originalContent,
+  diffInfo,
 }: FileEditorProps) {
   // Repository state
   const rootPath = useRepositoryStore((state) => state.rootPath);
@@ -212,6 +216,23 @@ export function FileEditor({
   }, [cleanupAI, cleanupState, editor, filePath, clearDiagnostics]);
 
   // Handle different states
+  // If in diff mode, render the diff editor (after all hooks are called)
+  if (isDiffMode && filePath) {
+    return (
+      <DiffFileEditor
+        file={{
+          path: filePath,
+          content: fileContent ?? '',
+          isLoading,
+          error,
+          isDiffMode: true,
+          originalContent: originalContent ?? '',
+          diffInfo: diffInfo || { additions: 0, deletions: 0, status: 'modified' },
+        }}
+      />
+    );
+  }
+
   if (!filePath) {
     return <FileEditorEmptyState />;
   }

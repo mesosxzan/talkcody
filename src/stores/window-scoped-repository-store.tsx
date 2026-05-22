@@ -45,6 +45,7 @@ interface RepositoryActions {
   setLoadingPhase: (phase: LoadingPhase) => void;
   setIndexingProgress: (progress: IndexingProgress | null) => void;
   selectFile: (filePath: string, lineNumber?: number) => Promise<void>;
+  openDiffFile: (filePath: string) => Promise<void>;
   switchToTab: (index: number) => Promise<void>;
   closeTab: (index: number) => void;
   closeOthers: (keepIndex: number) => void;
@@ -402,6 +403,93 @@ function createRepositoryStore() {
         }));
 
         toast.error(getTranslations().RepositoryStore.errors.failedToRead(errorMessage));
+      }
+    },
+
+    // Open a file in diff mode (for Git changes)
+    openDiffFile: async (filePath: string) => {
+      const { openFiles, rootPath } = get();
+
+      if (!rootPath) {
+        toast.error('No repository open');
+        return;
+      }
+
+      // Check if file is already open in diff mode
+      const existingIndex = openFiles.findIndex(
+        (file) => arePathsEqual(file.path, filePath) && file.isDiffMode
+      );
+      if (existingIndex !== -1) {
+        set({ activeFileIndex: existingIndex });
+        return;
+      }
+
+      // Import gitService dynamically to avoid circular dependency
+      const { gitService } = await import('@/services/git-service');
+
+      // Create a new file entry in diff mode
+      const newFile: OpenFile = {
+        path: filePath,
+        content: null,
+        isLoading: true,
+        error: null,
+        isDiffMode: true,
+        originalContent: '',
+        diffInfo: {
+          additions: 0,
+          deletions: 0,
+          status: 'modified',
+        },
+      };
+
+      set((state) => ({
+        openFiles: [...state.openFiles, newFile],
+        activeFileIndex: state.openFiles.length,
+        isLoading: true,
+        error: null,
+      }));
+
+      try {
+        // Get both original and modified content in parallel
+        // Use repositoryService.readFile for proper path handling
+        const [originalContent, modifiedContent, fileDiff] = await Promise.all([
+          gitService.getFileContentAtHead(rootPath, filePath),
+          repositoryService.readFile(rootPath, filePath).catch(() => ''),
+          gitService.getFileDiff(rootPath, filePath).catch(() => null),
+        ]);
+
+        set((state) => ({
+          openFiles: state.openFiles.map((file) =>
+            arePathsEqual(file.path, filePath) && file.isDiffMode
+              ? {
+                  ...file,
+                  content: modifiedContent || '',
+                  originalContent: originalContent || '',
+                  isLoading: false,
+                  error: null,
+                  diffInfo: {
+                    additions: fileDiff?.additions || 0,
+                    deletions: fileDiff?.deletions || 0,
+                    status: fileDiff?.status || 'modified',
+                    oldPath: fileDiff?.oldPath || undefined,
+                  },
+                }
+              : file
+          ),
+          isLoading: false,
+        }));
+      } catch (error) {
+        const errorMessage = (error as Error).message;
+        set((state) => ({
+          openFiles: state.openFiles.map((file) =>
+            arePathsEqual(file.path, filePath) && file.isDiffMode
+              ? { ...file, error: errorMessage, isLoading: false }
+              : file
+          ),
+          isLoading: false,
+        }));
+
+        toast.error(`Failed to load diff: ${errorMessage}`);
       }
     },
 

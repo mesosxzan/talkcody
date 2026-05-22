@@ -5,7 +5,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { EmptyRepositoryState } from '@/components/empty-repository-state';
 import { FileTree } from '@/components/file-tree';
 import { FileTreeHeader } from '@/components/file-tree-header';
-import { GitCommitPanel } from '@/components/git/git-commit-panel';
+import { GitPanel } from '@/components/git/git-panel';
 import { TaskList } from '@/components/task-list';
 import { TaskQueueCard } from '@/components/task-queue/task-queue-card';
 import { Button } from '@/components/ui/button';
@@ -319,7 +319,7 @@ export const RepositorySidebar = memo(function RepositorySidebar({
             {/* Git Panel */}
             {hasRepository && sidebarView === SidebarView.GIT && (
               <div className="flex flex-1 flex-col overflow-hidden">
-                <GitCommitPanel onFileClick={onFileSelect} />
+                <GitPanel />
               </div>
             )}
           </div>

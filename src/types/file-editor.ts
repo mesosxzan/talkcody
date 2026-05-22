@@ -1,5 +1,12 @@
 import type { IPosition } from 'monaco-editor';
 
+export interface DiffInfo {
+  additions: number;
+  deletions: number;
+  status: string;
+  oldPath?: string;
+}
+
 export interface FileEditorProps {
   filePath: string | null;
   fileContent: string | null;
@@ -10,6 +17,10 @@ export interface FileEditorProps {
   onFileSaved?: (filePath: string) => void;
   lineNumber?: number;
   onGlobalSearch?: () => void; // Add this prop
+  // Diff mode support
+  isDiffMode?: boolean;
+  originalContent?: string;
+  diffInfo?: DiffInfo;
 }
 
 export interface AICompletionState {

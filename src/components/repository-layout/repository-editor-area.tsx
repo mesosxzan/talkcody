@@ -1,5 +1,4 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
-import type React from 'react';
 import { memo } from 'react';
 import { DiagnosticsPanel } from '@/components/diagnostics/diagnostics-panel';
 import { FileEditor } from '@/components/file-editor';
@@ -143,6 +142,9 @@ export const RepositoryEditorArea = memo(function RepositoryEditorArea({
                       lineNumber={currentFile?.lineNumber}
                       onContentChange={onContentChange}
                       onGlobalSearch={onToggleContentSearch}
+                      isDiffMode={currentFile?.isDiffMode}
+                      originalContent={currentFile?.originalContent}
+                      diffInfo={currentFile?.diffInfo}
                     />
                   </div>
                 </div>
