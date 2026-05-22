@@ -90,6 +90,16 @@ pub async fn git_get_raw_diff_text(repo_path: String) -> Result<String, String> 
     diff::get_raw_diff_text(&repo).map_err(|e| format!("Failed to get raw diff text: {}", e))
 }
 
+/// Gets raw diff text for staged files only (for AI commit message generation)
+/// Returns text similar to `git diff --cached` output - the actual content that will be committed
+#[tauri::command]
+pub async fn git_get_staged_diff_text(repo_path: String) -> Result<String, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    diff::get_staged_diff_text(&repo).map_err(|e| format!("Failed to get staged diff text: {}", e))
+}
+
 // ============================================================================
 // Worktree Commands
 // ============================================================================

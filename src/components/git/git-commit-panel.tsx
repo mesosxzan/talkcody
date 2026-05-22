@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
@@ -129,13 +130,18 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const handleGenerateAI = async () => {
     if (!repositoryPath) return;
 
+    if (!hasStagedChanges) {
+      toast.error('No staged changes to generate commit message from');
+      return;
+    }
+
     setIsGenerating(true);
     try {
-      // Get diff text for staged files
-      const diffText = await gitService.getRawDiffText(repositoryPath);
+      // Get diff text for staged files only (the actual content that will be committed)
+      const diffText = await gitService.getStagedDiffText(repositoryPath);
 
       if (!diffText || diffText.trim().length === 0) {
-        toast.error('No changes to generate commit message from');
+        toast.error('No staged changes to generate commit message from');
         return;
       }
 
@@ -278,20 +284,23 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
         <div className="flex flex-col py-2">
           {/* Staged files with batch unstage */}
           {stagedFiles.length > 0 && (
-            <div className="flex items-center justify-between px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
+              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
                 Staged Changes ({stagedFiles.length})
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 gap-1 px-2 text-xs"
-                onClick={handleUnstageAll}
-                title="Unstage all staged files"
-              >
-                <Minus className="h-3 w-3" />
-                Unstage All
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    onClick={handleUnstageAll}
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Unstage all staged files</TooltipContent>
+              </Tooltip>
             </div>
           )}
           <GitFileList
@@ -304,20 +313,23 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
 
           {/* Modified files with batch stage */}
           {modifiedFiles.length > 0 && (
-            <div className="flex items-center justify-between px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
+              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
                 Changes ({modifiedFiles.length})
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 gap-1 px-2 text-xs"
-                onClick={handleStageAllModified}
-                title="Stage all modified files"
-              >
-                <Plus className="h-3 w-3" />
-                Stage All
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    onClick={handleStageAllModified}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Stage all modified files</TooltipContent>
+              </Tooltip>
             </div>
           )}
           <GitFileList
@@ -331,20 +343,23 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
 
           {/* Untracked files with batch stage */}
           {untrackedFiles.length > 0 && (
-            <div className="flex items-center justify-between px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground">
+            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
+              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
                 Untracked ({untrackedFiles.length})
               </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 gap-1 px-2 text-xs"
-                onClick={handleStageAllUntracked}
-                title="Stage all untracked files"
-              >
-                <Plus className="h-3 w-3" />
-                Stage All
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0 flex-shrink-0"
+                    onClick={handleStageAllUntracked}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Stage all untracked files</TooltipContent>
+              </Tooltip>
             </div>
           )}
           <GitFileList

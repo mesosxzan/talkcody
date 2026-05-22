@@ -59,6 +59,14 @@ export class GitService {
   }
 
   /**
+   * Gets raw diff text for staged files only (for AI commit message generation)
+   * Returns text similar to `git diff --cached` output - the actual content that will be committed
+   */
+  async getStagedDiffText(repoPath: string): Promise<string> {
+    return invoke<string>('git_get_staged_diff_text', { repoPath });
+  }
+
+  /**
    * Stages files for commit
    */
   async stageFiles(repoPath: string, filePaths: string[]): Promise<void> {

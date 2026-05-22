@@ -1,4 +1,4 @@
-// Tests for useMarketplaceSkills hook
+// Tests for useMarketplaceSkills hook1
 
 import { renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

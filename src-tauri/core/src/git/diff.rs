@@ -209,6 +209,23 @@ pub fn get_raw_diff_text(repo: &Repository) -> Result<String, GitError> {
     format_diff_as_text(diff)
 }
 
+/// Generates raw diff text for staged files only (staged changes vs HEAD)
+/// This is the actual content that will be committed
+/// Returns a string similar to `git diff --cached` output, suitable for AI processing
+pub fn get_staged_diff_text(repo: &Repository) -> Result<String, GitError> {
+    let mut opts = DiffOptions::new();
+
+    // Get HEAD tree
+    let head = repo.head()?;
+    let head_tree = head.peel_to_tree()?;
+
+    // Create diff between HEAD and index (staged changes only)
+    // This is equivalent to `git diff --cached`
+    let diff = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut opts))?;
+
+    format_diff_as_text(diff)
+}
+
 /// Formats a git2::Diff as human-readable text similar to `git diff` output
 fn format_diff_as_text(diff: Diff) -> Result<String, GitError> {
     use std::cell::RefCell;

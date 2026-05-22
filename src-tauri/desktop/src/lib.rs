@@ -1042,6 +1042,7 @@ pub fn run() {
             git::git_get_line_changes,
             git::git_get_all_file_diffs,
             git::git_get_raw_diff_text,
+            git::git_get_staged_diff_text,
             git::git_get_default_worktree_root,
             git::git_acquire_worktree,
             git::git_release_worktree,
