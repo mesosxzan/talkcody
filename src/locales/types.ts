@@ -2431,6 +2431,7 @@ export interface LocaleDefinition {
     commitPlaceholder: string;
     commitButton: string;
     staged: string;
+    stagedChanges: string;
     modified: string;
     untracked: string;
     noChanges: string;
@@ -2479,6 +2480,15 @@ export interface LocaleDefinition {
       generateSuccess: string;
       noStagedChanges: string;
       emptyMessage: string;
+      stageAllSuccess: string;
+      unstageAllSuccess: string;
+    };
+    tooltips: {
+      unstageAll: string;
+      stageAllModified: string;
+      stageAllUntracked: string;
+      generateMessage: string;
+      generatingMessage: string;
     };
   };
 

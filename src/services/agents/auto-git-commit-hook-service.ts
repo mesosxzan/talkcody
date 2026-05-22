@@ -101,8 +101,14 @@ export class AutoGitCommitHookService implements CompletionHook {
         return { action: 'skip' };
       }
 
-      // Generate AI commit message
-      const commitResult = await aiGitMessagesService.generateCommitMessage({ diffText });
+      // Get current language from settings
+      const language = useSettingsStore.getState().language;
+
+      // Generate AI commit message with language
+      const commitResult = await aiGitMessagesService.generateCommitMessage({
+        diffText,
+        language,
+      });
 
       if (!commitResult?.message) {
         logger.warn('[AutoGitCommit] Failed to generate commit message, skipping', { taskId });

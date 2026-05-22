@@ -57,6 +57,8 @@ pub struct GitMessageContext {
     pub model: Option<String>,
     #[serde(default, rename = "fallbackModels")]
     pub fallback_models: Option<Vec<String>>,
+    /// Language for the commit message (e.g., "en", "zh")
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

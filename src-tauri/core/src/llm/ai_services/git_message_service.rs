@@ -79,6 +79,18 @@ impl GitMessageService {
             .map(|input| format!("User task description: \"{}\"\n", input))
             .unwrap_or_default();
 
+        // Determine language instruction based on context.language
+        let language_instruction: String = match context.language.as_deref() {
+            Some("zh") | Some("zh-CN") | Some("zh-Hans") => {
+                "Generate the commit message in Chinese (中文).".to_string()
+            }
+            Some("en") | Some("en-US") | Some("en-GB") => {
+                "Generate the commit message in English.".to_string()
+            }
+            Some(lang) => format!("Generate the commit message in {} language.", lang),
+            None => "Generate the commit message in English.".to_string(),
+        };
+
         format!(
             "You are an AI assistant that generates concise and meaningful git commit messages following conventional commit format.\n\n\
              {}\
@@ -89,14 +101,15 @@ impl GitMessageService {
              2. Types: feat, fix, docs, style, refactor, test, chore\n\
              3. Keep the message under 72 characters for the subject line\n\
              4. Be specific about what was changed based on the actual diff content\n\
-             5. Use imperative mood (e.g., \"add\", \"fix\", \"update\")\n\n\
+             5. Use imperative mood (e.g., \"add\", \"fix\", \"update\")\n\
+             6. {}\n\n\
              Examples:\n\
              - feat(auth): add user authentication system\n\
              - fix(api): resolve data validation error\n\
              - docs: update installation instructions\n\
              - refactor: simplify user service logic\n\n\
              Provide ONLY the commit message without any explanations or formatting.",
-            user_input_section, context.diff_text
+            user_input_section, context.diff_text, language_instruction
         )
     }
 

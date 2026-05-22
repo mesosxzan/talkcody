@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
@@ -18,6 +19,7 @@ interface GitCommitPanelProps {
 }
 
 export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
+  const { locale, t } = useLocale();
   const gitStatus = useGitStore((state) => state.gitStatus);
   const repositoryPath = useGitStore((state) => state.repositoryPath);
   const isLoading = useGitStore((state) => state.isLoading);
@@ -57,14 +59,14 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     try {
       if (stage) {
         await stageFiles([filePath]);
-        toast.success(`Staged ${filePath}`);
+        toast.success(t.Git.messages.stageSuccess);
       } else {
         await unstageFiles([filePath]);
-        toast.success(`Unstaged ${filePath}`);
+        toast.success(t.Git.messages.unstageSuccess);
       }
     } catch (error) {
       logger.error('Failed to toggle stage:', error);
-      toast.error(stage ? 'Failed to stage file' : 'Failed to unstage file');
+      toast.error(stage ? t.Git.messages.stageSuccess : t.Git.messages.unstageSuccess);
     }
   };
 
@@ -75,10 +77,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       if (filePaths.length === 0) return;
 
       await stageFiles(filePaths);
-      toast.success(`Staged ${filePaths.length} modified files`);
+      toast.success(t.Git.messages.stageSuccess);
     } catch (error) {
       logger.error('Failed to stage all modified files:', error);
-      toast.error('Failed to stage all modified files');
+      toast.error(t.Git.messages.stageSuccess);
     }
   };
 
@@ -89,10 +91,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       if (filePaths.length === 0) return;
 
       await stageFiles(filePaths);
-      toast.success(`Staged ${filePaths.length} untracked files`);
+      toast.success(t.Git.messages.stageSuccess);
     } catch (error) {
       logger.error('Failed to stage all untracked files:', error);
-      toast.error('Failed to stage all untracked files');
+      toast.error(t.Git.messages.stageSuccess);
     }
   };
 
@@ -103,10 +105,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       if (filePaths.length === 0) return;
 
       await unstageFiles(filePaths);
-      toast.success(`Unstaged ${filePaths.length} files`);
+      toast.success(t.Git.messages.unstageSuccess);
     } catch (error) {
       logger.error('Failed to unstage all files:', error);
-      toast.error('Failed to unstage all files');
+      toast.error(t.Git.messages.unstageSuccess);
     }
   };
 
@@ -114,10 +116,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const handleDiscard = async (filePath: string) => {
     try {
       await discardChanges(filePath);
-      toast.success(`Discarded changes in ${filePath}`);
+      toast.success(t.Git.messages.discardSuccess);
     } catch (error) {
       logger.error('Failed to discard changes:', error);
-      toast.error('Failed to discard changes');
+      toast.error(t.Git.messages.discardSuccess);
     }
   };
 
@@ -131,7 +133,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     if (!repositoryPath) return;
 
     if (!hasStagedChanges) {
-      toast.error('No staged changes to generate commit message from');
+      toast.error(t.Git.messages.noStagedChanges);
       return;
     }
 
@@ -141,23 +143,24 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       const diffText = await gitService.getStagedDiffText(repositoryPath);
 
       if (!diffText || diffText.trim().length === 0) {
-        toast.error('No staged changes to generate commit message from');
+        toast.error(t.Git.messages.noStagedChanges);
         return;
       }
 
       const result = await aiGitMessagesService.generateCommitMessage({
         diffText,
+        language: locale,
       });
 
       if (result?.message) {
         setCommitMessage(result.message);
-        toast.success('Generated commit message');
+        toast.success(t.Git.messages.generateSuccess);
       } else {
-        toast.error('Failed to generate commit message');
+        toast.error(t.Git.messages.generateSuccess);
       }
     } catch (error) {
       logger.error('Failed to generate commit message:', error);
-      toast.error('Failed to generate commit message');
+      toast.error(t.Git.messages.generateSuccess);
     } finally {
       setIsGenerating(false);
     }
@@ -166,23 +169,23 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   // Handle commit
   const handleCommit = async () => {
     if (!commitMessage.trim()) {
-      toast.error('Please enter a commit message');
+      toast.error(t.Git.messages.emptyMessage);
       return;
     }
 
     if (!hasStagedChanges) {
-      toast.error('No staged changes to commit');
+      toast.error(t.Git.messages.noStagedChanges);
       return;
     }
 
     setIsCommitting(true);
     try {
       const commitHash = await commit(commitMessage);
-      toast.success(`Committed: ${commitHash.substring(0, 7)}`);
+      toast.success(`${t.Git.messages.commitSuccess}: ${commitHash.substring(0, 7)}`);
       setCommitMessage('');
     } catch (error) {
       logger.error('Failed to commit:', error);
-      toast.error('Failed to commit');
+      toast.error(t.Git.messages.commitSuccess);
     } finally {
       setIsCommitting(false);
     }
@@ -192,10 +195,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const handleRefresh = async () => {
     try {
       await refreshStatus();
-      toast.success('Refreshed Git status');
+      toast.success(t.Git.refresh);
     } catch (error) {
       logger.error('Failed to refresh:', error);
-      toast.error('Failed to refresh');
+      toast.error(t.Git.refresh);
     }
   };
 
@@ -207,7 +210,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       toast.success(result);
     } catch (error) {
       logger.error('Failed to push:', error);
-      toast.error('Failed to push to remote');
+      toast.error(t.Git.messages.commitSuccess);
     } finally {
       setIsPushing(false);
     }
@@ -219,7 +222,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       <div className="flex items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <GitBranch className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">{gitStatus?.branch?.name || 'No branch'}</span>
+          <span className="text-sm font-medium">{gitStatus?.branch?.name || t.Git.noBranch}</span>
         </div>
         <Button
           variant="ghost"
@@ -240,7 +243,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           onGenerateAI={handleGenerateAI}
           isGenerating={isGenerating}
           disabled={!hasStagedChanges}
-          placeholder={hasStagedChanges ? 'Enter commit message...' : 'Stage changes first...'}
+          placeholder={hasStagedChanges ? t.Git.commitPlaceholder : t.Git.messages.noStagedChanges}
         />
 
         {/* Commit button - moved to under message input */}
@@ -253,12 +256,12 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             {isCommitting ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Committing...
+                {t.Git.generating}
               </>
             ) : (
               <>
                 <Check className="mr-2 h-4 w-4" />
-                Commit
+                {t.Git.commitButton}
               </>
             )}
           </Button>
@@ -268,7 +271,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             variant="outline"
             onClick={handlePush}
             disabled={isPushing}
-            title="Push commits to remote"
+            title={t.Git.messages.commitSuccess}
           >
             {isPushing ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -286,7 +289,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           {stagedFiles.length > 0 && (
             <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
               <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                Staged Changes ({stagedFiles.length})
+                {t.Git.staged} ({stagedFiles.length})
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -299,7 +302,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
                     <Minus className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="left">Unstage all staged files</TooltipContent>
+                <TooltipContent side="left">{t.Git.unstage}</TooltipContent>
               </Tooltip>
             </div>
           )}
@@ -315,7 +318,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           {modifiedFiles.length > 0 && (
             <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
               <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                Changes ({modifiedFiles.length})
+                {t.Git.changes} ({modifiedFiles.length})
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -328,7 +331,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="left">Stage all modified files</TooltipContent>
+                <TooltipContent side="left">{t.Git.stage}</TooltipContent>
               </Tooltip>
             </div>
           )}
@@ -345,7 +348,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           {untrackedFiles.length > 0 && (
             <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
               <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                Untracked ({untrackedFiles.length})
+                {t.Git.untracked} ({untrackedFiles.length})
               </span>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -358,7 +361,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
                     <Plus className="h-3.5 w-3.5" />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent side="left">Stage all untracked files</TooltipContent>
+                <TooltipContent side="left">{t.Git.stage}</TooltipContent>
               </Tooltip>
             </div>
           )}
@@ -373,7 +376,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           {/* Empty state */}
           {!hasChanges && !isLoading && (
             <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-              No changes
+              {t.Git.noChanges}
             </div>
           )}
 

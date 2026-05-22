@@ -2528,6 +2528,7 @@ const zh: LocaleDefinition = {
     commitPlaceholder: '输入提交消息...',
     commitButton: '提交',
     staged: '已暂存',
+    stagedChanges: '已暂存变更',
     modified: '已修改',
     untracked: '未跟踪',
     noChanges: '无变更',
@@ -2576,6 +2577,15 @@ const zh: LocaleDefinition = {
       generateSuccess: '提交消息已生成',
       noStagedChanges: '没有已暂存的变更可提交',
       emptyMessage: '请输入提交消息',
+      stageAllSuccess: '文件已暂存',
+      unstageAllSuccess: '文件已取消暂存',
+    },
+    tooltips: {
+      unstageAll: '取消暂存所有已暂存文件',
+      stageAllModified: '暂存所有已修改文件',
+      stageAllUntracked: '暂存所有未跟踪文件',
+      generateMessage: 'AI 生成提交消息',
+      generatingMessage: '正在生成提交消息...',
     },
   },
 };

@@ -262,6 +262,7 @@ export type GitMessageContext = {
   diffText: string;
   model?: string | null;
   fallbackModels?: string[] | null;
+  language?: string | null;
 };
 
 export type GitMessageResult = {
