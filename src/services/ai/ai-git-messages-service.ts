@@ -14,7 +14,7 @@ class AIGitMessagesService {
         return null;
       }
 
-      const modelChain = await modelTypeService.resolveModelTypeChain(ModelType.SMALL);
+      const modelChain = await modelTypeService.resolveModelTypeChain(ModelType.CODE_REVIEW);
       const [model, ...fallbackModels] = modelChain;
 
       const result = await llmClient.generateCommitMessage({

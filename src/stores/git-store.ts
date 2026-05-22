@@ -25,6 +25,15 @@ interface GitStore {
   setLineChanges: (filePath: string, changes: LineChange[]) => void;
   clearLineChangesCache: () => void;
   clearState: () => void;
+
+  // Git Operations
+  stageFiles: (filePaths: string[]) => Promise<void>;
+  unstageFiles: (filePaths: string[]) => Promise<void>;
+  commit: (message: string) => Promise<string>;
+  stageAll: () => Promise<void>;
+  discardChanges: (filePath: string) => Promise<void>;
+  push: (remote?: string, branch?: string) => Promise<string>;
+  pull: (remote?: string, branch?: string) => Promise<string>;
 }
 
 // Track in-flight requests to prevent duplicate fetches
@@ -277,5 +286,134 @@ export const useGitStore = create<GitStore>((set, get) => ({
       error: null,
       lastRefresh: null,
     });
+  },
+
+  // Stage files for commit
+  stageFiles: async (filePaths: string[]) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.stageFiles(repositoryPath, filePaths);
+      logger.info(`Staged ${filePaths.length} files`);
+      // Refresh status after staging
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to stage files:', error);
+      throw error;
+    }
+  },
+
+  // Unstage files (reset to HEAD)
+  unstageFiles: async (filePaths: string[]) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.unstageFiles(repositoryPath, filePaths);
+      logger.info(`Unstaged ${filePaths.length} files`);
+      // Refresh status after unstaging
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to unstage files:', error);
+      throw error;
+    }
+  },
+
+  // Commit staged changes
+  commit: async (message: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const commitHash = await gitService.commit(repositoryPath, message);
+      logger.info(`Committed changes: ${commitHash}`);
+      // Refresh status after commit
+      await get().refreshStatus();
+      return commitHash;
+    } catch (error) {
+      logger.error('Failed to commit:', error);
+      throw error;
+    }
+  },
+
+  // Stage all changes
+  stageAll: async () => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.stageAll(repositoryPath);
+      logger.info('Staged all changes');
+      // Refresh status after staging
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to stage all changes:', error);
+      throw error;
+    }
+  },
+
+  // Discard changes in a file
+  discardChanges: async (filePath: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.discardChanges(repositoryPath, filePath);
+      logger.info(`Discarded changes in ${filePath}`);
+      // Refresh status after discarding
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to discard changes:', error);
+      throw error;
+    }
+  },
+
+  // Push commits to remote
+  push: async (remote?: string, branch?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const result = await gitService.push(repositoryPath, remote, branch);
+      logger.info(`Pushed to remote: ${result}`);
+      // Refresh status after push
+      await get().refreshStatus();
+      return result;
+    } catch (error) {
+      logger.error('Failed to push:', error);
+      throw error;
+    }
+  },
+
+  // Pull changes from remote
+  pull: async (remote?: string, branch?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const result = await gitService.pull(repositoryPath, remote, branch);
+      logger.info(`Pulled from remote: ${result}`);
+      // Refresh status after pull
+      await get().refreshStatus();
+      return result;
+    } catch (error) {
+      logger.error('Failed to pull:', error);
+      throw error;
+    }
   },
 }));

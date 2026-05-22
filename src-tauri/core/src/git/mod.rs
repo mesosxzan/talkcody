@@ -1,4 +1,5 @@
 pub mod diff;
+pub mod operations;
 pub mod repository;
 pub mod status;
 pub mod types;
@@ -210,4 +211,67 @@ pub async fn git_sync_worktree_from_main(
 #[tauri::command]
 pub async fn git_abort_rebase(worktree_path: String) -> Result<(), String> {
     worktree::abort_rebase(&worktree_path)
+}
+
+// ============================================================================
+// Git Operations Commands (Stage, Unstage, Commit)
+// ============================================================================
+
+/// Stage files for commit
+#[tauri::command]
+pub async fn git_stage_files(repo_path: String, file_paths: Vec<String>) -> Result<(), String> {
+    operations::stage_files(&repo_path, &file_paths)
+}
+
+/// Unstage files (reset to HEAD)
+#[tauri::command]
+pub async fn git_unstage_files(repo_path: String, file_paths: Vec<String>) -> Result<(), String> {
+    operations::unstage_files(&repo_path, &file_paths)
+}
+
+/// Commit staged changes with a message
+#[tauri::command]
+pub async fn git_commit(repo_path: String, message: String) -> Result<String, String> {
+    operations::commit_changes(&repo_path, &message)
+}
+
+/// Stage all changes (git add -A)
+#[tauri::command]
+pub async fn git_stage_all(repo_path: String) -> Result<(), String> {
+    operations::stage_all(&repo_path)
+}
+
+/// Discard changes in a file (checkout -- file)
+#[tauri::command]
+pub async fn git_discard_changes(repo_path: String, file_path: String) -> Result<(), String> {
+    operations::discard_changes(&repo_path, &file_path)
+}
+
+/// Get diff for a specific file
+#[tauri::command]
+pub async fn git_get_file_diff(repo_path: String, file_path: String) -> Result<FileDiff, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    diff::get_file_diff(&repo, &file_path).map_err(|e| format!("Failed to get file diff: {}", e))
+}
+
+/// Push commits to remote repository
+#[tauri::command]
+pub async fn git_push(
+    repo_path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+) -> Result<String, String> {
+    operations::push(&repo_path, remote.as_deref(), branch.as_deref())
+}
+
+/// Pull changes from remote repository
+#[tauri::command]
+pub async fn git_pull(
+    repo_path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+) -> Result<String, String> {
+    operations::pull(&repo_path, remote.as_deref(), branch.as_deref())
 }

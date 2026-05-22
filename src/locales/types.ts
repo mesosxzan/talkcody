@@ -1283,6 +1283,7 @@ export interface LocaleDefinition {
   Sidebar: {
     files: string;
     tasks: string;
+    git: string;
     filesTab: string;
     tasksTab: string;
     toggleView: string;
@@ -2419,6 +2420,47 @@ export interface LocaleDefinition {
     page: {
       tooltipTitle: string;
       tooltipDescription: string;
+    };
+  };
+
+  Git: {
+    title: string;
+    description: string;
+    commit: string;
+    commitMessage: string;
+    commitPlaceholder: string;
+    commitButton: string;
+    staged: string;
+    modified: string;
+    untracked: string;
+    noChanges: string;
+    stage: string;
+    unstage: string;
+    discard: string;
+    discardConfirm: string;
+    discardDescription: string;
+    generateMessage: string;
+    generating: string;
+    refresh: string;
+    branch: string;
+    noBranch: string;
+    changes: string;
+    fileStatus: {
+      added: string;
+      deleted: string;
+      modified: string;
+      renamed: string;
+      untracked: string;
+      conflicted: string;
+    };
+    messages: {
+      stageSuccess: string;
+      unstageSuccess: string;
+      discardSuccess: string;
+      commitSuccess: string;
+      generateSuccess: string;
+      noStagedChanges: string;
+      emptyMessage: string;
     };
   };
 

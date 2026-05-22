@@ -50,6 +50,62 @@ export class GitService {
   async getRawDiffText(repoPath: string): Promise<string> {
     return invoke<string>('git_get_raw_diff_text', { repoPath });
   }
+
+  /**
+   * Stages files for commit
+   */
+  async stageFiles(repoPath: string, filePaths: string[]): Promise<void> {
+    return invoke<void>('git_stage_files', { repoPath, filePaths });
+  }
+
+  /**
+   * Unstages files (reset to HEAD)
+   */
+  async unstageFiles(repoPath: string, filePaths: string[]): Promise<void> {
+    return invoke<void>('git_unstage_files', { repoPath, filePaths });
+  }
+
+  /**
+   * Commits staged changes with a message
+   */
+  async commit(repoPath: string, message: string): Promise<string> {
+    return invoke<string>('git_commit', { repoPath, message });
+  }
+
+  /**
+   * Stages all changes (git add -A)
+   */
+  async stageAll(repoPath: string): Promise<void> {
+    return invoke<void>('git_stage_all', { repoPath });
+  }
+
+  /**
+   * Discards changes in a file (checkout -- file)
+   */
+  async discardChanges(repoPath: string, filePath: string): Promise<void> {
+    return invoke<void>('git_discard_changes', { repoPath, filePath });
+  }
+
+  /**
+   * Gets diff for a specific file
+   */
+  async getFileDiff(repoPath: string, filePath: string): Promise<FileDiff> {
+    return invoke<FileDiff>('git_get_file_diff', { repoPath, filePath });
+  }
+
+  /**
+   * Push commits to remote repository
+   */
+  async push(repoPath: string, remote?: string, branch?: string): Promise<string> {
+    return invoke<string>('git_push', { repoPath, remote, branch });
+  }
+
+  /**
+   * Pull changes from remote repository
+   */
+  async pull(repoPath: string, remote?: string, branch?: string): Promise<string> {
+    return invoke<string>('git_pull', { repoPath, remote, branch });
+  }
 }
 
 // Export a singleton instance
