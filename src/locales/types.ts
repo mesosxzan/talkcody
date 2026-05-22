@@ -2445,6 +2445,14 @@ export interface LocaleDefinition {
     branch: string;
     noBranch: string;
     changes: string;
+    branches: string;
+    tags: string;
+    searchBranches: string;
+    noResults: string;
+    switchedToBranch: string;
+    switchedToTag: string;
+    failedToSwitchBranch: string;
+    failedToSwitchTag: string;
     fileStatus: {
       added: string;
       deleted: string;

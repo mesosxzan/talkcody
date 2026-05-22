@@ -5,7 +5,7 @@ pub mod status;
 pub mod types;
 pub mod worktree;
 
-use types::{DiffLineType, FileDiff, GitFileStatus, GitStatus};
+use types::{BranchInfo, DiffLineType, FileDiff, GitFileStatus, GitStatus, TagInfo};
 use worktree::{MergeResult, SyncResult, WorktreeChanges, WorktreeInfo, WorktreePoolStatus};
 
 /// Gets the Git status for a repository at the given path
@@ -274,4 +274,38 @@ pub async fn git_pull(
     branch: Option<String>,
 ) -> Result<String, String> {
     operations::pull(&repo_path, remote.as_deref(), branch.as_deref())
+}
+
+// ============================================================================
+// Branch and Tag Commands
+// ============================================================================
+
+/// Get all branches in the repository
+#[tauri::command]
+pub async fn git_get_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    repository::get_all_branches(&repo).map_err(|e| format!("Failed to get branches: {}", e))
+}
+
+/// Get all tags in the repository
+#[tauri::command]
+pub async fn git_get_tags(repo_path: String) -> Result<Vec<TagInfo>, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    repository::get_all_tags(&repo).map_err(|e| format!("Failed to get tags: {}", e))
+}
+
+/// Checkout a branch
+#[tauri::command]
+pub async fn git_checkout_branch(repo_path: String, branch_name: String) -> Result<(), String> {
+    repository::checkout_branch(&repo_path, &branch_name)
+}
+
+/// Checkout a tag (creates detached HEAD state)
+#[tauri::command]
+pub async fn git_checkout_tag(repo_path: String, tag_name: String) -> Result<(), String> {
+    repository::checkout_tag(&repo_path, &tag_name)
 }

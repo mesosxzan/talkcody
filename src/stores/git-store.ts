@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
 import { gitService } from '@/services/git-service';
-import type { FileStatusMap, GitStatus, LineChange } from '@/types/git';
+import type { BranchInfo, FileStatusMap, GitStatus, LineChange, TagInfo } from '@/types/git';
 import { GitFileStatus } from '@/types/git';
 
 interface GitStore {
@@ -14,6 +14,10 @@ interface GitStore {
   isLoading: boolean;
   error: string | null;
   lastRefresh: number | null;
+  branches: BranchInfo[];
+  tags: TagInfo[];
+  isLoadingBranches: boolean;
+  isLoadingTags: boolean;
 
   // Actions
   initialize: (repoPath: string) => Promise<void>;
@@ -25,6 +29,12 @@ interface GitStore {
   setLineChanges: (filePath: string, changes: LineChange[]) => void;
   clearLineChangesCache: () => void;
   clearState: () => void;
+
+  // Branch and Tag Actions
+  loadBranches: () => Promise<void>;
+  loadTags: () => Promise<void>;
+  checkoutBranch: (branchName: string) => Promise<void>;
+  checkoutTag: (tagName: string) => Promise<void>;
 
   // Git Operations
   stageFiles: (filePaths: string[]) => Promise<void>;
@@ -49,6 +59,10 @@ export const useGitStore = create<GitStore>((set, get) => ({
   isLoading: false,
   error: null,
   lastRefresh: null,
+  branches: [],
+  tags: [],
+  isLoadingBranches: false,
+  isLoadingTags: false,
 
   // Initialize Git for a repository
   initialize: async (repoPath: string) => {
@@ -285,7 +299,83 @@ export const useGitStore = create<GitStore>((set, get) => ({
       isLoading: false,
       error: null,
       lastRefresh: null,
+      branches: [],
+      tags: [],
     });
+  },
+
+  // Load all branches
+  loadBranches: async () => {
+    const { repositoryPath, isGitRepository } = get();
+    if (!repositoryPath || !isGitRepository) {
+      return;
+    }
+
+    set({ isLoadingBranches: true });
+
+    try {
+      const branches = await gitService.getBranches(repositoryPath);
+      set({ branches, isLoadingBranches: false });
+      logger.debug(`Loaded ${branches.length} branches`);
+    } catch (error) {
+      logger.error('Failed to load branches:', error);
+      set({ isLoadingBranches: false });
+    }
+  },
+
+  // Load all tags
+  loadTags: async () => {
+    const { repositoryPath, isGitRepository } = get();
+    if (!repositoryPath || !isGitRepository) {
+      return;
+    }
+
+    set({ isLoadingTags: true });
+
+    try {
+      const tags = await gitService.getTags(repositoryPath);
+      set({ tags, isLoadingTags: false });
+      logger.debug(`Loaded ${tags.length} tags`);
+    } catch (error) {
+      logger.error('Failed to load tags:', error);
+      set({ isLoadingTags: false });
+    }
+  },
+
+  // Checkout a branch
+  checkoutBranch: async (branchName: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.checkoutBranch(repositoryPath, branchName);
+      logger.info(`Checked out branch: ${branchName}`);
+      // Refresh status and branches after checkout
+      await Promise.all([get().refreshStatus(), get().loadBranches()]);
+    } catch (error) {
+      logger.error(`Failed to checkout branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Checkout a tag
+  checkoutTag: async (tagName: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.checkoutTag(repositoryPath, tagName);
+      logger.info(`Checked out tag: ${tagName}`);
+      // Refresh status and branches after checkout
+      await Promise.all([get().refreshStatus(), get().loadBranches()]);
+    } catch (error) {
+      logger.error(`Failed to checkout tag ${tagName}:`, error);
+      throw error;
+    }
   },
 
   // Stage files for commit

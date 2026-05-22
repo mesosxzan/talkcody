@@ -1,4 +1,4 @@
-use super::types::BranchInfo;
+use super::types::{BranchInfo, TagInfo};
 use git2::{Error as GitError, Repository};
 use std::path::Path;
 
@@ -94,11 +94,133 @@ fn get_upstream_info(
     }
 }
 
+/// Gets all branches in the repository
+pub fn get_all_branches(repo: &Repository) -> Result<Vec<BranchInfo>, GitError> {
+    let mut branches = Vec::new();
+    let current_head = repo.head()?;
+    let current_branch_name = current_head.shorthand();
+
+    // Get local branches
+    for branch in repo.branches(Some(git2::BranchType::Local))? {
+        let (branch, _branch_type) = branch?;
+        let name = branch.name()?.unwrap_or("unknown").to_string();
+        let is_current = current_branch_name == Some(&name);
+        let is_head = branch.get().kind() == Some(git2::ReferenceType::Direct) && is_current;
+
+        // Get upstream info for this branch
+        let (upstream, ahead, behind) = if is_current {
+            get_upstream_info(repo, &current_head)?
+        } else {
+            // For non-current branches, we can't easily get ahead/behind without checking out
+            (None, None, None)
+        };
+
+        branches.push(BranchInfo {
+            name,
+            is_current,
+            is_head,
+            upstream,
+            ahead,
+            behind,
+        });
+    }
+
+    // Sort branches: current first, then alphabetically
+    branches.sort_by(|a, b| {
+        if a.is_current {
+            std::cmp::Ordering::Less
+        } else if b.is_current {
+            std::cmp::Ordering::Greater
+        } else {
+            a.name.cmp(&b.name)
+        }
+    });
+
+    Ok(branches)
+}
+
+/// Gets all tags in the repository
+pub fn get_all_tags(repo: &Repository) -> Result<Vec<TagInfo>, GitError> {
+    let mut tags = Vec::new();
+    let current_head = repo.head()?;
+    let current_head_oid = current_head.target();
+
+    // Get all tag references
+    for reference in repo.references()? {
+        let ref_obj = reference?;
+        let name = ref_obj.name();
+
+        // Check if it's a tag reference (refs/tags/...)
+        if let Some(name) = name {
+            if name.starts_with("refs/tags/") {
+                let tag_name = name.replace("refs/tags/", "");
+                let is_current = ref_obj.target() == current_head_oid;
+
+                tags.push(TagInfo {
+                    name: tag_name,
+                    is_current,
+                });
+            }
+        }
+    }
+
+    // Sort tags alphabetically
+    tags.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(tags)
+}
+
 /// Gets the repository root path
 pub fn get_repository_root(repo: &Repository) -> Option<String> {
     repo.workdir()
         .and_then(|path| path.to_str())
         .map(|s| s.to_string())
+}
+
+/// Checkout a branch by name
+pub fn checkout_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(["checkout", branch_name])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to checkout branch {}: {}",
+            branch_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Checkout a tag by name (creates detached HEAD state)
+pub fn checkout_tag(repo_path: &str, tag_name: &str) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(["checkout", &format!("tags/{}", tag_name)])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to checkout tag: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to checkout tag {}: {}",
+            tag_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

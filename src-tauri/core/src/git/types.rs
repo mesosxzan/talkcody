@@ -50,6 +50,16 @@ pub struct BranchInfo {
     pub behind: Option<usize>,
 }
 
+/// Represents information about a Git tag
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagInfo {
+    /// Tag name
+    pub name: String,
+    /// Whether this is the current tag (detached HEAD at this tag)
+    pub is_current: bool,
+}
+
 /// Represents the overall Git repository status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

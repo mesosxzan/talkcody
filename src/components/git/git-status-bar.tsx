@@ -1,8 +1,9 @@
-import { FileText, GitBranch } from 'lucide-react';
+import { FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useGitStore } from '@/stores/git-store';
+import { GitBranchSelector } from './git-branch-selector';
 
 export function GitStatusBar() {
   const gitStatus = useGitStore((state) => state.gitStatus);
@@ -20,51 +21,28 @@ export function GitStatusBar() {
 
   return (
     <div className="flex items-center gap-3 border-t border-border bg-muted/50 px-4 py-1.5 text-xs text-foreground">
-      {/* Branch Info */}
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors">
-              <GitBranch className="h-3.5 w-3.5" />
-              <span className="font-medium text-foreground">{branch?.name || 'Unknown'}</span>
-              {branch?.ahead !== null && branch?.ahead !== undefined && branch.ahead > 0 && (
-                <Badge
-                  variant="secondary"
-                  className="ml-1 h-4 px-1 py-0 text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400"
-                >
-                  ↑{branch.ahead}
-                </Badge>
-              )}
-              {branch?.behind !== null && branch?.behind !== undefined && branch.behind > 0 && (
-                <Badge
-                  variant="secondary"
-                  className="ml-1 h-4 px-1 py-0 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400"
-                >
-                  ↓{branch.behind}
-                </Badge>
-              )}
-            </div>
-          </TooltipTrigger>
-          <TooltipContent>
-            <div className="text-xs space-y-1">
-              <div className="font-medium">Branch: {branch?.name}</div>
-              {branch?.upstream && (
-                <div className="text-muted-foreground">Upstream: {branch.upstream}</div>
-              )}
-              {branch?.ahead !== null && branch?.ahead !== undefined && branch.ahead > 0 && (
-                <div className="text-emerald-600 dark:text-emerald-400">
-                  {branch.ahead} commit{branch.ahead > 1 ? 's' : ''} ahead
-                </div>
-              )}
-              {branch?.behind !== null && branch?.behind !== undefined && branch.behind > 0 && (
-                <div className="text-amber-600 dark:text-amber-400">
-                  {branch.behind} commit{branch.behind > 1 ? 's' : ''} behind
-                </div>
-              )}
-            </div>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {/* Branch Selector */}
+      <GitBranchSelector />
+
+      {/* Branch Ahead/Behind Badges */}
+      <div className="flex items-center gap-1">
+        {branch?.ahead !== null && branch?.ahead !== undefined && branch.ahead > 0 && (
+          <Badge
+            variant="secondary"
+            className="h-4 px-1 py-0 text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400"
+          >
+            ↑{branch.ahead}
+          </Badge>
+        )}
+        {branch?.behind !== null && branch?.behind !== undefined && branch.behind > 0 && (
+          <Badge
+            variant="secondary"
+            className="h-4 px-1 py-0 text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-400"
+          >
+            ↓{branch.behind}
+          </Badge>
+        )}
+      </div>
 
       {/* Separator */}
       <div className="h-3 w-px bg-border" />

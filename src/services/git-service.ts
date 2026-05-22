@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { FileDiff, FileStatusMap, GitStatus, LineChange } from '../types/git';
+import type {
+  BranchInfo,
+  FileDiff,
+  FileStatusMap,
+  GitStatus,
+  LineChange,
+  TagInfo,
+} from '../types/git';
 
 /**
  * Service layer for Git operations using Tauri commands
@@ -105,6 +112,34 @@ export class GitService {
    */
   async pull(repoPath: string, remote?: string, branch?: string): Promise<string> {
     return invoke<string>('git_pull', { repoPath, remote, branch });
+  }
+
+  /**
+   * Get all branches in the repository
+   */
+  async getBranches(repoPath: string): Promise<BranchInfo[]> {
+    return invoke<BranchInfo[]>('git_get_branches', { repoPath });
+  }
+
+  /**
+   * Get all tags in the repository
+   */
+  async getTags(repoPath: string): Promise<TagInfo[]> {
+    return invoke<TagInfo[]>('git_get_tags', { repoPath });
+  }
+
+  /**
+   * Checkout a branch
+   */
+  async checkoutBranch(repoPath: string, branchName: string): Promise<void> {
+    return invoke<void>('git_checkout_branch', { repoPath, branchName });
+  }
+
+  /**
+   * Checkout a tag (creates detached HEAD state)
+   */
+  async checkoutTag(repoPath: string, tagName: string): Promise<void> {
+    return invoke<void>('git_checkout_tag', { repoPath, tagName });
   }
 }
 

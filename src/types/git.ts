@@ -26,6 +26,11 @@ export interface BranchInfo {
   behind: number | null;
 }
 
+export interface TagInfo {
+  name: string;
+  isCurrent: boolean;
+}
+
 export interface GitStatus {
   branch: BranchInfo | null;
   modified: FileStatus[];
