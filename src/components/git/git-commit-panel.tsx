@@ -7,8 +7,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
-import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
-import { gitService } from '@/services/git-service';
 import { useGitStore } from '@/stores/git-store';
 import { GitFileStatus } from '@/types/git';
 import { GitCommitMessageInput } from './git-commit-message-input';
@@ -31,10 +29,11 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const push = useGitStore((state) => state.push);
   const cancelPush = useGitStore((state) => state.cancelPush);
   const isPushing = useGitStore((state) => state.isPushing);
+  const isGenerating = useGitStore((state) => state.isGenerating);
+  const isCommitting = useGitStore((state) => state.isCommitting);
+  const generateCommitMessage = useGitStore((state) => state.generateCommitMessage);
 
   const [commitMessage, setCommitMessage] = useState('');
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isCommitting, setIsCommitting] = useState(false);
 
   // Auto-refresh Git status when component mounts
   useEffect(() => {
@@ -138,32 +137,18 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       return;
     }
 
-    setIsGenerating(true);
     try {
-      // Get diff text for staged files only (the actual content that will be committed)
-      const diffText = await gitService.getStagedDiffText(repositoryPath);
-
-      if (!diffText || diffText.trim().length === 0) {
+      const message = await generateCommitMessage(locale);
+      setCommitMessage(message);
+      toast.success(t.Git.messages.generateSuccess);
+    } catch (error) {
+      logger.error('Failed to generate commit message:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (errorMessage === 'No staged changes') {
         toast.error(t.Git.messages.noStagedChanges);
-        return;
-      }
-
-      const result = await aiGitMessagesService.generateCommitMessage({
-        diffText,
-        language: locale,
-      });
-
-      if (result?.message) {
-        setCommitMessage(result.message);
-        toast.success(t.Git.messages.generateSuccess);
       } else {
         toast.error(t.Git.messages.generateSuccess);
       }
-    } catch (error) {
-      logger.error('Failed to generate commit message:', error);
-      toast.error(t.Git.messages.generateSuccess);
-    } finally {
-      setIsGenerating(false);
     }
   };
 
@@ -179,7 +164,6 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       return;
     }
 
-    setIsCommitting(true);
     try {
       const commitHash = await commit(commitMessage);
       toast.success(`${t.Git.messages.commitSuccess}: ${commitHash.substring(0, 7)}`);
@@ -187,8 +171,6 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     } catch (error) {
       logger.error('Failed to commit:', error);
       toast.error(t.Git.messages.commitSuccess);
-    } finally {
-      setIsCommitting(false);
     }
   };
 

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
 import { gitService } from '@/services/git-service';
 import type { BranchInfo, FileStatusMap, GitStatus, LineChange, TagInfo } from '@/types/git';
 import { GitFileStatus } from '@/types/git';
@@ -19,9 +20,11 @@ interface GitStore {
   isLoadingBranches: boolean;
   isLoadingTags: boolean;
 
-  // Push state
+  // Operation states
   isPushing: boolean;
   pushOperationId: string | null;
+  isGenerating: boolean;
+  isCommitting: boolean;
 
   // Actions
   initialize: (repoPath: string) => Promise<void>;
@@ -49,6 +52,7 @@ interface GitStore {
   push: (remote?: string, branch?: string) => Promise<string>;
   pull: (remote?: string, branch?: string) => Promise<string>;
   cancelPush: () => Promise<void>;
+  generateCommitMessage: (language: string) => Promise<string>;
 }
 
 // Track in-flight requests to prevent duplicate fetches
@@ -70,6 +74,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
   isLoadingTags: false,
   isPushing: false,
   pushOperationId: null,
+  isGenerating: false,
+  isCommitting: false,
 
   // Initialize Git for a repository
   initialize: async (repoPath: string) => {
@@ -423,10 +429,16 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   // Commit staged changes
   commit: async (message: string) => {
-    const { repositoryPath } = get();
+    const { repositoryPath, isCommitting } = get();
     if (!repositoryPath) {
       throw new Error('No repository path set');
     }
+
+    if (isCommitting) {
+      throw new Error('Commit operation already in progress');
+    }
+
+    set({ isCommitting: true });
 
     try {
       const commitHash = await gitService.commit(repositoryPath, message);
@@ -437,6 +449,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
     } catch (error) {
       logger.error('Failed to commit:', error);
       throw error;
+    } finally {
+      set({ isCommitting: false });
     }
   },
 
@@ -519,6 +533,45 @@ export const useGitStore = create<GitStore>((set, get) => ({
       logger.error('Failed to cancel push:', error);
     } finally {
       set({ isPushing: false, pushOperationId: null });
+    }
+  },
+
+  // Generate commit message with AI
+  generateCommitMessage: async (language: string) => {
+    const { repositoryPath, isGenerating } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    if (isGenerating) {
+      throw new Error('Generation already in progress');
+    }
+
+    set({ isGenerating: true });
+
+    try {
+      // Get diff text for staged files
+      const diffText = await gitService.getStagedDiffText(repositoryPath);
+
+      if (!diffText || diffText.trim().length === 0) {
+        throw new Error('No staged changes');
+      }
+
+      const result = await aiGitMessagesService.generateCommitMessage({
+        diffText,
+        language,
+      });
+
+      if (result?.message) {
+        logger.info('Commit message generated successfully');
+        return result.message;
+      }
+      throw new Error('Failed to generate commit message');
+    } catch (error) {
+      logger.error('Failed to generate commit message:', error);
+      throw error;
+    } finally {
+      set({ isGenerating: false });
     }
   },
 
