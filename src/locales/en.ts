@@ -943,6 +943,21 @@ const en: LocaleDefinition = {
       import: 'Import',
       close: 'Close',
       chooseFolder: 'Choose Folder',
+      chooseFile: 'Choose File',
+    },
+    export: {
+      success: 'Agent exported successfully',
+      failed: 'Failed to export agent',
+      noAgentSelected: 'No agent selected for export',
+    },
+    importFile: {
+      title: 'Import Agent',
+      description: 'Import an agent from a JSON file',
+      success: 'Agent imported successfully',
+      failed: 'Failed to import agent',
+      invalidFormat: 'Invalid agent file format',
+      fileNotFound: 'Agent file not found',
+      nameConflict: (name, newName) => `Agent "${name}" already exists. Imported as "${newName}".`,
     },
   },
 

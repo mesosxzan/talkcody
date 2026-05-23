@@ -1,7 +1,7 @@
 // Unified agent card component for both marketplace and local agents
 
 import type { RemoteAgentConfig } from '@talkcody/shared/types/remote-agents';
-import { Bot, GitFork, Pause, Pencil, Play, Star, Trash2 } from 'lucide-react';
+import { Bot, Download, GitFork, Pause, Pencil, Play, Star, Trash2 } from 'lucide-react';
 import { BetaBadge } from '@/components/beta-badge';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,6 +35,7 @@ interface UnifiedAgentCardProps {
   onDelete?: () => void;
   onFork?: () => void;
   onToggleActive?: () => void;
+  onExport?: () => void;
 }
 
 function isMarketplaceAgent(agent: UnifiedAgent): agent is RemoteAgentConfig {
@@ -58,6 +59,7 @@ export function UnifiedAgentCard({
   onDelete,
   onFork,
   onToggleActive,
+  onExport,
 }: UnifiedAgentCardProps) {
   const isMarketplace = isMarketplaceAgent(agent);
   const isLocal = isLocalAgent(agent) || isDatabaseAgent(agent);
@@ -271,6 +273,22 @@ export function UnifiedAgentCard({
                     </span>
                   </>
                 )}
+              </button>
+            )}
+
+            {onExport && (
+              <button
+                type="button"
+                className="flex flex-col items-center gap-1 px-2 py-1.5 rounded-md hover:bg-primary/10 transition-all group"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onExport();
+                }}
+              >
+                <Download className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                <span className="text-[10px] text-muted-foreground group-hover:text-primary transition-colors font-medium">
+                  Export
+                </span>
               </button>
             )}
 

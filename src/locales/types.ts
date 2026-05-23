@@ -896,6 +896,21 @@ export interface LocaleDefinition {
       import: string;
       close: string;
       chooseFolder: string;
+      chooseFile: string;
+    };
+    export: {
+      success: string;
+      failed: string;
+      noAgentSelected: string;
+    };
+    importFile: {
+      title: string;
+      description: string;
+      success: string;
+      failed: string;
+      invalidFormat: string;
+      fileNotFound: string;
+      nameConflict: (name: string, newName: string) => string;
     };
   };
 

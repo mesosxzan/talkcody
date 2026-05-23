@@ -476,6 +476,31 @@ export async function importAgentsFromLocalDirectory(
   );
 }
 
+/**
+ * Import a single agent from a local markdown file
+ */
+export async function importAgentFromLocalFile(filePath: string): Promise<RemoteAgentConfig> {
+  const content = await readTextFile(filePath);
+
+  const parsed = parseAgentMarkdown(content);
+  const fallbackId = filePath.split('/').pop()?.replace(/\.md$/i, '') || 'local-agent';
+  const agentConfig = buildRemoteAgentConfig({
+    parsed,
+    repository: 'local-import',
+    githubPath: filePath,
+    fallbackId,
+    defaultCategory: 'local',
+  });
+
+  logger.info('Successfully imported agent from local file:', {
+    agentId: agentConfig.id,
+    agentName: agentConfig.name,
+    filePath,
+  });
+
+  return agentConfig;
+}
+
 export async function registerImportedAgents(
   agentConfigs: RemoteAgentConfig[],
   fallbackId = 'imported-agent'

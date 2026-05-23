@@ -906,6 +906,21 @@ const zh: LocaleDefinition = {
       import: '导入',
       close: '关闭',
       chooseFolder: '选择文件夹',
+      chooseFile: '选择文件',
+    },
+    export: {
+      success: 'Agent 导出成功',
+      failed: 'Agent 导出失败',
+      noAgentSelected: '未选择要导出的 Agent',
+    },
+    importFile: {
+      title: '导入 Agent',
+      description: '从 JSON 文件导入 Agent',
+      success: 'Agent 导入成功',
+      failed: 'Agent 导入失败',
+      invalidFormat: '无效的 Agent 文件格式',
+      fileNotFound: 'Agent 文件未找到',
+      nameConflict: (name, newName) => `Agent "${name}" 已存在。已导入为 "${newName}"。`,
     },
   },
 

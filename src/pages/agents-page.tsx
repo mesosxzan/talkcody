@@ -35,6 +35,7 @@ import { useTranslation } from '@/hooks/use-locale';
 import { useUnifiedAgents } from '@/hooks/use-unified-agents';
 import { getDocLinks } from '@/lib/doc-links';
 import { logger } from '@/lib/logger';
+import { exportAgentToFile } from '@/services/agents/agent-export-import-service';
 import { agentRegistry } from '@/services/agents/agent-registry';
 import { isToolAllowedForAgent } from '@/services/agents/agent-tool-access';
 import { forkAgent } from '@/services/agents/fork-agent';
@@ -385,6 +386,25 @@ export function AgentsPage() {
     await refreshAgents();
   };
 
+  const handleExportAgent = async (agent: Agent) => {
+    try {
+      // Get the agent definition from registry
+      const agentDef = await agentRegistry.get(agent.id);
+      if (!agentDef) {
+        toast.error(t.Agents.page.notFound);
+        return;
+      }
+
+      const success = await exportAgentToFile(agentDef);
+      if (success) {
+        toast.success(t.Agents.export.success);
+      }
+    } catch (error) {
+      logger.error('Failed to export agent:', error);
+      toast.error(t.Agents.export.failed);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -543,6 +563,7 @@ export function AgentsPage() {
                     onDelete={() => setDeletingAgentId(agent.id)}
                     onFork={() => handleForkAgent(agent.id)}
                     onToggleActive={() => handleToggleActive(agent)}
+                    onExport={() => handleExportAgent(agent)}
                   />
                 ))}
               </div>
