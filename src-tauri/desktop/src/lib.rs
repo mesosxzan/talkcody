@@ -1063,6 +1063,8 @@ pub fn run() {
             git::git_discard_changes,
             git::git_get_file_diff,
             git::git_push,
+            git::git_push_async,
+            git::git_cancel_push,
             git::git_pull,
             git::git_get_branches,
             git::git_get_tags,

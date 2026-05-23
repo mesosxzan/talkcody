@@ -2619,6 +2619,7 @@ export interface LocaleDefinition {
     refresh: string;
     branch: string;
     noBranch: string;
+    push: string;
     changes: string;
     branches: string;
     tags: string;
@@ -2656,6 +2657,11 @@ export interface LocaleDefinition {
       emptyMessage: string;
       stageAllSuccess: string;
       unstageAllSuccess: string;
+      pushSuccess: string;
+      pushFailed: string;
+      pushCancelled: string;
+      pushCancelFailed: string;
+      cancelPush: string;
     };
     tooltips: {
       unstageAll: string;

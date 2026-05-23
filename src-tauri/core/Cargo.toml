@@ -73,7 +73,6 @@ open-lark.workspace = true
 axum.workspace = true
 tokio-tungstenite.workspace = true
 
-
 lazy_static.workspace = true
 tiny_http.workspace = true
 portable-pty.workspace = true
@@ -90,6 +89,12 @@ walkdir = "2"
 infer = "0.16"
 mime = "0.3"
 mime_guess = "2"
+
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi", "winnt"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -1,4 +1,79 @@
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+/// Global registry of running git processes for cancellation support
+/// Maps operation ID to process PID
+static RUNNING_GIT_PROCESSES: Lazy<Arc<RwLock<HashMap<String, u32>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Generate a unique operation ID
+fn generate_operation_id(repo_path: &str, operation: &str) -> String {
+    format!("{}:{}", repo_path, operation)
+}
+
+/// Register a running process
+async fn register_process(operation_id: &str, pid: u32) {
+    let mut processes = RUNNING_GIT_PROCESSES.write().await;
+    processes.insert(operation_id.to_string(), pid);
+}
+
+/// Unregister a process (when done)
+async fn unregister_process(operation_id: &str) {
+    let mut processes = RUNNING_GIT_PROCESSES.write().await;
+    processes.remove(operation_id);
+}
+
+/// Get process PID by operation ID
+async fn get_process_pid(operation_id: &str) -> Option<u32> {
+    let processes = RUNNING_GIT_PROCESSES.read().await;
+    processes.get(operation_id).copied()
+}
+
+/// Kill a running process by operation ID
+pub async fn kill_git_process(operation_id: &str) -> Result<(), String> {
+    let pid = get_process_pid(operation_id).await;
+
+    if let Some(pid) = pid {
+        // Kill the process
+        #[cfg(unix)]
+        {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
+            kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
+                .map_err(|e| format!("Failed to kill process {}: {}", pid, e))?;
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, use winapi to terminate the process
+            use std::ptr;
+            use winapi::um::processthreadsapi::{OpenProcess, TerminateProcess};
+            use winapi::um::winnt::PROCESS_TERMINATE;
+
+            let handle = OpenProcess(PROCESS_TERMINATE, false as i32, pid);
+            if handle.is_null() {
+                return Err(format!("Failed to open process {} for termination", pid));
+            }
+
+            let result = TerminateProcess(handle, 1);
+            if result == 0 {
+                return Err(format!("Failed to terminate process {}", pid));
+            }
+
+            // Close the handle (we don't have CloseHandle in winapi easily, but it's not critical)
+        }
+
+        unregister_process(operation_id).await;
+        Ok(())
+    } else {
+        Err(format!(
+            "No running process found for operation: {}",
+            operation_id
+        ))
+    }
+}
 
 /// Stage files for commit
 pub fn stage_files(repo_path: &str, file_paths: &[String]) -> Result<(), String> {
@@ -139,7 +214,7 @@ pub fn discard_changes(repo_path: &str, file_path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Push commits to remote repository
+/// Push commits to remote repository (sync version)
 pub fn push(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Result<String, String> {
     if !Path::new(repo_path).exists() {
         return Err(format!("Repository path does not exist: {}", repo_path));
@@ -178,6 +253,76 @@ pub fn push(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Resu
     }
 
     Ok(format!("Pushed to {}/{}", remote_name, branch_name))
+}
+
+/// Push commits to remote repository (async version with cancellation support)
+/// Returns the result message
+pub async fn push_async(
+    repo_path: &str,
+    remote: Option<&str>,
+    branch: Option<&str>,
+    operation_id: Option<&str>,
+) -> Result<String, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let remote_name = remote.unwrap_or("origin").to_string();
+
+    // Get current branch if not specified
+    let branch_name = if let Some(b) = branch {
+        b.to_string()
+    } else {
+        // Get current branch name
+        let output = crate::shell_utils::new_command("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to get current branch: {}", e))?;
+
+        if !output.status.success() {
+            return Err("Failed to get current branch name".to_string());
+        }
+
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    };
+
+    // Generate operation ID if not provided
+    let op_id = operation_id
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| generate_operation_id(repo_path, "push"));
+
+    // Push to remote using async command with cancellation support
+    let mut child = crate::shell_utils::new_async_command("git")
+        .args(["push", &remote_name, &branch_name])
+        .current_dir(repo_path)
+        .spawn()
+        .map_err(|e| format!("Failed to start push: {}", e))?;
+
+    // Register the process for cancellation
+    if let Some(pid) = child.id() {
+        register_process(&op_id, pid).await;
+    }
+
+    // Wait for completion
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| format!("Failed to wait for push: {}", e))?;
+
+    // Unregister the process
+    unregister_process(&op_id).await;
+
+    if !status.success() {
+        return Err("Push failed or was cancelled".to_string());
+    }
+
+    Ok(format!("Pushed to {}/{}", remote_name, branch_name))
+}
+
+/// Cancel an ongoing git push operation
+pub async fn cancel_push(operation_id: &str) -> Result<(), String> {
+    kill_git_process(operation_id).await
 }
 
 /// Pull changes from remote repository

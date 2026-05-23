@@ -1,4 +1,4 @@
-import { Check, GitBranch, Loader2, Minus, Plus, RefreshCw, Upload } from 'lucide-react';
+import { Check, GitBranch, Loader2, Minus, Plus, RefreshCw, Upload, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -29,11 +29,12 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const commit = useGitStore((state) => state.commit);
   const discardChanges = useGitStore((state) => state.discardChanges);
   const push = useGitStore((state) => state.push);
+  const cancelPush = useGitStore((state) => state.cancelPush);
+  const isPushing = useGitStore((state) => state.isPushing);
 
   const [commitMessage, setCommitMessage] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false);
-  const [isPushing, setIsPushing] = useState(false);
 
   // Auto-refresh Git status when component mounts
   useEffect(() => {
@@ -204,15 +205,23 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
 
   // Handle push
   const handlePush = async () => {
-    setIsPushing(true);
     try {
       const result = await push();
       toast.success(result);
     } catch (error) {
       logger.error('Failed to push:', error);
-      toast.error(t.Git.messages.commitSuccess);
-    } finally {
-      setIsPushing(false);
+      toast.error(t.Git.messages.pushFailed);
+    }
+  };
+
+  // Handle cancel push
+  const handleCancelPush = async () => {
+    try {
+      await cancelPush();
+      toast.success(t.Git.messages.pushCancelled);
+    } catch (error) {
+      logger.error('Failed to cancel push:', error);
+      toast.error(t.Git.messages.pushCancelFailed);
     }
   };
 
@@ -266,19 +275,21 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             )}
           </Button>
 
-          {/* Push button */}
-          <Button
-            variant="outline"
-            onClick={handlePush}
-            disabled={isPushing}
-            title={t.Git.messages.commitSuccess}
-          >
-            {isPushing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
+          {/* Push/Cancel Push button */}
+          {isPushing ? (
+            <Button
+              variant="destructive"
+              onClick={handleCancelPush}
+              title={t.Git.messages.cancelPush}
+            >
+              <X className="h-4 w-4 mr-1" />
+              {t.Git.messages.cancelPush}
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={handlePush} title={t.Git.push}>
               <Upload className="h-4 w-4" />
-            )}
-          </Button>
+            </Button>
+          )}
         </div>
       </div>
 

@@ -276,6 +276,29 @@ pub async fn git_push(
     operations::push(&repo_path, remote.as_deref(), branch.as_deref())
 }
 
+/// Push commits to remote repository (async with cancellation support)
+#[tauri::command]
+pub async fn git_push_async(
+    repo_path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+    operation_id: Option<String>,
+) -> Result<String, String> {
+    operations::push_async(
+        &repo_path,
+        remote.as_deref(),
+        branch.as_deref(),
+        operation_id.as_deref(),
+    )
+    .await
+}
+
+/// Cancel an ongoing git push operation
+#[tauri::command]
+pub async fn git_cancel_push(operation_id: String) -> Result<(), String> {
+    operations::cancel_push(&operation_id).await
+}
+
 /// Pull changes from remote repository
 #[tauri::command]
 pub async fn git_pull(

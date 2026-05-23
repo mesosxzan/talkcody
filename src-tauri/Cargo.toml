@@ -144,6 +144,7 @@ lazy_static = "1.5"
 tiny_http = "0.12"
 portable-pty = "0.9"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+nix = { version = "0.29", features = ["signal", "process"] }
 
 # Testing
 tempfile = "3"

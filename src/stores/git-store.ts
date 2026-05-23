@@ -19,6 +19,10 @@ interface GitStore {
   isLoadingBranches: boolean;
   isLoadingTags: boolean;
 
+  // Push state
+  isPushing: boolean;
+  pushOperationId: string | null;
+
   // Actions
   initialize: (repoPath: string) => Promise<void>;
   refreshStatus: () => Promise<void>;
@@ -44,6 +48,7 @@ interface GitStore {
   discardChanges: (filePath: string) => Promise<void>;
   push: (remote?: string, branch?: string) => Promise<string>;
   pull: (remote?: string, branch?: string) => Promise<string>;
+  cancelPush: () => Promise<void>;
 }
 
 // Track in-flight requests to prevent duplicate fetches
@@ -63,6 +68,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
   tags: [],
   isLoadingBranches: false,
   isLoadingTags: false,
+  isPushing: false,
+  pushOperationId: null,
 
   // Initialize Git for a repository
   initialize: async (repoPath: string) => {
@@ -471,13 +478,21 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   // Push commits to remote
   push: async (remote?: string, branch?: string) => {
-    const { repositoryPath } = get();
+    const { repositoryPath, isPushing } = get();
     if (!repositoryPath) {
       throw new Error('No repository path set');
     }
 
+    if (isPushing) {
+      throw new Error('Push operation already in progress');
+    }
+
+    // Generate operation ID for cancellation
+    const operationId = `push-${Date.now()}`;
+    set({ isPushing: true, pushOperationId: operationId });
+
     try {
-      const result = await gitService.push(repositoryPath, remote, branch);
+      const result = await gitService.pushAsync(repositoryPath, remote, branch, operationId);
       logger.info(`Pushed to remote: ${result}`);
       // Refresh status after push
       await get().refreshStatus();
@@ -485,6 +500,25 @@ export const useGitStore = create<GitStore>((set, get) => ({
     } catch (error) {
       logger.error('Failed to push:', error);
       throw error;
+    } finally {
+      set({ isPushing: false, pushOperationId: null });
+    }
+  },
+
+  // Cancel ongoing push operation
+  cancelPush: async () => {
+    const { pushOperationId } = get();
+    if (!pushOperationId) {
+      return;
+    }
+
+    try {
+      await gitService.cancelPush(pushOperationId);
+      logger.info('Push operation cancelled');
+    } catch (error) {
+      logger.error('Failed to cancel push:', error);
+    } finally {
+      set({ isPushing: false, pushOperationId: null });
     }
   },
 

@@ -116,6 +116,25 @@ export class GitService {
   }
 
   /**
+   * Push commits to remote repository (async with cancellation support)
+   */
+  async pushAsync(
+    repoPath: string,
+    remote?: string,
+    branch?: string,
+    operationId?: string
+  ): Promise<string> {
+    return invoke<string>('git_push_async', { repoPath, remote, branch, operationId });
+  }
+
+  /**
+   * Cancel an ongoing git push operation
+   */
+  async cancelPush(operationId: string): Promise<void> {
+    return invoke<void>('git_cancel_push', { operationId });
+  }
+
+  /**
    * Pull changes from remote repository
    */
   async pull(repoPath: string, remote?: string, branch?: string): Promise<string> {
