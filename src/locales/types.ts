@@ -897,6 +897,10 @@ export interface LocaleDefinition {
       close: string;
       chooseFolder: string;
       chooseFile: string;
+      selectFile: string;
+      selectFolder: string;
+      noSelection: string;
+      selectedPath: string;
     };
     export: {
       success: string;

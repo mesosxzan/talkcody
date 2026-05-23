@@ -3,14 +3,13 @@
  */
 
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
-import { AlertCircle, CheckCircle2, Download, FileText, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useId, useState } from 'react';
+import { AlertCircle, CheckCircle2, Download, FileText, FolderOpen, Loader2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -42,6 +41,10 @@ interface ImportDialogCopy {
   close: string;
   chooseFolder?: string;
   chooseFile?: string;
+  selectFile?: string;
+  selectFolder?: string;
+  noSelection?: string;
+  selectedPath?: string;
 }
 
 interface ImportGitHubAgentDialogProps {
@@ -60,13 +63,14 @@ export function ImportGitHubAgentDialog({
   mode = 'github',
 }: ImportGitHubAgentDialogProps) {
   const t = useTranslation();
-  const urlInputId = useId();
   const isLocalMode = mode === 'local';
   const importCopy: ImportDialogCopy = isLocalMode ? t.Agents.localImport : t.Agents.githubImport;
 
   const [step, setStep] = useState<DialogStep>('input');
   const [githubUrl, setGithubUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [isFileMode, setIsFileMode] = useState<boolean | null>(null);
   const [importResult, setImportResult] = useState<{
     succeeded: string[];
     failed: Array<{ name: string; error: string }>;
@@ -78,6 +82,8 @@ export function ImportGitHubAgentDialog({
       setGithubUrl('');
       setError(null);
       setImportResult(null);
+      setSelectedPath(null);
+      setIsFileMode(null);
     }
   }, [open]);
 
@@ -140,16 +146,39 @@ export function ImportGitHubAgentDialog({
     [onImportComplete]
   );
 
-  const handleLocalImport = useCallback(
-    async (isFile: boolean) => {
-      const selected = await openDialog({
-        directory: !isFile,
-        multiple: false,
-        filters: isFile ? [{ name: 'Markdown', extensions: ['md'] }] : undefined,
-        title: isFile ? importCopy.chooseFile : importCopy.chooseFolder,
-      });
+  const handleSelectFile = useCallback(async () => {
+    const selected = await openDialog({
+      directory: false,
+      multiple: false,
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+      title: importCopy.chooseFile,
+    });
 
-      if (!selected || typeof selected !== 'string') {
+    if (selected && typeof selected === 'string') {
+      setSelectedPath(selected);
+      setIsFileMode(true);
+      setError(null);
+    }
+  }, [importCopy.chooseFile]);
+
+  const handleSelectFolder = useCallback(async () => {
+    const selected = await openDialog({
+      directory: true,
+      multiple: false,
+      title: importCopy.chooseFolder,
+    });
+
+    if (selected && typeof selected === 'string') {
+      setSelectedPath(selected);
+      setIsFileMode(false);
+      setError(null);
+    }
+  }, [importCopy.chooseFolder]);
+
+  const handleImport = useCallback(async () => {
+    if (isLocalMode) {
+      if (!selectedPath) {
+        setError(importCopy.noSelection || 'Please select a file or folder');
         return;
       }
 
@@ -157,11 +186,11 @@ export function ImportGitHubAgentDialog({
       setStep('importing');
 
       try {
-        if (isFile) {
-          const agentConfig = await importAgentFromLocalFile(selected);
+        if (isFileMode) {
+          const agentConfig = await importAgentFromLocalFile(selectedPath);
           await finishImport([agentConfig], 'local-agent');
         } else {
-          const agentConfigs = await importAgentsFromLocalDirectory(selected);
+          const agentConfigs = await importAgentsFromLocalDirectory(selectedPath);
           await finishImport(agentConfigs, 'local-agent');
         }
       } catch (err) {
@@ -169,50 +198,48 @@ export function ImportGitHubAgentDialog({
         logger.error('Import local agent failed:', err);
         setImportResult({
           succeeded: [],
-          failed: [{ name: selected, error: message }],
+          failed: [{ name: selectedPath, error: message }],
         });
         setStep('result');
       }
-    },
-    [finishImport, importCopy.chooseFile, importCopy.chooseFolder, importCopy.networkError]
-  );
-
-  const handleImport = useCallback(async () => {
-    if (!githubUrl.trim()) {
-      setError(importCopy.urlRequired);
-      return;
-    }
-
-    setError(null);
-    setStep('importing');
-
-    try {
-      const parsed = parseGitHubUrl(githubUrl);
-      if (!parsed) {
-        setError(importCopy.invalidUrl);
-        setStep('input');
+    } else {
+      // GitHub mode
+      if (!githubUrl.trim()) {
+        setError(importCopy.urlRequired);
         return;
       }
 
-      const agentId = parsed.path.split('/').filter(Boolean).pop() || 'remote-agent';
-      const agentConfigs = await importAgentFromGitHub({
-        repository: parsed.repository,
-        path: parsed.path,
-        agentId,
-        branch: parsed.branch,
-      });
+      setError(null);
+      setStep('importing');
 
-      await finishImport(agentConfigs, agentId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : importCopy.networkError;
-      logger.error('Import agent failed:', err);
-      setImportResult({
-        succeeded: [],
-        failed: [{ name: githubUrl, error: message }],
-      });
-      setStep('result');
+      try {
+        const parsed = parseGitHubUrl(githubUrl);
+        if (!parsed) {
+          setError(importCopy.invalidUrl);
+          setStep('input');
+          return;
+        }
+
+        const agentId = parsed.path.split('/').filter(Boolean).pop() || 'remote-agent';
+        const agentConfigs = await importAgentFromGitHub({
+          repository: parsed.repository,
+          path: parsed.path,
+          agentId,
+          branch: parsed.branch,
+        });
+
+        await finishImport(agentConfigs, agentId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : importCopy.networkError;
+        logger.error('Import agent failed:', err);
+        setImportResult({
+          succeeded: [],
+          failed: [{ name: githubUrl, error: message }],
+        });
+        setStep('result');
+      }
     }
-  }, [finishImport, githubUrl, importCopy, parseGitHubUrl]);
+  }, [isLocalMode, selectedPath, isFileMode, githubUrl, importCopy, parseGitHubUrl, finishImport]);
 
   const handleClose = () => {
     onOpenChange(false);
@@ -223,40 +250,45 @@ export function ImportGitHubAgentDialog({
     setGithubUrl('');
     setError(null);
     setImportResult(null);
+    setSelectedPath(null);
+    setIsFileMode(null);
   };
 
-  const renderStepContent = () => {
+  const renderLocalModeContent = () => {
     switch (step) {
       case 'input':
         return (
           <div className="space-y-4">
-            {isLocalMode ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">{importCopy.description}</p>
-                <Button
-                  type="button"
-                  className="w-full"
-                  onClick={() => void handleLocalImport(true)}
-                >
-                  <FileText className="h-4 w-4 mr-2" />
-                  {importCopy.chooseFile}
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Label htmlFor={urlInputId}>{importCopy.urlLabel}</Label>
-                <Input
-                  id={urlInputId}
-                  placeholder={importCopy.urlPlaceholder}
-                  value={githubUrl}
-                  onChange={(e) => setGithubUrl(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      void handleImport();
-                    }
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">{importCopy.urlHint}</p>
+            <div className="space-y-3">
+              <Button
+                type="button"
+                variant={isFileMode === true ? 'default' : 'outline'}
+                className="w-full justify-start"
+                onClick={() => void handleSelectFile()}
+              >
+                <FileText className="h-4 w-4 mr-3" />
+                {importCopy.selectFile || '选择文件'}
+              </Button>
+
+              <Button
+                type="button"
+                variant={isFileMode === false ? 'default' : 'outline'}
+                className="w-full justify-start"
+                onClick={() => void handleSelectFolder()}
+              >
+                <FolderOpen className="h-4 w-4 mr-3" />
+                {importCopy.selectFolder || '选择文件夹'}
+              </Button>
+            </div>
+
+            {selectedPath && (
+              <div className="p-3 bg-muted/50 rounded-md">
+                <p className="text-xs text-muted-foreground mb-1">
+                  {importCopy.selectedPath || '已选择'}
+                </p>
+                <p className="text-sm font-medium truncate" title={selectedPath}>
+                  {selectedPath}
+                </p>
               </div>
             )}
 
@@ -315,40 +347,115 @@ export function ImportGitHubAgentDialog({
     }
   };
 
+  const renderGitHubModeContent = () => {
+    switch (step) {
+      case 'input':
+        return (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="github-url">{importCopy.urlLabel}</Label>
+              <Input
+                id="github-url"
+                placeholder={importCopy.urlPlaceholder}
+                value={githubUrl}
+                onChange={(e) => setGithubUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    void handleImport();
+                  }
+                }}
+              />
+              <p className="text-xs text-muted-foreground">{importCopy.urlHint}</p>
+            </div>
+
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+          </div>
+        );
+
+      case 'importing':
+        return (
+          <div className="flex flex-col items-center justify-center py-12 space-y-4">
+            <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">{importCopy.scanning}</p>
+          </div>
+        );
+
+      case 'result':
+        return (
+          <div className="space-y-4">
+            {importResult?.succeeded.length ? (
+              <Alert>
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                <AlertDescription>
+                  {importResult.succeeded.length} {importCopy.imported}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {importResult?.failed.length ? (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  {importResult.failed.length} {importCopy.failed}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {importResult?.failed.length ? (
+              <div className="space-y-2">
+                {importResult.failed.map((item) => (
+                  <div key={item.name} className="text-xs text-muted-foreground">
+                    {item.name}: {item.error}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  const canImport = isLocalMode ? selectedPath !== null : githubUrl.trim() !== '';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>{importCopy.title}</DialogTitle>
-          <DialogDescription>{importCopy.description}</DialogDescription>
         </DialogHeader>
 
-        {renderStepContent()}
+        {isLocalMode ? renderLocalModeContent() : renderGitHubModeContent()}
 
-        <DialogFooter className="gap-2">
-          {step === 'input' &&
-            (isLocalMode ? (
-              <Button onClick={() => void handleLocalImport(true)} className="flex-1">
-                <FileText className="h-4 w-4 mr-2" />
-                {importCopy.chooseFile}
-              </Button>
-            ) : (
-              <Button onClick={() => void handleImport()} className="flex-1">
-                <Download className="h-4 w-4 mr-2" />
-                {importCopy.import}
-              </Button>
-            ))}
-
+        <div className="flex justify-center gap-3 mt-4">
           {step === 'result' && (
-            <Button variant="outline" onClick={handleTryAgain}>
+            <Button variant="outline" onClick={handleTryAgain} className="min-w-[100px]">
               {t.Common.retry}
             </Button>
           )}
 
-          <Button variant="outline" onClick={handleClose}>
+          {step === 'input' && (
+            <Button
+              onClick={() => void handleImport()}
+              disabled={!canImport}
+              className="min-w-[100px]"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {importCopy.import}
+            </Button>
+          )}
+
+          <Button variant="outline" onClick={handleClose} className="min-w-[100px]">
             {importCopy.close}
           </Button>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
