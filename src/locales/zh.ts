@@ -971,6 +971,7 @@ const zh: LocaleDefinition = {
       deleteProjectDeleting: '删除中...',
       deleteProjectSuccess: (name) => `项目 "${name}" 已删除`,
       deleteProjectError: '删除项目失败',
+      failedToOpenProject: '打开项目失败',
     },
   },
 

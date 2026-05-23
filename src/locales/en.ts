@@ -1012,6 +1012,7 @@ const en: LocaleDefinition = {
       deleteProjectDeleting: 'Deleting...',
       deleteProjectSuccess: (name) => `Project "${name}" has been deleted`,
       deleteProjectError: 'Failed to delete project',
+      failedToOpenProject: 'Failed to open project',
     },
   },
 

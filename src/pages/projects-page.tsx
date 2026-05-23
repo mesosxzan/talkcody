@@ -48,12 +48,17 @@ export function ProjectsPage() {
         setCurrentProjectId(projectId);
 
         if (project.root_path) {
-          // Project has root_path: open repository and navigate to EXPLORER
-          await openRepository(project.root_path, projectId);
+          // Project has root_path: open repository in background and navigate to EXPLORER immediately
+          // Don't await openRepository to avoid UI freeze for large repositories
+          openRepository(project.root_path, projectId).catch((error) => {
+            logger.error('Background openRepository failed:', error);
+            toast.error(t.Projects.page.failedToOpenProject);
+          });
         } else {
           // Project has no root_path: set as current project and navigate to CHAT
           await settingsManager.setCurrentProjectId(projectId);
         }
+        // Navigate to EXPLORER immediately, loading will happen in background
         setActiveView(NavigationView.EXPLORER);
       }
     } catch (error) {

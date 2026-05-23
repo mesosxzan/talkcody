@@ -961,6 +961,7 @@ export interface LocaleDefinition {
       deleteProjectDeleting: string;
       deleteProjectSuccess: (name: string) => string;
       deleteProjectError: string;
+      failedToOpenProject: string;
     };
   };
 
