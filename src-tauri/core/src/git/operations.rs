@@ -48,21 +48,27 @@ pub async fn kill_git_process(operation_id: &str) -> Result<(), String> {
         #[cfg(windows)]
         {
             // On Windows, use winapi to terminate the process
-            use std::ptr;
+            use winapi::um::handleapi::CloseHandle;
             use winapi::um::processthreadsapi::{OpenProcess, TerminateProcess};
             use winapi::um::winnt::PROCESS_TERMINATE;
 
-            let handle = OpenProcess(PROCESS_TERMINATE, false as i32, pid);
-            if handle.is_null() {
-                return Err(format!("Failed to open process {} for termination", pid));
-            }
+            // SAFETY: We're calling Windows API functions to terminate a process.
+            // The handle is checked for null before use and properly closed.
+            unsafe {
+                let handle = OpenProcess(PROCESS_TERMINATE, false as i32, pid);
+                if handle.is_null() {
+                    return Err(format!("Failed to open process {} for termination", pid));
+                }
 
-            let result = TerminateProcess(handle, 1);
-            if result == 0 {
-                return Err(format!("Failed to terminate process {}", pid));
-            }
+                let result = TerminateProcess(handle, 1);
+                if result == 0 {
+                    CloseHandle(handle);
+                    return Err(format!("Failed to terminate process {}", pid));
+                }
 
-            // Close the handle (we don't have CloseHandle in winapi easily, but it's not critical)
+                // Close the handle
+                CloseHandle(handle);
+            }
         }
 
         unregister_process(operation_id).await;
