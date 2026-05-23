@@ -31,6 +31,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const isPushing = useGitStore((state) => state.isPushing);
   const isGenerating = useGitStore((state) => state.isGenerating);
   const isCommitting = useGitStore((state) => state.isCommitting);
+  const generatedCommitMessage = useGitStore((state) => state.generatedCommitMessage);
   const generateCommitMessage = useGitStore((state) => state.generateCommitMessage);
 
   const [commitMessage, setCommitMessage] = useState('');
@@ -41,6 +42,15 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       refreshStatus();
     }
   }, [repositoryPath, gitStatus, refreshStatus]);
+
+  // Auto-fill commit message when AI generation completes (even after switching pages)
+  useEffect(() => {
+    if (generatedCommitMessage && !isGenerating) {
+      setCommitMessage(generatedCommitMessage);
+      // Clear the stored message after consuming it
+      useGitStore.setState({ generatedCommitMessage: null });
+    }
+  }, [generatedCommitMessage, isGenerating]);
 
   // Get staged and unstaged files
   const stagedFiles = gitStatus?.staged || [];

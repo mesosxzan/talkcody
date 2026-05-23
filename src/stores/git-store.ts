@@ -25,6 +25,7 @@ interface GitStore {
   pushOperationId: string | null;
   isGenerating: boolean;
   isCommitting: boolean;
+  generatedCommitMessage: string | null; // Store generated message for UI to consume
 
   // Actions
   initialize: (repoPath: string) => Promise<void>;
@@ -76,6 +77,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   pushOperationId: null,
   isGenerating: false,
   isCommitting: false,
+  generatedCommitMessage: null,
 
   // Initialize Git for a repository
   initialize: async (repoPath: string) => {
@@ -547,7 +549,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       throw new Error('Generation already in progress');
     }
 
-    set({ isGenerating: true });
+    set({ isGenerating: true, generatedCommitMessage: null });
 
     try {
       // Get diff text for staged files
@@ -564,14 +566,15 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
       if (result?.message) {
         logger.info('Commit message generated successfully');
+        // Store the generated message so UI can consume it even if component was unmounted
+        set({ isGenerating: false, generatedCommitMessage: result.message });
         return result.message;
       }
       throw new Error('Failed to generate commit message');
     } catch (error) {
       logger.error('Failed to generate commit message:', error);
+      set({ isGenerating: false, generatedCommitMessage: null });
       throw error;
-    } finally {
-      set({ isGenerating: false });
     }
   },
 
