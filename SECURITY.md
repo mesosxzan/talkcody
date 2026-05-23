@@ -125,7 +125,7 @@ TalkCody has not yet undergone a formal security audit. We plan to conduct one a
 - [Tauri Security Documentation](https://tauri.app/security/)
 - [Electron Security Best Practices](https://www.electronjs.org/docs/latest/tutorial/security)
 
-## Questions?
+## Questions? 1
 
 If you have questions about this security policy, please open a GitHub Discussion or contact us at kaisenkang@talkcody.com.
 

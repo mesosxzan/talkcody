@@ -25,7 +25,7 @@ interface GitStore {
   pushOperationId: string | null;
   isGenerating: boolean;
   isCommitting: boolean;
-  generatedCommitMessage: string | null; // Store generated message for UI to consume
+  commitMessage: string; // Persist commit message across page switches
 
   // Actions
   initialize: (repoPath: string) => Promise<void>;
@@ -54,6 +54,8 @@ interface GitStore {
   pull: (remote?: string, branch?: string) => Promise<string>;
   cancelPush: () => Promise<void>;
   generateCommitMessage: (language: string) => Promise<string>;
+  setCommitMessage: (message: string) => void;
+  clearCommitMessage: () => void;
 }
 
 // Track in-flight requests to prevent duplicate fetches
@@ -77,7 +79,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   pushOperationId: null,
   isGenerating: false,
   isCommitting: false,
-  generatedCommitMessage: null,
+  commitMessage: '',
 
   // Initialize Git for a repository
   initialize: async (repoPath: string) => {
@@ -375,6 +377,16 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
+  // Set commit message (persist across page switches)
+  setCommitMessage: (message: string) => {
+    set({ commitMessage: message });
+  },
+
+  // Clear commit message (after successful commit)
+  clearCommitMessage: () => {
+    set({ commitMessage: '' });
+  },
+
   // Checkout a tag
   checkoutTag: async (tagName: string) => {
     const { repositoryPath } = get();
@@ -549,7 +561,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       throw new Error('Generation already in progress');
     }
 
-    set({ isGenerating: true, generatedCommitMessage: null });
+    set({ isGenerating: true });
 
     try {
       // Get diff text for staged files
@@ -566,14 +578,14 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
       if (result?.message) {
         logger.info('Commit message generated successfully');
-        // Store the generated message so UI can consume it even if component was unmounted
-        set({ isGenerating: false, generatedCommitMessage: result.message });
+        // Store the generated message directly in commitMessage so it persists
+        set({ isGenerating: false, commitMessage: result.message });
         return result.message;
       }
       throw new Error('Failed to generate commit message');
     } catch (error) {
       logger.error('Failed to generate commit message:', error);
-      set({ isGenerating: false, generatedCommitMessage: null });
+      set({ isGenerating: false });
       throw error;
     }
   },

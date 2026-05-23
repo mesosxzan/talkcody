@@ -31,10 +31,10 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const isPushing = useGitStore((state) => state.isPushing);
   const isGenerating = useGitStore((state) => state.isGenerating);
   const isCommitting = useGitStore((state) => state.isCommitting);
-  const generatedCommitMessage = useGitStore((state) => state.generatedCommitMessage);
+  const commitMessage = useGitStore((state) => state.commitMessage);
+  const setCommitMessage = useGitStore((state) => state.setCommitMessage);
+  const clearCommitMessage = useGitStore((state) => state.clearCommitMessage);
   const generateCommitMessage = useGitStore((state) => state.generateCommitMessage);
-
-  const [commitMessage, setCommitMessage] = useState('');
 
   // Auto-refresh Git status when component mounts
   useEffect(() => {
@@ -42,15 +42,6 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       refreshStatus();
     }
   }, [repositoryPath, gitStatus, refreshStatus]);
-
-  // Auto-fill commit message when AI generation completes (even after switching pages)
-  useEffect(() => {
-    if (generatedCommitMessage && !isGenerating) {
-      setCommitMessage(generatedCommitMessage);
-      // Clear the stored message after consuming it
-      useGitStore.setState({ generatedCommitMessage: null });
-    }
-  }, [generatedCommitMessage, isGenerating]);
 
   // Get staged and unstaged files
   const stagedFiles = gitStatus?.staged || [];
@@ -177,7 +168,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     try {
       const commitHash = await commit(commitMessage);
       toast.success(`${t.Git.messages.commitSuccess}: ${commitHash.substring(0, 7)}`);
-      setCommitMessage('');
+      clearCommitMessage();
     } catch (error) {
       logger.error('Failed to commit:', error);
       toast.error(t.Git.messages.commitSuccess);
