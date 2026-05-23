@@ -1,4 +1,4 @@
-import { Check, GitBranch, Loader2, Minus, Plus, RefreshCw, Upload, X } from 'lucide-react';
+import { Check, GitBranch, Loader2, Minus, Plus, RefreshCw, Upload } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -276,20 +276,18 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
           </Button>
 
           {/* Push/Cancel Push button */}
-          {isPushing ? (
-            <Button
-              variant="destructive"
-              onClick={handleCancelPush}
-              title={t.Git.messages.cancelPush}
-            >
-              <X className="h-4 w-4 mr-1" />
-              {t.Git.messages.cancelPush}
-            </Button>
-          ) : (
-            <Button variant="outline" onClick={handlePush} title={t.Git.push}>
+          <Button
+            variant="outline"
+            onClick={isPushing ? handleCancelPush : handlePush}
+            title={isPushing ? t.Git.messages.cancelPush : t.Git.push}
+            className={isPushing ? 'cursor-pointer' : ''}
+          >
+            {isPushing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
               <Upload className="h-4 w-4" />
-            </Button>
-          )}
+            )}
+          </Button>
         </div>
       </div>
 
