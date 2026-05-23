@@ -30,6 +30,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useTranslation } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import type { Skill } from '@/types/skill';
 
@@ -54,6 +55,7 @@ export function SkillDetailDialog({
   onInstall,
   isInstalled = false,
 }: SkillDetailDialogProps) {
+  const t = useTranslation();
   const [activeTab, setActiveTab] = useState('overview');
   const [isInstalling, setIsInstalling] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -132,7 +134,7 @@ export function SkillDetailDialog({
       onClose();
     } catch (error) {
       logger.error('Failed to install skill:', error);
-      toast.error('Failed to install skill');
+      toast.error(t.Skills.detail.installFailed);
     } finally {
       setIsInstalling(false);
     }
@@ -148,18 +150,18 @@ export function SkillDetailDialog({
   const handleDelete = async () => {
     if (!onDelete) return;
 
-    if (!confirm('Are you sure you want to delete this skill?')) {
+    if (!confirm(t.Skills.detail.deleteConfirm)) {
       return;
     }
 
     try {
       setIsDeleting(true);
       await onDelete(skill);
-      toast.success('Skill deleted successfully');
+      toast.success(t.Skills.detail.deleteSuccess);
       onClose();
     } catch (error) {
       logger.error('Failed to delete skill:', error);
-      toast.error('Failed to delete skill');
+      toast.error(t.Skills.detail.deleteFailed);
     } finally {
       setIsDeleting(false);
     }
@@ -189,8 +191,12 @@ export function SkillDetailDialog({
 
               <div className="flex items-center gap-2 mt-3">
                 <Badge variant="outline">{skill.category}</Badge>
-                {skill.metadata.isBuiltIn && <Badge variant="secondary">Built-in</Badge>}
-                {skill.marketplace && <Badge variant="default">Marketplace</Badge>}
+                {skill.metadata.isBuiltIn && (
+                  <Badge variant="secondary">{t.Skills.detail.builtIn}</Badge>
+                )}
+                {skill.marketplace && (
+                  <Badge variant="default">{t.Skills.detail.marketplace}</Badge>
+                )}
               </div>
             </div>
           </div>
@@ -204,12 +210,12 @@ export function SkillDetailDialog({
         >
           <div className="border-b px-6 flex-shrink-0">
             <TabsList className="w-full justify-start">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="content">Content</TabsTrigger>
+              <TabsTrigger value="overview">{t.Skills.detail.overview}</TabsTrigger>
+              <TabsTrigger value="content">{t.Skills.detail.content}</TabsTrigger>
               {skill.content.scriptFiles && skill.content.scriptFiles.length > 0 && (
-                <TabsTrigger value="scripts">Scripts</TabsTrigger>
+                <TabsTrigger value="scripts">{t.Skills.detail.scripts}</TabsTrigger>
               )}
-              <TabsTrigger value="stats">Stats</TabsTrigger>
+              <TabsTrigger value="stats">{t.Skills.detail.stats}</TabsTrigger>
             </TabsList>
           </div>
 
@@ -219,7 +225,7 @@ export function SkillDetailDialog({
                 {/* Long Description */}
                 {skill.longDescription && (
                   <div>
-                    <h3 className="font-semibold mb-2">Description</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.description}</h3>
                     <p className="text-sm text-muted-foreground whitespace-pre-wrap">
                       {skill.longDescription}
                     </p>
@@ -229,25 +235,33 @@ export function SkillDetailDialog({
                 {/* Marketplace Info */}
                 {skill.marketplace && (
                   <div>
-                    <h3 className="font-semibold mb-2">Marketplace Info</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.marketplaceInfo}</h3>
                     <div className="space-y-2 text-sm">
                       <div className="flex items-center gap-2">
                         <User className="h-4 w-4 text-muted-foreground" />
-                        <span>by {skill.marketplace.author}</span>
+                        <span>
+                          {t.Skills.detail.author} {skill.marketplace.author}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Download className="h-4 w-4 text-muted-foreground" />
-                        <span>{skill.marketplace.downloads.toLocaleString()} downloads</span>
+                        <span>
+                          {skill.marketplace.downloads.toLocaleString()} {t.Skills.detail.downloads}
+                        </span>
                       </div>
                       {skill.marketplace.rating > 0 && (
                         <div className="flex items-center gap-2">
                           <Star className="h-4 w-4 text-muted-foreground" />
-                          <span>{skill.marketplace.rating.toFixed(1)} rating</span>
+                          <span>
+                            {skill.marketplace.rating.toFixed(1)} {t.Skills.detail.rating}
+                          </span>
                         </div>
                       )}
                       <div className="flex items-center gap-2">
                         <Calendar className="h-4 w-4 text-muted-foreground" />
-                        <span>Version {skill.marketplace.version}</span>
+                        <span>
+                          {t.Skills.detail.version} {skill.marketplace.version}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -255,32 +269,41 @@ export function SkillDetailDialog({
 
                 {/* Contents Summary */}
                 <div>
-                  <h3 className="font-semibold mb-2">Contents</h3>
+                  <h3 className="font-semibold mb-2">{t.Skills.detail.contents}</h3>
                   <div className="space-y-2 text-sm">
                     {skill.content.systemPromptFragment && (
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-primary" />
                         <span>
-                          System Prompt Fragment ({skill.content.systemPromptFragment.length} chars)
+                          {t.Skills.detail.systemPromptFragment} (
+                          {skill.content.systemPromptFragment.length} chars)
                         </span>
                       </div>
                     )}
                     {skill.content.workflowRules && (
                       <div className="flex items-center gap-2">
                         <Workflow className="h-4 w-4 text-primary" />
-                        <span>Workflow Rules ({skill.content.workflowRules.length} chars)</span>
+                        <span>
+                          {t.Skills.detail.workflowRules} ({skill.content.workflowRules.length}{' '}
+                          chars)
+                        </span>
                       </div>
                     )}
                     {skill.content.documentation && skill.content.documentation.length > 0 && (
                       <div className="flex items-center gap-2">
                         <BookOpen className="h-4 w-4 text-primary" />
-                        <span>Documentation ({skill.content.documentation.length} items)</span>
+                        <span>
+                          {t.Skills.detail.documentation} ({skill.content.documentation.length}{' '}
+                          items)
+                        </span>
                       </div>
                     )}
                     {skill.content.scriptFiles && skill.content.scriptFiles.length > 0 && (
                       <div className="flex items-center gap-2">
                         <Zap className="h-4 w-4 text-primary" />
-                        <span>Scripts ({skill.content.scriptFiles.length} files)</span>
+                        <span>
+                          {t.Skills.detail.scripts} ({skill.content.scriptFiles.length} files)
+                        </span>
                       </div>
                     )}
                   </div>
@@ -289,7 +312,7 @@ export function SkillDetailDialog({
                 {/* Tags */}
                 {skill.metadata.tags && skill.metadata.tags.length > 0 && (
                   <div>
-                    <h3 className="font-semibold mb-2">Tags</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.tags}</h3>
                     <div className="flex flex-wrap gap-1">
                       {skill.metadata.tags.map((tag) => (
                         <Badge key={tag} variant="outline" className="text-xs">
@@ -305,7 +328,7 @@ export function SkillDetailDialog({
                 {/* System Prompt */}
                 {skill.content.systemPromptFragment && (
                   <div>
-                    <h3 className="font-semibold mb-2">System Prompt Fragment</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.systemPromptFragment}</h3>
                     <div className="bg-muted p-4 rounded-md text-sm font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
                       {skill.content.systemPromptFragment}
                     </div>
@@ -315,7 +338,7 @@ export function SkillDetailDialog({
                 {/* Workflow Rules */}
                 {skill.content.workflowRules && (
                   <div>
-                    <h3 className="font-semibold mb-2">Workflow Rules</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.workflowRules}</h3>
                     <div className="bg-muted p-4 rounded-md text-sm font-mono whitespace-pre-wrap max-h-60 overflow-y-auto">
                       {skill.content.workflowRules}
                     </div>
@@ -325,7 +348,7 @@ export function SkillDetailDialog({
                 {/* Documentation */}
                 {skill.content.documentation && skill.content.documentation.length > 0 && (
                   <div>
-                    <h3 className="font-semibold mb-2">Documentation</h3>
+                    <h3 className="font-semibold mb-2">{t.Skills.detail.documentation}</h3>
                     <div className="space-y-2">
                       {skill.content.documentation.map((doc, index) => (
                         <div
@@ -363,7 +386,7 @@ export function SkillDetailDialog({
                   <div className="space-y-4">
                     {/* Script List */}
                     <div>
-                      <h3 className="font-semibold mb-2">Available Scripts</h3>
+                      <h3 className="font-semibold mb-2">{t.Skills.detail.availableScripts}</h3>
                       <div className="space-y-2">
                         {skill.content.scriptFiles.map((scriptFile) => (
                           <button
@@ -389,17 +412,18 @@ export function SkillDetailDialog({
                     {/* Script Preview */}
                     {selectedScript && (
                       <div>
-                        <h3 className="font-semibold mb-2">Script Preview</h3>
+                        <h3 className="font-semibold mb-2">{t.Skills.detail.scriptPreview}</h3>
                         <div className="space-y-2">
                           <div className="text-xs text-muted-foreground">
-                            Path: {getScriptPath(selectedScript) || `scripts/${selectedScript}`}
+                            {t.Skills.detail.path}:{' '}
+                            {getScriptPath(selectedScript) || `scripts/${selectedScript}`}
                           </div>
                           <div className="bg-muted p-4 rounded-md text-sm font-mono whitespace-pre-wrap max-h-[40vh] overflow-y-auto">
-                            {isLoadingScript ? 'Loading...' : scriptContent}
+                            {isLoadingScript ? t.Skills.card.loading : scriptContent}
                           </div>
                           {getScriptPath(selectedScript) && (
                             <div className="text-xs text-muted-foreground break-all">
-                              Execute with: execute_skill_script(script_path="
+                              {t.Skills.detail.executeWith}: execute_skill_script(script_path="
                               {getScriptPath(selectedScript)}", script_type="
                               {inferScriptType(selectedScript)}")
                             </div>
@@ -409,25 +433,25 @@ export function SkillDetailDialog({
                     )}
                   </div>
                 ) : (
-                  <div className="text-sm text-muted-foreground">No scripts available</div>
+                  <div className="text-sm text-muted-foreground">{t.Skills.detail.noScripts}</div>
                 )}
               </TabsContent>
 
               <TabsContent value="stats" className="mt-4 space-y-4 mb-4">
                 <div>
-                  <h3 className="font-semibold mb-2">Usage Statistics</h3>
+                  <h3 className="font-semibold mb-2">{t.Skills.detail.usageStatistics}</h3>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Created</span>
+                      <span className="text-muted-foreground">{t.Skills.detail.created}</span>
                       <span>{new Date(skill.metadata.createdAt).toLocaleDateString()}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Updated</span>
+                      <span className="text-muted-foreground">{t.Skills.detail.updated}</span>
                       <span>{new Date(skill.metadata.updatedAt).toLocaleDateString()}</span>
                     </div>
                     {skill.metadata.lastUsed && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Last Used</span>
+                        <span className="text-muted-foreground">{t.Skills.detail.lastUsed}</span>
                         <span>{new Date(skill.metadata.lastUsed).toLocaleDateString()}</span>
                       </div>
                     )}
@@ -446,22 +470,22 @@ export function SkillDetailDialog({
             {isLocalSkill && onEdit && (
               <Button variant="outline" size="sm" onClick={handleEdit}>
                 <Edit className="h-4 w-4 mr-2" />
-                Edit
+                {t.Skills.detail.edit}
               </Button>
             )}
             {isLocalSkill && onDelete && (
               <Button variant="outline" size="sm" onClick={handleDelete} disabled={isDeleting}>
                 <Trash2 className="h-4 w-4 mr-2" />
-                {isDeleting ? 'Deleting...' : 'Delete'}
+                {isDeleting ? t.Skills.detail.deleting : t.Skills.detail.delete}
               </Button>
             )}
             <div className="flex-1" />
             <Button variant="outline" onClick={onClose}>
-              Close
+              {t.Skills.detail.close}
             </Button>
             {showInstallButton && onInstall && (
               <Button onClick={handleInstall} disabled={isInstalling}>
-                {isInstalling ? 'Installing...' : 'Install'}
+                {isInstalling ? t.Skills.detail.installing : t.Skills.detail.install}
               </Button>
             )}
           </div>

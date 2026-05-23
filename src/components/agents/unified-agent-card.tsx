@@ -13,6 +13,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { useTranslation } from '@/hooks/use-locale';
 import type { Agent } from '@/types';
 import type { AgentDefinition } from '@/types/agent';
 
@@ -61,6 +62,7 @@ export function UnifiedAgentCard({
   onToggleActive,
   onExport,
 }: UnifiedAgentCardProps) {
+  const t = useTranslation();
   const isMarketplace = isMarketplaceAgent(agent);
   const isLocal = isLocalAgent(agent) || isDatabaseAgent(agent);
   const isSystemAgent = isDatabaseAgent(agent) && agent.source_type === 'system';
@@ -128,7 +130,7 @@ export function UnifiedAgentCard({
                     className="shrink-0 bg-gradient-to-r from-amber-500/90 to-yellow-500/90 border-0 shadow-sm"
                   >
                     <Star className="h-3 w-3 mr-1 fill-current" />
-                    Featured
+                    {t.Agents.card.featured}
                   </Badge>
                 )}
                 {isSystemAgent && (
@@ -136,7 +138,7 @@ export function UnifiedAgentCard({
                     variant="secondary"
                     className="shrink-0 bg-blue-500/10 text-blue-500 border-blue-500/20"
                   >
-                    System
+                    {t.Agents.card.system}
                   </Badge>
                 )}
                 {!isEnabled && (
@@ -144,7 +146,7 @@ export function UnifiedAgentCard({
                     variant="outline"
                     className="shrink-0 opacity-70 border-muted-foreground/30"
                   >
-                    Inactive
+                    {t.Agents.card.inactive}
                   </Badge>
                 )}
               </div>
@@ -174,7 +176,7 @@ export function UnifiedAgentCard({
                   variant="outline"
                   className="text-xs bg-blue-500/5 border-blue-500/20 text-blue-500"
                 >
-                  Installed
+                  {t.Agents.card.installed}
                 </Badge>
               )}
               {agent.source_type === 'local' && (
@@ -182,7 +184,7 @@ export function UnifiedAgentCard({
                   variant="outline"
                   className="text-xs bg-purple-500/5 border-purple-500/20 text-purple-500"
                 >
-                  Custom
+                  {t.Agents.card.custom}
                 </Badge>
               )}
             </>
@@ -210,7 +212,7 @@ export function UnifiedAgentCard({
             }}
             disabled={isInstalling || !onInstall}
           >
-            {isInstalling ? 'Installing...' : 'Install'}
+            {isInstalling ? t.Agents.card.installing : t.Agents.card.install}
           </Button>
         )}
 
@@ -228,7 +230,7 @@ export function UnifiedAgentCard({
               >
                 <Pencil className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <span className="text-[10px] text-muted-foreground group-hover:text-primary transition-colors font-medium">
-                  Edit
+                  {t.Agents.card.edit}
                 </span>
               </button>
             )}
@@ -244,7 +246,7 @@ export function UnifiedAgentCard({
               >
                 <GitFork className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <span className="text-[10px] text-muted-foreground group-hover:text-primary transition-colors font-medium">
-                  Fork
+                  {t.Agents.card.fork}
                 </span>
               </button>
             )}
@@ -262,14 +264,14 @@ export function UnifiedAgentCard({
                   <>
                     <Pause className="h-4 w-4 text-muted-foreground group-hover:text-amber-500 transition-colors" />
                     <span className="text-[10px] text-muted-foreground group-hover:text-amber-500 transition-colors font-medium whitespace-nowrap">
-                      Deactivate
+                      {t.Agents.card.deactivate}
                     </span>
                   </>
                 ) : (
                   <>
                     <Play className="h-4 w-4 text-muted-foreground group-hover:text-green-500 transition-colors" />
                     <span className="text-[10px] text-muted-foreground group-hover:text-green-500 transition-colors font-medium">
-                      Activate
+                      {t.Agents.card.activate}
                     </span>
                   </>
                 )}
@@ -287,7 +289,7 @@ export function UnifiedAgentCard({
               >
                 <Download className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <span className="text-[10px] text-muted-foreground group-hover:text-primary transition-colors font-medium">
-                  Export
+                  {t.Agents.card.export}
                 </span>
               </button>
             )}
@@ -303,7 +305,7 @@ export function UnifiedAgentCard({
               >
                 <Trash2 className="h-4 w-4 text-muted-foreground group-hover:text-destructive transition-colors" />
                 <span className="text-[10px] text-muted-foreground group-hover:text-destructive transition-colors font-medium">
-                  Delete
+                  {t.Agents.card.delete}
                 </span>
               </button>
             )}

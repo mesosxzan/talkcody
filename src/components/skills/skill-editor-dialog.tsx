@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { useTranslation } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import type { DocumentationItem, Skill } from '@/types/skill';
 import { AssetsManager } from './assets-manager';
@@ -75,6 +76,7 @@ export function SkillEditorDialog({
   onSave,
   onClose,
 }: SkillEditorDialogProps) {
+  const t = useTranslation();
   const nameId = useId();
   const descriptionId = useId();
   const longDescriptionId = useId();
@@ -220,7 +222,7 @@ export function SkillEditorDialog({
   };
 
   const handleDeleteScript = (filename: string) => {
-    if (!confirm(`Are you sure you want to remove ${filename}?`)) {
+    if (!confirm(t.Skills.editor.scriptRemoveConfirm(filename))) {
       return;
     }
 
@@ -250,11 +252,11 @@ export function SkillEditorDialog({
   const handleSave = async () => {
     // Validation
     if (!name.trim()) {
-      toast.error('Skill name is required');
+      toast.error(t.Skills.editor.nameRequired);
       return;
     }
     if (!description.trim()) {
-      toast.error('Description is required');
+      toast.error(t.Skills.editor.descriptionRequired);
       return;
     }
 
@@ -290,11 +292,11 @@ export function SkillEditorDialog({
       };
 
       await onSave(skillData);
-      toast.success(skill ? 'Skill updated successfully' : 'Skill created successfully');
+      toast.success(skill ? t.Skills.editor.saveSuccess : t.Skills.editor.createSuccess);
       onClose();
     } catch (error) {
       logger.error('Failed to save skill:', error);
-      toast.error('Failed to save skill');
+      toast.error(t.Skills.editor.saveFailed);
     } finally {
       setSaving(false);
     }
@@ -304,30 +306,30 @@ export function SkillEditorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-fit min-w-4/5 max-h-[90vh] overflow-y-auto">
         <DialogHeader className="p-6 pb-0">
-          <DialogTitle>{skill ? 'Edit Skill' : 'Create New Skill'}</DialogTitle>
+          <DialogTitle>
+            {skill ? t.Skills.editor.editTitle : t.Skills.editor.createTitle}
+          </DialogTitle>
           <DialogDescription>
-            {skill
-              ? 'Update your skill information and content'
-              : 'Create a new domain knowledge skill for your projects'}
+            {skill ? t.Skills.editor.editDescription : t.Skills.editor.createDescription}
           </DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
           <div className="border-b px-6">
             <TabsList className="w-full justify-start">
-              <TabsTrigger value="basic">Basic Info</TabsTrigger>
-              <TabsTrigger value="content">Content</TabsTrigger>
-              <TabsTrigger value="documentation">Documentation</TabsTrigger>
-              <TabsTrigger value="scripts">Scripts</TabsTrigger>
-              <TabsTrigger value="references">References</TabsTrigger>
-              <TabsTrigger value="assets">Assets</TabsTrigger>
+              <TabsTrigger value="basic">{t.Skills.editor.basicInfo}</TabsTrigger>
+              <TabsTrigger value="content">{t.Skills.editor.content}</TabsTrigger>
+              <TabsTrigger value="documentation">{t.Skills.editor.documentation}</TabsTrigger>
+              <TabsTrigger value="scripts">{t.Skills.editor.scripts}</TabsTrigger>
+              <TabsTrigger value="references">{t.Skills.editor.references}</TabsTrigger>
+              <TabsTrigger value="assets">{t.Skills.editor.assets}</TabsTrigger>
             </TabsList>
           </div>
 
           <ScrollArea className="flex-1 px-6">
             <TabsContent value="basic" className="mt-4 space-y-4">
               <div>
-                <Label htmlFor={nameId}>Name *</Label>
+                <Label htmlFor={nameId}>{t.Skills.editor.name} *</Label>
                 <Input
                   id={nameId}
                   value={name}
@@ -337,7 +339,7 @@ export function SkillEditorDialog({
               </div>
 
               <div>
-                <Label htmlFor={descriptionId}>Short Description *</Label>
+                <Label htmlFor={descriptionId}>{t.Skills.editor.shortDescription} *</Label>
                 <Textarea
                   id={descriptionId}
                   value={description}
@@ -348,7 +350,7 @@ export function SkillEditorDialog({
               </div>
 
               <div>
-                <Label htmlFor={longDescriptionId}>Long Description</Label>
+                <Label htmlFor={longDescriptionId}>{t.Skills.editor.longDescription}</Label>
                 <Textarea
                   id={longDescriptionId}
                   value={longDescription}
@@ -359,7 +361,7 @@ export function SkillEditorDialog({
               </div>
 
               <div>
-                <Label htmlFor={categoryId}>Category</Label>
+                <Label htmlFor={categoryId}>{t.Skills.editor.category}</Label>
                 <Select value={category} onValueChange={setCategory}>
                   <SelectTrigger id={categoryId}>
                     <SelectValue />
@@ -376,7 +378,7 @@ export function SkillEditorDialog({
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor={licenseId}>License</Label>
+                  <Label htmlFor={licenseId}>{t.Skills.editor.license}</Label>
                   <Select value={license} onValueChange={setLicense}>
                     <SelectTrigger id={licenseId}>
                       <SelectValue placeholder="Select license" />
@@ -391,7 +393,7 @@ export function SkillEditorDialog({
                   </Select>
                 </div>
                 <div>
-                  <Label htmlFor={iconId}>Icon URL</Label>
+                  <Label htmlFor={iconId}>{t.Skills.editor.iconUrl}</Label>
                   <Input
                     id={iconId}
                     value={icon}
@@ -403,7 +405,7 @@ export function SkillEditorDialog({
               </div>
 
               <div>
-                <Label htmlFor={compatibilityId}>Compatibility</Label>
+                <Label htmlFor={compatibilityId}>{t.Skills.editor.compatibility}</Label>
                 <Textarea
                   id={compatibilityId}
                   value={compatibility}
@@ -413,7 +415,7 @@ export function SkillEditorDialog({
                   maxLength={500}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  {compatibility.length}/500 characters
+                  {t.Skills.editor.compatibilityHint(compatibility.length)}
                 </p>
               </div>
 
@@ -423,7 +425,7 @@ export function SkillEditorDialog({
               </div>
 
               <div>
-                <Label htmlFor={tagsId}>Tags</Label>
+                <Label htmlFor={tagsId}>{t.Skills.editor.tags}</Label>
                 <div className="flex gap-2">
                   <Input
                     id={tagsId}
@@ -435,10 +437,10 @@ export function SkillEditorDialog({
                         handleAddTag();
                       }
                     }}
-                    placeholder="Add a tag and press Enter"
+                    placeholder={t.Skills.editor.tagPlaceholder}
                   />
                   <Button type="button" onClick={handleAddTag}>
-                    Add
+                    {t.Skills.editor.addTag}
                   </Button>
                 </div>
                 {tags.length > 0 && (
@@ -462,7 +464,7 @@ export function SkillEditorDialog({
 
             <TabsContent value="content" className="mt-4 space-y-4">
               <div>
-                <Label htmlFor={systemPromptId}>System Prompt Fragment</Label>
+                <Label htmlFor={systemPromptId}>{t.Skills.editor.systemPromptFragment}</Label>
                 <Textarea
                   id={systemPromptId}
                   value={systemPromptFragment}
@@ -472,12 +474,12 @@ export function SkillEditorDialog({
                   className="font-mono text-sm"
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  This will be injected into the AI's system prompt when the skill is active
+                  {t.Skills.editor.systemPromptHint}
                 </p>
               </div>
 
               <div>
-                <Label htmlFor={workflowRulesId}>Workflow Rules</Label>
+                <Label htmlFor={workflowRulesId}>{t.Skills.editor.workflowRules}</Label>
                 <Textarea
                   id={workflowRulesId}
                   value={workflowRules}
@@ -486,9 +488,7 @@ export function SkillEditorDialog({
                   rows={10}
                   className="font-mono text-sm"
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Guidelines and procedures for working with this domain
-                </p>
+                <p className="text-xs text-muted-foreground mt-1">{t.Skills.editor.workflowHint}</p>
               </div>
             </TabsContent>
 
@@ -501,10 +501,9 @@ export function SkillEditorDialog({
               <div>
                 <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h3 className="font-semibold">Script Management</h3>
+                    <h3 className="font-semibold">{t.Skills.editor.scriptManagement}</h3>
                     <p className="text-sm text-muted-foreground">
-                      Select script files to include with this skill. Scripts will be copied to the
-                      skill's scripts/ directory.
+                      {t.Skills.editor.scriptDescription}
                     </p>
                   </div>
                   <Button
@@ -515,7 +514,7 @@ export function SkillEditorDialog({
                     disabled={selectingScripts}
                   >
                     <FileCode className="h-4 w-4 mr-2" />
-                    {selectingScripts ? 'Selecting...' : 'Select Scripts'}
+                    {selectingScripts ? t.Skills.editor.selecting : t.Skills.editor.selectScripts}
                   </Button>
                 </div>
 
@@ -548,7 +547,7 @@ export function SkillEditorDialog({
                   </div>
                 ) : (
                   <div className="text-sm text-muted-foreground text-center py-8 border rounded-md border-dashed">
-                    No scripts added yet. Click "Select Scripts" to add scripts.
+                    {t.Skills.editor.noScriptsHint}
                   </div>
                 )}
               </div>
@@ -568,10 +567,14 @@ export function SkillEditorDialog({
 
         <DialogFooter className="p-6 pt-4 border-t">
           <Button variant="outline" onClick={onClose} disabled={saving}>
-            Cancel
+            {t.Skills.editor.cancel}
           </Button>
           <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : skill ? 'Update' : 'Create'}
+            {saving
+              ? t.Skills.editor.saving
+              : skill
+                ? t.Skills.editor.update
+                : t.Skills.editor.create}
           </Button>
         </DialogFooter>
       </DialogContent>

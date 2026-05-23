@@ -29,6 +29,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useTranslation } from '@/hooks/use-locale';
 import type { Skill } from '@/types/skill';
 
 interface SkillCardProps {
@@ -61,6 +62,8 @@ export function SkillCard({
   onInstall,
   isInstalling = false,
 }: SkillCardProps) {
+  const t = useTranslation();
+
   const handleCardClick = () => {
     if (onClick) {
       onClick();
@@ -114,17 +117,17 @@ export function SkillCard({
               <CardTitle className="text-lg truncate">{skill.name}</CardTitle>
               {sourceType === 'system' && (
                 <Badge variant="secondary" className="shrink-0 text-xs">
-                  System
+                  {t.Skills.card.system}
                 </Badge>
               )}
               {isActive && (
                 <Badge variant="default" className="shrink-0 text-xs bg-green-600">
-                  Active
+                  {t.Skills.card.active}
                 </Badge>
               )}
               {skill.metadata.isShared && (
                 <Badge variant="outline" className="shrink-0 text-xs">
-                  Shared
+                  {t.Skills.card.shared}
                 </Badge>
               )}
             </div>
@@ -147,7 +150,7 @@ export function SkillCard({
                 <TooltipTrigger asChild>
                   <Badge variant="secondary" className="mt-1 text-xs cursor-help">
                     <Info className="h-3 w-3 mr-1" />
-                    Compatible
+                    {t.Skills.card.compatible}
                   </Badge>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -169,45 +172,45 @@ export function SkillCard({
           {hasSystemPrompt && (
             <div className="flex items-center gap-1" title="System Prompt">
               <FileText className="h-3 w-3" />
-              Prompt
+              {t.Skills.card.prompt}
             </div>
           )}
           {hasWorkflowRules && (
             <div className="flex items-center gap-1" title="Workflow Rules">
               <Workflow className="h-3 w-3" />
-              Workflow
+              {t.Skills.card.workflow}
             </div>
           )}
           {hasDocumentation && (
             <div className="flex items-center gap-1" title="Documentation">
               <BookOpen className="h-3 w-3" />
-              Docs ({skill.content?.documentation?.length || 0})
+              {t.Skills.card.docs(skill.content?.documentation?.length || 0)}
             </div>
           )}
           {hasScripts && (
             <div className="flex items-center gap-1" title="Executable Scripts">
               <Zap className="h-3 w-3" />
               {skill.content?.scriptFiles && skill.content.scriptFiles.length > 0
-                ? `Scripts: ${skill.content.scriptFiles.join(', ')}`
-                : 'Scripts'}
+                ? `${t.Skills.card.scripts}: ${skill.content.scriptFiles.join(', ')}`
+                : t.Skills.card.scripts}
             </div>
           )}
           {hasScriptsDir && (
             <div className="flex items-center gap-1" title="Scripts Directory">
               <Code className="h-3 w-3" />
-              Scripts
+              {t.Skills.card.scripts}
             </div>
           )}
           {hasReferencesDir && (
             <div className="flex items-center gap-1" title="References Directory">
               <BookOpen className="h-3 w-3" />
-              References
+              {t.Skills.card.references}
             </div>
           )}
           {hasAssetsDir && (
             <div className="flex items-center gap-1" title="Assets Directory">
               <Folder className="h-3 w-3" />
-              Assets
+              {t.Skills.card.assets}
             </div>
           )}
         </div>
@@ -241,11 +244,11 @@ export function SkillCard({
                   e.stopPropagation();
                   onEdit();
                 }}
-                title="Edit Skill"
+                title={t.Skills.card.edit}
               >
                 <Pencil className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                  Edit
+                  {t.Skills.card.edit}
                 </span>
               </button>
             )}
@@ -258,11 +261,11 @@ export function SkillCard({
                   e.stopPropagation();
                   onFork();
                 }}
-                title="Fork Skill"
+                title={t.Skills.card.fork}
               >
                 <GitFork className="h-4 w-4 text-muted-foreground group-hover:text-primary transition-colors" />
                 <span className="text-xs text-muted-foreground group-hover:text-primary transition-colors">
-                  Fork
+                  {t.Skills.card.fork}
                 </span>
               </button>
             )}
@@ -275,11 +278,11 @@ export function SkillCard({
                   e.stopPropagation();
                   onDelete();
                 }}
-                title="Delete Skill"
+                title={t.Skills.card.delete}
               >
                 <Trash2 className="h-4 w-4 text-muted-foreground group-hover:text-destructive transition-colors" />
                 <span className="text-xs text-muted-foreground group-hover:text-destructive transition-colors">
-                  Delete
+                  {t.Skills.card.delete}
                 </span>
               </button>
             )}
@@ -323,12 +326,12 @@ export function SkillCard({
                   {isInstalling ? (
                     <>
                       <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                      Installing...
+                      {t.Skills.card.installing}
                     </>
                   ) : (
                     <>
                       <Download className="h-4 w-4 mr-2" />
-                      Install
+                      {t.Skills.card.install}
                     </>
                   )}
                 </Button>
@@ -340,7 +343,11 @@ export function SkillCard({
                   onClick={handleToggleClick}
                   disabled={isToggling}
                 >
-                  {isToggling ? 'Loading...' : isActive ? 'Deactivate' : 'Activate'}
+                  {isToggling
+                    ? t.Skills.card.loading
+                    : isActive
+                      ? t.Skills.card.deactivate
+                      : t.Skills.card.activate}
                 </Button>
               )}
             </div>
@@ -360,6 +367,8 @@ export function SkillCardCompact({
   isActive?: boolean;
   onToggle?: (skill: Skill) => void;
 }) {
+  const t = useTranslation();
+
   const handleToggle = () => {
     if (onToggle) {
       onToggle(skill);
@@ -389,7 +398,7 @@ export function SkillCardCompact({
 
       {isActive && (
         <Badge variant="default" className="shrink-0 text-xs">
-          Active
+          {t.Skills.card.active}
         </Badge>
       )}
     </button>
