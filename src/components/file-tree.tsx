@@ -7,7 +7,6 @@ import {
   Copy,
   Edit,
   File,
-  FileText,
   Folder,
   Plus,
   RefreshCw,
@@ -31,6 +30,8 @@ import { repositoryService } from '@/services/repository-service';
 import { useGitStore } from '@/stores/git-store';
 import type { FileNode } from '@/types/file-system';
 import { GitFileStatus } from '@/types/git';
+import { FileIcon } from './file-icon';
+import { FolderIcon } from './folder-icon';
 
 // Global state for clipboard operations
 type ClipboardOperation = {
@@ -450,34 +451,36 @@ function FileTreeNode({
     >
       <div className="flex min-w-0 flex-1 items-center">
         {node.is_directory ? (
-          node.has_children || (node.children && node.children.length > 0) ? (
-            isExpanded ? (
-              <ChevronDown
-                className={cn(
-                  'mr-1 h-4 w-4 flex-shrink-0',
-                  isGitIgnored && 'text-muted-foreground'
-                )}
-              />
+          <>
+            {node.has_children || (node.children && node.children.length > 0) ? (
+              isExpanded ? (
+                <ChevronDown
+                  className={cn(
+                    'mr-1 h-4 w-4 flex-shrink-0',
+                    isGitIgnored && 'text-muted-foreground'
+                  )}
+                />
+              ) : (
+                <ChevronRight
+                  className={cn(
+                    'mr-1 h-4 w-4 flex-shrink-0',
+                    isGitIgnored && 'text-muted-foreground'
+                  )}
+                />
+              )
             ) : (
-              <ChevronRight
-                className={cn(
-                  'mr-1 h-4 w-4 flex-shrink-0',
-                  isGitIgnored && 'text-muted-foreground'
-                )}
-              />
-            )
-          ) : (
-            <div className="mr-1 h-4 w-4" />
-          )
+              <div className="mr-1 h-4 w-4" />
+            )}
+            <FolderIcon
+              folderName={node.name}
+              isOpen={isExpanded}
+              className={cn('mr-2', isGitIgnored && 'opacity-60')}
+            />
+          </>
         ) : (
           <>
             <div className="mr-1 h-4 w-4" />
-            <File
-              className={cn(
-                'mr-2 h-4 w-4 flex-shrink-0 text-gray-600',
-                isGitIgnored && 'text-muted-foreground'
-              )}
-            />
+            <FileIcon filename={node.name} className={cn('mr-2', isGitIgnored && 'opacity-60')} />
           </>
         )}
 
@@ -529,11 +532,11 @@ function FileTreeNode({
           {node.is_directory && (
             <>
               <ContextMenuItem onClick={handleNewFile}>
-                <FileText className="mr-2 h-4 w-4" />
+                <FileIcon filename="new-file" className="mr-2 h-4 w-4" />
                 {t.FileTree.contextMenu.newFile}
               </ContextMenuItem>
               <ContextMenuItem onClick={handleNewFolder}>
-                <Plus className="mr-2 h-4 w-4" />
+                <FolderIcon folderName="new-folder" isOpen={false} className="mr-2 h-4 w-4" />
                 {t.FileTree.contextMenu.newFolder}
               </ContextMenuItem>
               <ContextMenuSeparator />
@@ -596,9 +599,13 @@ function FileTreeNode({
               <div className="flex min-w-0 flex-1 items-center">
                 <div className="mr-1 h-4 w-4" />
                 {isCreatingFolder ? (
-                  <Folder className="mr-2 h-4 w-4 flex-shrink-0 text-blue-600" />
+                  <FolderIcon
+                    folderName={newItemName || 'new-folder'}
+                    isOpen={false}
+                    className="mr-2 text-blue-600"
+                  />
                 ) : (
-                  <File className="mr-2 h-4 w-4 flex-shrink-0 text-gray-600" />
+                  <FileIcon filename={newItemName || 'new-file'} className="mr-2" />
                 )}
                 <input
                   className="min-w-0 flex-1 rounded border border-green-500 bg-white px-1 py-0 text-sm dark:bg-gray-800"
