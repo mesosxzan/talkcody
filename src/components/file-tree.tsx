@@ -457,40 +457,33 @@ function FileTreeNode({
           style={{ left: `${paddingLeft - 8}px` }}
         />
       )}
+      {/* Fixed-width icon container ensures consistent alignment across all items */}
       <div className="flex min-w-0 flex-1 items-center">
-        {node.is_directory ? (
-          <>
-            {node.has_children || (node.children && node.children.length > 0) ? (
-              isExpanded ? (
-                <ChevronDown
-                  className={cn(
-                    'mr-1 h-4 w-4 flex-shrink-0',
-                    isGitIgnored && 'text-muted-foreground'
-                  )}
-                />
-              ) : (
-                <ChevronRight
-                  className={cn(
-                    'mr-1 h-4 w-4 flex-shrink-0',
-                    isGitIgnored && 'text-muted-foreground'
-                  )}
-                />
-              )
+        {/* Chevron icon slot - fixed width for alignment */}
+        <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+          {node.is_directory &&
+          (node.has_children || (node.children && node.children.length > 0)) ? (
+            isExpanded ? (
+              <ChevronDown className={cn('h-3.5 w-3.5', isGitIgnored && 'text-muted-foreground')} />
             ) : (
-              <div className="mr-1 h-4 w-4" />
-            )}
+              <ChevronRight
+                className={cn('h-3.5 w-3.5', isGitIgnored && 'text-muted-foreground')}
+              />
+            )
+          ) : null}
+        </div>
+        {/* File/Folder icon slot - fixed width for alignment */}
+        <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+          {node.is_directory ? (
             <FolderIcon
               folderName={node.name}
               isOpen={isExpanded}
-              className={cn('mr-2', isGitIgnored && 'opacity-60')}
+              className={cn(isGitIgnored && 'opacity-60')}
             />
-          </>
-        ) : (
-          <>
-            <div className="mr-1 h-4 w-4" />
-            <FileIcon filename={node.name} className={cn('mr-2', isGitIgnored && 'opacity-60')} />
-          </>
-        )}
+          ) : (
+            <FileIcon filename={node.name} className={cn(isGitIgnored && 'opacity-60')} />
+          )}
+        </div>
 
         {isRenaming ? (
           <input
@@ -605,16 +598,20 @@ function FileTreeNode({
               style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
             >
               <div className="flex min-w-0 flex-1 items-center">
-                <div className="mr-1 h-4 w-4" />
-                {isCreatingFolder ? (
-                  <FolderIcon
-                    folderName={newItemName || 'new-folder'}
-                    isOpen={false}
-                    className="mr-2 text-blue-600"
-                  />
-                ) : (
-                  <FileIcon filename={newItemName || 'new-file'} className="mr-2" />
-                )}
+                {/* Chevron slot - fixed width for alignment */}
+                <div className="h-4 w-4 flex-shrink-0" />
+                {/* Icon slot - fixed width for alignment */}
+                <div className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                  {isCreatingFolder ? (
+                    <FolderIcon
+                      folderName={newItemName || 'new-folder'}
+                      isOpen={false}
+                      className="text-blue-600"
+                    />
+                  ) : (
+                    <FileIcon filename={newItemName || 'new-file'} />
+                  )}
+                </div>
                 <input
                   className="min-w-0 flex-1 rounded border border-green-500 bg-white px-1 py-0 text-sm dark:bg-gray-800"
                   onBlur={handleNewItemSubmit}
