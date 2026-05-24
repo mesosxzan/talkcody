@@ -1,4 +1,14 @@
-import { Check, ChevronDown, GitBranch, Loader2, Plus, RefreshCw, Tag, Trash2 } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  GitBranch,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Tag,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -22,6 +32,11 @@ export function GitBranchSelector() {
   const [showCreateBranch, setShowCreateBranch] = useState(false);
   const [newBranchName, setNewBranchName] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [showCreateTag, setShowCreateTag] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [tagMessage, setTagMessage] = useState('');
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [pushingBranch, setPushingBranch] = useState<string | null>(null);
 
   const branches = useGitStore((state) => state.branches);
   const tags = useGitStore((state) => state.tags);
@@ -39,6 +54,10 @@ export function GitBranchSelector() {
   const createBranch = useGitStore((state) => state.createBranch);
   const checkoutRemoteBranch = useGitStore((state) => state.checkoutRemoteBranch);
   const deleteBranch = useGitStore((state) => state.deleteBranch);
+  const pushBranch = useGitStore((state) => state.pushBranch);
+  const createTag = useGitStore((state) => state.createTag);
+  const pushTag = useGitStore((state) => state.pushTag);
+  const deleteTag = useGitStore((state) => state.deleteTag);
   const fetch = useGitStore((state) => state.fetch);
 
   const currentBranch = gitStatus?.branch?.name;
@@ -53,6 +72,9 @@ export function GitBranchSelector() {
       setSearchQuery('');
       setShowCreateBranch(false);
       setNewBranchName('');
+      setShowCreateTag(false);
+      setNewTagName('');
+      setTagMessage('');
     }
   }, [open, loadBranches, loadTags, loadRemoteBranches]);
 
@@ -155,6 +177,86 @@ export function GitBranchSelector() {
     }
   }, [fetch]);
 
+  const handlePushBranch = useCallback(
+    async (branchName: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+
+      if (!confirm(`Push branch "${branchName}" to remote?`)) {
+        return;
+      }
+
+      setPushingBranch(branchName);
+      try {
+        const result = await pushBranch(branchName, undefined, true);
+        toast.success(result);
+      } catch {
+        toast.error(`Failed to push branch: ${branchName}`);
+      } finally {
+        setPushingBranch(null);
+      }
+    },
+    [pushBranch]
+  );
+
+  const handleCreateTag = useCallback(
+    async (tagName: string, message: string) => {
+      if (!tagName.trim()) {
+        toast.error('Tag name cannot be empty');
+        return;
+      }
+
+      setIsCreatingTag(true);
+      try {
+        await createTag(tagName, message || undefined);
+        toast.success(`Created tag: ${tagName}`);
+        setShowCreateTag(false);
+        setNewTagName('');
+        setTagMessage('');
+      } catch {
+        toast.error(`Failed to create tag: ${tagName}`);
+      } finally {
+        setIsCreatingTag(false);
+      }
+    },
+    [createTag]
+  );
+
+  const handlePushTag = useCallback(
+    async (tagName: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+
+      if (!confirm(`Push tag "${tagName}" to remote?`)) {
+        return;
+      }
+
+      try {
+        const result = await pushTag(tagName);
+        toast.success(result);
+      } catch {
+        toast.error(`Failed to push tag: ${tagName}`);
+      }
+    },
+    [pushTag]
+  );
+
+  const handleDeleteTag = useCallback(
+    async (tagName: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+
+      if (!confirm(`Delete tag "${tagName}"?\n\nThis will delete both local and remote tag.`)) {
+        return;
+      }
+
+      try {
+        await deleteTag(tagName, 'origin');
+        toast.success(`Deleted tag: ${tagName}`);
+      } catch {
+        toast.error(`Failed to delete tag: ${tagName}`);
+      }
+    },
+    [deleteTag]
+  );
+
   const isLoading = isLoadingBranches || isLoadingTags || isLoadingRemoteBranches;
 
   // Filter branches and tags based on search query
@@ -228,6 +330,15 @@ export function GitBranchSelector() {
             >
               <Plus className="h-3.5 w-3.5" />
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              onClick={() => setShowCreateTag(!showCreateTag)}
+              title="Create new tag"
+            >
+              <Tag className="h-3.5 w-3.5" />
+            </Button>
           </div>
         </div>
 
@@ -253,6 +364,34 @@ export function GitBranchSelector() {
                 onClick={() => handleCreateBranch(newBranchName)}
               >
                 {isCreating ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Create'}
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Create tag input */}
+        {showCreateTag && (
+          <div className="border-b p-2 space-y-2">
+            <Input
+              className="h-7 text-xs"
+              onChange={(e) => setNewTagName(e.target.value)}
+              placeholder="Tag name (e.g., v1.0.0)"
+              value={newTagName}
+            />
+            <Input
+              className="h-7 text-xs"
+              onChange={(e) => setTagMessage(e.target.value)}
+              placeholder="Tag message (optional)"
+              value={tagMessage}
+            />
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                className="h-7 flex-1 text-xs"
+                disabled={!newTagName.trim() || isCreatingTag}
+                onClick={() => handleCreateTag(newTagName, tagMessage)}
+              >
+                {isCreatingTag ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Create Tag'}
               </Button>
             </div>
           </div>
@@ -301,6 +440,21 @@ export function GitBranchSelector() {
                           <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
                         </Button>
                       )}
+                      {!branch.upstream && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+                          onClick={(e) => handlePushBranch(branch.name, e)}
+                          disabled={pushingBranch === branch.name}
+                        >
+                          {pushingBranch === branch.name ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Upload className="h-3 w-3 text-muted-foreground" />
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </DropdownMenuItem>
                 ))
@@ -346,7 +500,7 @@ export function GitBranchSelector() {
                   </DropdownMenuLabel>
                   {filteredTags.map((tag) => (
                     <DropdownMenuItem
-                      className="flex items-center justify-between gap-2 text-xs"
+                      className="group flex items-center justify-between gap-2 text-xs"
                       key={tag.name}
                       onClick={() => handleSelectTag(tag.name)}
                     >
@@ -354,9 +508,27 @@ export function GitBranchSelector() {
                         <Tag className="h-3 w-3 text-muted-foreground" />
                         <span className="truncate">{tag.name}</span>
                       </div>
-                      {tag.isCurrent && (
-                        <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
-                      )}
+                      <div className="flex items-center gap-1">
+                        {tag.isCurrent && (
+                          <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+                          onClick={(e) => handlePushTag(tag.name, e)}
+                        >
+                          <Upload className="h-3 w-3 text-muted-foreground" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+                          onClick={(e) => handleDeleteTag(tag.name, e)}
+                        >
+                          <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                        </Button>
+                      </div>
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuGroup>

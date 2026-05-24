@@ -387,6 +387,53 @@ pub async fn git_delete_branch(repo_path: String, branch_name: String) -> Result
     repository::delete_branch(&repo_path, &branch_name)
 }
 
+/// Push a local branch to remote
+#[tauri::command]
+pub async fn git_push_branch(
+    repo_path: String,
+    branch_name: String,
+    remote: Option<String>,
+    set_upstream: Option<bool>,
+) -> Result<String, String> {
+    repository::push_branch(
+        &repo_path,
+        &branch_name,
+        remote.as_deref(),
+        set_upstream.unwrap_or(false),
+    )
+}
+
+/// Create a tag
+#[tauri::command]
+pub async fn git_create_tag(
+    repo_path: String,
+    tag_name: String,
+    message: Option<String>,
+    target: Option<String>,
+) -> Result<(), String> {
+    repository::create_tag(&repo_path, &tag_name, message.as_deref(), target.as_deref())
+}
+
+/// Push tags to remote
+#[tauri::command]
+pub async fn git_push_tag(
+    repo_path: String,
+    tag_name: Option<String>,
+    remote: Option<String>,
+) -> Result<String, String> {
+    repository::push_tag(&repo_path, tag_name.as_deref(), remote.as_deref())
+}
+
+/// Delete a tag
+#[tauri::command]
+pub async fn git_delete_tag(
+    repo_path: String,
+    tag_name: String,
+    remote: Option<String>,
+) -> Result<(), String> {
+    repository::delete_tag(&repo_path, &tag_name, remote.as_deref())
+}
+
 /// Get file content at HEAD (committed version)
 #[tauri::command]
 pub async fn git_get_file_content_at_head(

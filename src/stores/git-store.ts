@@ -57,6 +57,10 @@ interface GitStore {
   createBranch: (branchName: string, startPoint?: string) => Promise<void>;
   checkoutRemoteBranch: (remoteBranch: string, localBranch?: string) => Promise<void>;
   deleteBranch: (branchName: string) => Promise<void>;
+  pushBranch: (branchName: string, remote?: string, setUpstream?: boolean) => Promise<string>;
+  createTag: (tagName: string, message?: string, target?: string) => Promise<void>;
+  pushTag: (tagName?: string, remote?: string) => Promise<string>;
+  deleteTag: (tagName: string, remote?: string) => Promise<void>;
   fetch: (remote?: string) => Promise<string>;
 
   // Git Operations
@@ -493,6 +497,78 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().loadBranches();
     } catch (error) {
       logger.error(`Failed to delete branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Push a branch to remote
+  pushBranch: async (branchName: string, remote?: string, setUpstream?: boolean) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const result = await gitService.pushBranch(repositoryPath, branchName, remote, setUpstream);
+      logger.info(`Pushed branch: ${branchName}`);
+      // Refresh branches after push
+      await Promise.all([get().loadBranches(), get().loadRemoteBranches()]);
+      return result;
+    } catch (error) {
+      logger.error(`Failed to push branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Create a tag
+  createTag: async (tagName: string, message?: string, target?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.createTag(repositoryPath, tagName, message, target);
+      logger.info(`Created tag: ${tagName}`);
+      // Refresh tags after creation
+      await get().loadTags();
+    } catch (error) {
+      logger.error(`Failed to create tag ${tagName}:`, error);
+      throw error;
+    }
+  },
+
+  // Push tags to remote
+  pushTag: async (tagName?: string, remote?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const result = await gitService.pushTag(repositoryPath, tagName, remote);
+      logger.info(`Pushed tag: ${tagName || 'all tags'}`);
+      return result;
+    } catch (error) {
+      logger.error('Failed to push tags:', error);
+      throw error;
+    }
+  },
+
+  // Delete a tag
+  deleteTag: async (tagName: string, remote?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.deleteTag(repositoryPath, tagName, remote);
+      logger.info(`Deleted tag: ${tagName}`);
+      // Refresh tags after deletion
+      await get().loadTags();
+    } catch (error) {
+      logger.error(`Failed to delete tag ${tagName}:`, error);
       throw error;
     }
   },

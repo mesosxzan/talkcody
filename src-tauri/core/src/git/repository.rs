@@ -412,6 +412,167 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Push a local branch to remote repository
+pub fn push_branch(
+    repo_path: &str,
+    branch_name: &str,
+    remote: Option<&str>,
+    set_upstream: bool,
+) -> Result<String, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let remote_name = remote.unwrap_or("origin");
+    let mut args = vec!["push", remote_name, branch_name];
+
+    if set_upstream {
+        args.insert(2, "-u");
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to push branch: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to push branch {}: {}",
+            branch_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(format!("Pushed branch {} to {}", branch_name, remote_name))
+}
+
+/// Create a tag
+pub fn create_tag(
+    repo_path: &str,
+    tag_name: &str,
+    message: Option<&str>,
+    target: Option<&str>,
+) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let mut args = vec!["tag"];
+
+    if let Some(msg) = message {
+        args.push("-a");
+        args.push(tag_name);
+        args.push("-m");
+        args.push(msg);
+    } else {
+        args.push(tag_name);
+    }
+
+    if let Some(tgt) = target {
+        args.push(tgt);
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to create tag: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to create tag {}: {}",
+            tag_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Push tags to remote repository
+pub fn push_tag(
+    repo_path: &str,
+    tag_name: Option<&str>,
+    remote: Option<&str>,
+) -> Result<String, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let remote_name = remote.unwrap_or("origin");
+    let output = if let Some(tag) = tag_name {
+        crate::shell_utils::new_command("git")
+            .args(["push", remote_name, "tag", tag])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to push tag: {}", e))?
+    } else {
+        // Push all tags
+        crate::shell_utils::new_command("git")
+            .args(["push", remote_name, "--tags"])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to push tags: {}", e))?
+    };
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to push tags: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(format!(
+        "Pushed {} to {}",
+        tag_name
+            .map(|t| format!("tag {}", t))
+            .unwrap_or_else(|| "all tags".to_string()),
+        remote_name
+    ))
+}
+
+/// Delete a tag
+pub fn delete_tag(repo_path: &str, tag_name: &str, remote: Option<&str>) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    // Delete local tag
+    let output = crate::shell_utils::new_command("git")
+        .args(["tag", "-d", tag_name])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to delete local tag: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to delete local tag {}: {}",
+            tag_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    // Delete remote tag if remote is specified
+    if let Some(remote_name) = remote {
+        let output = crate::shell_utils::new_command("git")
+            .args(["push", remote_name, &format!(":refs/tags/{}", tag_name)])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to delete remote tag: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "Failed to delete remote tag {}: {}",
+                tag_name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

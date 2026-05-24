@@ -223,6 +223,54 @@ export class GitService {
   async deleteBranch(repoPath: string, branchName: string): Promise<void> {
     return invoke<void>('git_delete_branch', { repoPath, branchName });
   }
+
+  /**
+   * Push a local branch to remote
+   */
+  async pushBranch(
+    repoPath: string,
+    branchName: string,
+    remote?: string,
+    setUpstream?: boolean
+  ): Promise<string> {
+    return invoke<string>('git_push_branch', {
+      repoPath,
+      branchName,
+      remote,
+      setUpstream,
+    });
+  }
+
+  /**
+   * Create a tag
+   */
+  async createTag(
+    repoPath: string,
+    tagName: string,
+    message?: string,
+    target?: string
+  ): Promise<void> {
+    return invoke<void>('git_create_tag', {
+      repoPath,
+      tagName,
+      message,
+      target,
+    });
+  }
+
+  /**
+   * Push tags to remote
+   */
+  async pushTag(repoPath: string, tagName?: string, remote?: string): Promise<string> {
+    return invoke<string>('git_push_tag', { repoPath, tagName, remote });
+  }
+
+  /**
+   * Delete a tag
+   */
+  async deleteTag(repoPath: string, tagName: string, remote?: string): Promise<void> {
+    return invoke<void>('git_delete_tag', { repoPath, tagName, remote });
+  }
 }
 
 // Export a singleton instance
