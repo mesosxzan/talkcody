@@ -237,13 +237,35 @@ pub async fn proxy_fetch(request: ProxyRequest) -> Result<ProxyResponse, String>
     // Validate URL to prevent SSRF attacks
     validate_url(&request.url, request.allow_private_ip.unwrap_or(false))?;
 
+    // Parse URL to check if it's localhost
+    let parsed_url = Url::parse(&request.url).map_err(|e| format!("Invalid URL: {}", e))?;
+
+    let is_localhost = parsed_url
+        .host_str()
+        .map(|h| {
+            let h_lower = h.to_lowercase();
+            h_lower == "localhost"
+                || h_lower == "127.0.0.1"
+                || h_lower == "::1"
+                || h_lower == "[::1]"
+        })
+        .unwrap_or(false);
+
     // Configure client with proper decompression and connection settings
-    let client = reqwest::Client::builder()
+    // For localhost requests, disable proxy to avoid issues with system proxy settings.
+    let mut client_builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .gzip(true)
         .brotli(true)
         .tcp_nodelay(true)
-        .pool_max_idle_per_host(5)
+        .pool_max_idle_per_host(5);
+
+    if is_localhost {
+        // Bypass proxy for localhost connections (e.g., local MCP servers)
+        client_builder = client_builder.no_proxy();
+    }
+
+    let client = client_builder
         .build()
         .map_err(|e| format!("Failed to build client: {}", e))?;
 
@@ -405,18 +427,41 @@ async fn stream_fetch_inner<R: tauri::Runtime>(
         return Err(e);
     }
 
+    // Parse URL to check if it's localhost
+    let parsed_url = Url::parse(&request.url).map_err(|e| {
+        emit_end(0, Some(format!("Invalid URL: {}", e)));
+        format!("Invalid URL: {}", e)
+    })?;
+
+    let is_localhost = parsed_url
+        .host_str()
+        .map(|h| {
+            let h_lower = h.to_lowercase();
+            h_lower == "localhost"
+                || h_lower == "127.0.0.1"
+                || h_lower == "::1"
+                || h_lower == "[::1]"
+        })
+        .unwrap_or(false);
+
     // Configure client with connection settings for streaming and avoid auto-decompression.
-    let client = reqwest::Client::builder()
+    // For localhost requests, disable proxy to avoid issues with system proxy settings.
+    let mut client_builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .gzip(false)
         .brotli(false)
         .tcp_nodelay(true) // Reduce latency for streaming
-        .pool_max_idle_per_host(5) // Enable connection pooling
-        .build()
-        .map_err(|e| {
-            emit_end(0, Some(format!("Failed to build client: {}", e)));
-            format!("Failed to build client: {}", e)
-        })?;
+        .pool_max_idle_per_host(5); // Enable connection pooling
+
+    if is_localhost {
+        // Bypass proxy for localhost connections (e.g., local MCP servers)
+        client_builder = client_builder.no_proxy();
+    }
+
+    let client = client_builder.build().map_err(|e| {
+        emit_end(0, Some(format!("Failed to build client: {}", e)));
+        format!("Failed to build client: {}", e)
+    })?;
 
     // Build the request
     let mut req_builder = match request.method.to_uppercase().as_str() {

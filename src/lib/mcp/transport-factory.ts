@@ -1,6 +1,9 @@
 // src/lib/mcp/transport-factory.ts
 
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import {
+  SSEClientTransport,
+  type SSEClientTransportOptions,
+} from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { logger } from '@/lib/logger';
 import { streamFetch } from '@/lib/tauri-fetch';
@@ -145,22 +148,33 @@ export class TransportFactory {
       }
 
       // SSEClientTransport constructor options
-      const options: any = {};
+      // Use streamFetch (Tauri backend proxy) for SSE connections to bypass browser CORS and header restrictions
+      // SSE transport needs streaming support for server-to-client messages via EventSource
+      const options: SSEClientTransportOptions = {
+        fetch: streamFetch as typeof fetch,
+        requestInit: {
+          headers: {
+            ...server.headers,
+          },
+          mode: 'cors',
+        },
+      };
 
       // Add API key to headers if provided
-      if (server.api_key || server.headers) {
-        options.headers = {
-          ...server.headers,
-        };
-
-        if (server.api_key) {
-          options.headers.Authorization = `Bearer ${server.api_key}`;
+      if (server.api_key) {
+        if (!options.requestInit?.headers) {
+          options.requestInit = { headers: {} };
         }
+        (options.requestInit.headers as Record<string, string>)['Authorization'] =
+          `Bearer ${server.api_key}`;
+        logger.info(
+          `Adding Authorization header for SSE transport ${server.id} with token: ${server.api_key.substring(0, 8)}...`
+        );
       }
 
       const transport = new SSEClientTransport(url, options);
 
-      logger.info(`Created SSE transport for ${server.id} at ${server.url}`);
+      logger.info(`Created SSE transport for ${server.id} at ${server.url} using streamFetch`);
 
       return transport;
     } catch (error) {
