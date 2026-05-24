@@ -60,6 +60,18 @@ pub struct TagInfo {
     pub is_current: bool,
 }
 
+/// Represents information about a remote branch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBranchInfo {
+    /// Remote name (e.g., "origin")
+    pub remote: String,
+    /// Branch name (e.g., "main")
+    pub name: String,
+    /// Full branch name (e.g., "origin/main")
+    pub full_name: String,
+}
+
 /// Represents the overall Git repository status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

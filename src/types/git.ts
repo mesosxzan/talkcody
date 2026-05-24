@@ -31,6 +31,12 @@ export interface TagInfo {
   isCurrent: boolean;
 }
 
+export interface RemoteBranchInfo {
+  remote: string;
+  name: string;
+  fullName: string;
+}
+
 export interface GitStatus {
   branch: BranchInfo | null;
   modified: FileStatus[];

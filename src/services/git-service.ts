@@ -5,6 +5,7 @@ import type {
   FileStatusMap,
   GitStatus,
   LineChange,
+  RemoteBranchInfo,
   TagInfo,
 } from '../types/git';
 
@@ -174,6 +175,53 @@ export class GitService {
    */
   async getFileContentAtHead(repoPath: string, filePath: string): Promise<string> {
     return invoke<string>('git_get_file_content_at_head', { repoPath, filePath });
+  }
+
+  /**
+   * Create a new branch
+   */
+  async createBranch(repoPath: string, branchName: string, startPoint?: string): Promise<void> {
+    return invoke<void>('git_create_branch', {
+      repoPath,
+      branchName,
+      startPoint,
+    });
+  }
+
+  /**
+   * Get all remote branches
+   */
+  async getRemoteBranches(repoPath: string): Promise<RemoteBranchInfo[]> {
+    return invoke<RemoteBranchInfo[]>('git_get_remote_branches', { repoPath });
+  }
+
+  /**
+   * Fetch from remote repository
+   */
+  async fetch(repoPath: string, remote?: string): Promise<string> {
+    return invoke<string>('git_fetch', { repoPath, remote });
+  }
+
+  /**
+   * Checkout a remote branch (creates local tracking branch)
+   */
+  async checkoutRemoteBranch(
+    repoPath: string,
+    remoteBranch: string,
+    localBranch?: string
+  ): Promise<void> {
+    return invoke<void>('git_checkout_remote_branch', {
+      repoPath,
+      remoteBranch,
+      localBranch,
+    });
+  }
+
+  /**
+   * Delete a local branch
+   */
+  async deleteBranch(repoPath: string, branchName: string): Promise<void> {
+    return invoke<void>('git_delete_branch', { repoPath, branchName });
   }
 }
 

@@ -1,4 +1,4 @@
-use super::types::{BranchInfo, TagInfo};
+use super::types::{BranchInfo, RemoteBranchInfo, TagInfo};
 use git2::{Error as GitError, Repository};
 use std::path::Path;
 
@@ -218,6 +218,195 @@ pub fn checkout_tag(repo_path: &str, tag_name: &str) -> Result<(), String> {
             tag_name,
             String::from_utf8_lossy(&output.stderr)
         ));
+    }
+
+    Ok(())
+}
+
+/// Create a new branch
+pub fn create_branch(
+    repo_path: &str,
+    branch_name: &str,
+    start_point: Option<&str>,
+) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let mut args = vec!["checkout", "-b", branch_name];
+    if let Some(start) = start_point {
+        args.push(start);
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to create branch: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to create branch {}: {}",
+            branch_name,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Get all remote branches
+pub fn get_all_remote_branches(repo: &Repository) -> Result<Vec<RemoteBranchInfo>, GitError> {
+    let mut remote_branches = Vec::new();
+
+    // Get all references
+    for reference in repo.references()? {
+        let ref_obj = reference?;
+        let name = ref_obj.name();
+
+        // Check if it's a remote branch (refs/remotes/...)
+        if let Some(name) = name {
+            if let Some(stripped) = name.strip_prefix("refs/remotes/") {
+                // Parse remote/branch format
+                let parts: Vec<&str> = stripped.splitn(2, '/').collect();
+                if parts.len() == 2 {
+                    let remote = parts[0].to_string();
+                    let branch_name = parts[1].to_string();
+                    let full_name = format!("{}/{}", remote, branch_name);
+
+                    remote_branches.push(RemoteBranchInfo {
+                        remote,
+                        name: branch_name,
+                        full_name,
+                    });
+                }
+            }
+        }
+    }
+
+    // Sort by remote name, then branch name
+    remote_branches.sort_by(|a, b| a.remote.cmp(&b.remote).then_with(|| a.name.cmp(&b.name)));
+
+    Ok(remote_branches)
+}
+
+/// Fetch from remote repository
+pub fn fetch(repo_path: &str, remote: Option<&str>) -> Result<String, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let remote_name = remote.unwrap_or("--all");
+    let mut args = vec!["fetch"];
+
+    if remote_name != "--all" {
+        args.push(remote_name);
+    } else {
+        args.push("--all");
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to fetch: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to fetch: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(format!("Fetched from {}", remote_name))
+}
+
+/// Checkout a remote branch (creates local tracking branch)
+pub fn checkout_remote_branch(
+    repo_path: &str,
+    remote_branch: &str,
+    local_branch: Option<&str>,
+) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    // If local_branch name is provided, use it; otherwise use the remote branch name
+    let branch_name = local_branch.unwrap_or_else(|| {
+        // Extract branch name from remote/branch format
+        remote_branch
+            .split('/')
+            .next_back()
+            .unwrap_or(remote_branch)
+    });
+
+    // Try to checkout with tracking
+    let output = crate::shell_utils::new_command("git")
+        .args(["checkout", "-b", branch_name, "--track", remote_branch])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to checkout remote branch: {}", e))?;
+
+    if !output.status.success() {
+        // If tracking fails, try simple checkout (branch might already exist locally)
+        let output = crate::shell_utils::new_command("git")
+            .args(["checkout", branch_name])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to checkout branch: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "Failed to checkout branch {}: {}",
+                branch_name,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Delete a local branch
+pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    // First check if we're on the branch to delete
+    let output = crate::shell_utils::new_command("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to get current branch: {}", e))?;
+
+    let current_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if current_branch == branch_name {
+        return Err("Cannot delete the current branch".to_string());
+    }
+
+    // Try to delete the branch
+    let output = crate::shell_utils::new_command("git")
+        .args(["branch", "-d", branch_name])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to delete branch: {}", e))?;
+
+    if !output.status.success() {
+        // Try force delete if regular delete fails
+        let force_output = crate::shell_utils::new_command("git")
+            .args(["branch", "-D", branch_name])
+            .current_dir(repo_path)
+            .output()
+            .map_err(|e| format!("Failed to force delete branch: {}", e))?;
+
+        if !force_output.status.success() {
+            return Err(format!(
+                "Failed to delete branch {}: {}",
+                branch_name,
+                String::from_utf8_lossy(&force_output.stderr)
+            ));
+        }
     }
 
     Ok(())

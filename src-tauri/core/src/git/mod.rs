@@ -5,7 +5,9 @@ pub mod status;
 pub mod types;
 pub mod worktree;
 
-use types::{BranchInfo, DiffLineType, FileDiff, GitFileStatus, GitStatus, TagInfo};
+use types::{
+    BranchInfo, DiffLineType, FileDiff, GitFileStatus, GitStatus, RemoteBranchInfo, TagInfo,
+};
 use worktree::{MergeResult, SyncResult, WorktreeChanges, WorktreeInfo, WorktreePoolStatus};
 
 /// Gets the Git status for a repository at the given path
@@ -341,6 +343,48 @@ pub async fn git_checkout_branch(repo_path: String, branch_name: String) -> Resu
 #[tauri::command]
 pub async fn git_checkout_tag(repo_path: String, tag_name: String) -> Result<(), String> {
     repository::checkout_tag(&repo_path, &tag_name)
+}
+
+/// Create a new branch
+#[tauri::command]
+pub async fn git_create_branch(
+    repo_path: String,
+    branch_name: String,
+    start_point: Option<String>,
+) -> Result<(), String> {
+    repository::create_branch(&repo_path, &branch_name, start_point.as_deref())
+}
+
+/// Get all remote branches
+#[tauri::command]
+pub async fn git_get_remote_branches(repo_path: String) -> Result<Vec<RemoteBranchInfo>, String> {
+    let repo = repository::discover_repository(&repo_path)
+        .map_err(|e| format!("Failed to open repository: {}", e))?;
+
+    repository::get_all_remote_branches(&repo)
+        .map_err(|e| format!("Failed to get remote branches: {}", e))
+}
+
+/// Fetch from remote repository
+#[tauri::command]
+pub async fn git_fetch(repo_path: String, remote: Option<String>) -> Result<String, String> {
+    repository::fetch(&repo_path, remote.as_deref())
+}
+
+/// Checkout a remote branch (creates local tracking branch)
+#[tauri::command]
+pub async fn git_checkout_remote_branch(
+    repo_path: String,
+    remote_branch: String,
+    local_branch: Option<String>,
+) -> Result<(), String> {
+    repository::checkout_remote_branch(&repo_path, &remote_branch, local_branch.as_deref())
+}
+
+/// Delete a local branch
+#[tauri::command]
+pub async fn git_delete_branch(repo_path: String, branch_name: String) -> Result<(), String> {
+    repository::delete_branch(&repo_path, &branch_name)
 }
 
 /// Get file content at HEAD (committed version)

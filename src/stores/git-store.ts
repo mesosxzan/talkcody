@@ -2,7 +2,14 @@ import { create } from 'zustand';
 import { logger } from '@/lib/logger';
 import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
 import { gitService } from '@/services/git-service';
-import type { BranchInfo, FileStatusMap, GitStatus, LineChange, TagInfo } from '@/types/git';
+import type {
+  BranchInfo,
+  FileStatusMap,
+  GitStatus,
+  LineChange,
+  RemoteBranchInfo,
+  TagInfo,
+} from '@/types/git';
 import { GitFileStatus } from '@/types/git';
 
 interface GitStore {
@@ -17,8 +24,11 @@ interface GitStore {
   lastRefresh: number | null;
   branches: BranchInfo[];
   tags: TagInfo[];
+  remoteBranches: RemoteBranchInfo[];
   isLoadingBranches: boolean;
   isLoadingTags: boolean;
+  isLoadingRemoteBranches: boolean;
+  isFetching: boolean;
 
   // Operation states
   isPushing: boolean;
@@ -41,8 +51,13 @@ interface GitStore {
   // Branch and Tag Actions
   loadBranches: () => Promise<void>;
   loadTags: () => Promise<void>;
+  loadRemoteBranches: () => Promise<void>;
   checkoutBranch: (branchName: string) => Promise<void>;
   checkoutTag: (tagName: string) => Promise<void>;
+  createBranch: (branchName: string, startPoint?: string) => Promise<void>;
+  checkoutRemoteBranch: (remoteBranch: string, localBranch?: string) => Promise<void>;
+  deleteBranch: (branchName: string) => Promise<void>;
+  fetch: (remote?: string) => Promise<string>;
 
   // Git Operations
   stageFiles: (filePaths: string[]) => Promise<void>;
@@ -73,8 +88,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
   lastRefresh: null,
   branches: [],
   tags: [],
+  remoteBranches: [],
   isLoadingBranches: false,
   isLoadingTags: false,
+  isLoadingRemoteBranches: false,
+  isFetching: false,
   isPushing: false,
   pushOperationId: null,
   isGenerating: false,
@@ -318,6 +336,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       lastRefresh: null,
       branches: [],
       tags: [],
+      remoteBranches: [],
     });
   },
 
@@ -402,6 +421,106 @@ export const useGitStore = create<GitStore>((set, get) => ({
     } catch (error) {
       logger.error(`Failed to checkout tag ${tagName}:`, error);
       throw error;
+    }
+  },
+
+  // Load remote branches
+  loadRemoteBranches: async () => {
+    const { repositoryPath, isGitRepository } = get();
+    if (!repositoryPath || !isGitRepository) {
+      return;
+    }
+
+    set({ isLoadingRemoteBranches: true });
+
+    try {
+      const remoteBranches = await gitService.getRemoteBranches(repositoryPath);
+      set({ remoteBranches, isLoadingRemoteBranches: false });
+      logger.debug(`Loaded ${remoteBranches.length} remote branches`);
+    } catch (error) {
+      logger.error('Failed to load remote branches:', error);
+      set({ isLoadingRemoteBranches: false });
+    }
+  },
+
+  // Create a new branch
+  createBranch: async (branchName: string, startPoint?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.createBranch(repositoryPath, branchName, startPoint);
+      logger.info(`Created branch: ${branchName}`);
+      // Refresh branches after creation
+      await get().loadBranches();
+    } catch (error) {
+      logger.error(`Failed to create branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Checkout a remote branch
+  checkoutRemoteBranch: async (remoteBranch: string, localBranch?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.checkoutRemoteBranch(repositoryPath, remoteBranch, localBranch);
+      logger.info(`Checked out remote branch: ${remoteBranch}`);
+      // Refresh status and branches after checkout
+      await Promise.all([get().refreshStatus(), get().loadBranches()]);
+    } catch (error) {
+      logger.error(`Failed to checkout remote branch ${remoteBranch}:`, error);
+      throw error;
+    }
+  },
+
+  // Delete a branch
+  deleteBranch: async (branchName: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.deleteBranch(repositoryPath, branchName);
+      logger.info(`Deleted branch: ${branchName}`);
+      // Refresh branches after deletion
+      await get().loadBranches();
+    } catch (error) {
+      logger.error(`Failed to delete branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Fetch from remote
+  fetch: async (remote?: string) => {
+    const { repositoryPath, isFetching } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    if (isFetching) {
+      throw new Error('Fetch operation already in progress');
+    }
+
+    set({ isFetching: true });
+
+    try {
+      const result = await gitService.fetch(repositoryPath, remote);
+      logger.info(`Fetched from remote: ${result}`);
+      // Refresh status after fetch
+      await Promise.all([get().refreshStatus(), get().loadRemoteBranches()]);
+      return result;
+    } catch (error) {
+      logger.error('Failed to fetch:', error);
+      throw error;
+    } finally {
+      set({ isFetching: false });
     }
   },
 
