@@ -25,11 +25,6 @@ import {
   FileType,
   // Folders
   Folder,
-  FolderArchive,
-  FolderCode,
-  FolderCog,
-  FolderGit,
-  FolderLock,
   FolderOpen,
   // Web
   Globe,
@@ -364,244 +359,244 @@ const SPECIAL_FILE_ICONS: Record<string, FileIconConfig> = {
  */
 const FOLDER_ICONS: Record<string, FolderIconConfig> = {
   // Source code
-  src: { icon: FolderCode, color: 'text-blue-500' },
-  source: { icon: FolderCode, color: 'text-blue-500' },
-  sources: { icon: FolderCode, color: 'text-blue-500' },
-  lib: { icon: FolderCode, color: 'text-blue-400' },
-  library: { icon: FolderCode, color: 'text-blue-400' },
-  app: { icon: FolderCode, color: 'text-blue-500' },
-  apps: { icon: FolderCode, color: 'text-blue-500' },
+  src: { icon: Folder, color: 'text-blue-500' },
+  source: { icon: Folder, color: 'text-blue-500' },
+  sources: { icon: Folder, color: 'text-blue-500' },
+  lib: { icon: Folder, color: 'text-blue-400' },
+  library: { icon: Folder, color: 'text-blue-400' },
+  app: { icon: Folder, color: 'text-blue-500' },
+  apps: { icon: Folder, color: 'text-blue-500' },
 
   // Components
-  components: { icon: Layout, color: 'text-purple-500' },
-  component: { icon: Layout, color: 'text-purple-500' },
+  components: { icon: Folder, color: 'text-purple-500' },
+  component: { icon: Folder, color: 'text-purple-500' },
 
   // Config
-  config: { icon: FolderCog, color: 'text-gray-500' },
-  configs: { icon: FolderCog, color: 'text-gray-500' },
-  configuration: { icon: FolderCog, color: 'text-gray-500' },
-  settings: { icon: FolderCog, color: 'text-gray-500' },
+  config: { icon: Folder, color: 'text-gray-500' },
+  configs: { icon: Folder, color: 'text-gray-500' },
+  configuration: { icon: Folder, color: 'text-gray-500' },
+  settings: { icon: Folder, color: 'text-gray-500' },
 
   // Git
-  '.git': { icon: FolderGit, color: 'text-orange-500' },
-  git: { icon: FolderGit, color: 'text-orange-500' },
-  '.github': { icon: FolderGit, color: 'text-gray-500' },
-  github: { icon: FolderGit, color: 'text-gray-500' },
-  worktrees: { icon: FolderGit, color: 'text-orange-400' },
+  '.git': { icon: Folder, color: 'text-orange-500' },
+  git: { icon: Folder, color: 'text-orange-500' },
+  '.github': { icon: Folder, color: 'text-gray-500' },
+  github: { icon: Folder, color: 'text-gray-500' },
+  worktrees: { icon: Folder, color: 'text-orange-400' },
 
   // Build
-  build: { icon: FolderArchive, color: 'text-yellow-500' },
-  builds: { icon: FolderArchive, color: 'text-yellow-500' },
-  dist: { icon: FolderArchive, color: 'text-yellow-500' },
-  out: { icon: FolderArchive, color: 'text-yellow-500' },
-  output: { icon: FolderArchive, color: 'text-yellow-500' },
-  target: { icon: FolderArchive, color: 'text-yellow-500' },
-  bin: { icon: FolderArchive, color: 'text-yellow-500' },
-  binary: { icon: FolderArchive, color: 'text-yellow-500' },
+  build: { icon: Folder, color: 'text-yellow-500' },
+  builds: { icon: Folder, color: 'text-yellow-500' },
+  dist: { icon: Folder, color: 'text-yellow-500' },
+  out: { icon: Folder, color: 'text-yellow-500' },
+  output: { icon: Folder, color: 'text-yellow-500' },
+  target: { icon: Folder, color: 'text-yellow-500' },
+  bin: { icon: Folder, color: 'text-yellow-500' },
+  binary: { icon: Folder, color: 'text-yellow-500' },
 
   // Dependencies
-  node_modules: { icon: Package, color: 'text-green-500' },
-  vendor: { icon: Package, color: 'text-gray-500' },
-  packages: { icon: Package, color: 'text-green-500' },
-  package: { icon: Package, color: 'text-green-500' },
+  node_modules: { icon: Folder, color: 'text-green-500' },
+  vendor: { icon: Folder, color: 'text-gray-500' },
+  packages: { icon: Folder, color: 'text-green-500' },
+  package: { icon: Folder, color: 'text-green-500' },
 
   // Tests
-  test: { icon: TestTube, color: 'text-green-500' },
-  tests: { icon: TestTube, color: 'text-green-500' },
-  testing: { icon: TestTube, color: 'text-green-500' },
-  spec: { icon: TestTube, color: 'text-green-500' },
-  specs: { icon: TestTube, color: 'text-green-500' },
-  __tests__: { icon: TestTube, color: 'text-green-500' },
-  __mocks__: { icon: TestTube, color: 'text-yellow-500' },
+  test: { icon: Folder, color: 'text-green-500' },
+  tests: { icon: Folder, color: 'text-green-500' },
+  testing: { icon: Folder, color: 'text-green-500' },
+  spec: { icon: Folder, color: 'text-green-500' },
+  specs: { icon: Folder, color: 'text-green-500' },
+  __tests__: { icon: Folder, color: 'text-green-500' },
+  __mocks__: { icon: Folder, color: 'text-yellow-500' },
 
   // Assets
-  assets: { icon: FolderArchive, color: 'text-purple-500' },
-  static: { icon: FolderArchive, color: 'text-gray-500' },
-  public: { icon: FolderArchive, color: 'text-gray-500' },
-  resources: { icon: FolderArchive, color: 'text-purple-500' },
-  res: { icon: FolderArchive, color: 'text-purple-500' },
+  assets: { icon: Folder, color: 'text-purple-500' },
+  static: { icon: Folder, color: 'text-gray-500' },
+  public: { icon: Folder, color: 'text-gray-500' },
+  resources: { icon: Folder, color: 'text-purple-500' },
+  res: { icon: Folder, color: 'text-purple-500' },
 
   // Media
-  images: { icon: Image, color: 'text-purple-500' },
-  img: { icon: Image, color: 'text-purple-500' },
-  icons: { icon: Image, color: 'text-purple-500' },
-  icon: { icon: Image, color: 'text-purple-500' },
-  pictures: { icon: Image, color: 'text-purple-500' },
-  photos: { icon: Image, color: 'text-purple-500' },
-  media: { icon: Image, color: 'text-purple-500' },
-  audio: { icon: Music, color: 'text-green-500' },
-  sound: { icon: Music, color: 'text-green-500' },
-  sounds: { icon: Music, color: 'text-green-500' },
-  video: { icon: Video, color: 'text-red-500' },
-  videos: { icon: Video, color: 'text-red-500' },
+  images: { icon: Folder, color: 'text-purple-500' },
+  img: { icon: Folder, color: 'text-purple-500' },
+  icons: { icon: Folder, color: 'text-purple-500' },
+  icon: { icon: Folder, color: 'text-purple-500' },
+  pictures: { icon: Folder, color: 'text-purple-500' },
+  photos: { icon: Folder, color: 'text-purple-500' },
+  media: { icon: Folder, color: 'text-purple-500' },
+  audio: { icon: Folder, color: 'text-green-500' },
+  sound: { icon: Folder, color: 'text-green-500' },
+  sounds: { icon: Folder, color: 'text-green-500' },
+  video: { icon: Folder, color: 'text-red-500' },
+  videos: { icon: Folder, color: 'text-red-500' },
 
   // Styles
-  styles: { icon: Palette, color: 'text-pink-500' },
-  style: { icon: Palette, color: 'text-pink-500' },
-  css: { icon: Palette, color: 'text-pink-500' },
-  scss: { icon: Palette, color: 'text-pink-500' },
-  sass: { icon: Palette, color: 'text-pink-500' },
-  less: { icon: Palette, color: 'text-pink-500' },
+  styles: { icon: Folder, color: 'text-pink-500' },
+  style: { icon: Folder, color: 'text-pink-500' },
+  css: { icon: Folder, color: 'text-pink-500' },
+  scss: { icon: Folder, color: 'text-pink-500' },
+  sass: { icon: Folder, color: 'text-pink-500' },
+  less: { icon: Folder, color: 'text-pink-500' },
 
   // Documentation
-  docs: { icon: BookOpen, color: 'text-blue-400' },
-  doc: { icon: BookOpen, color: 'text-blue-400' },
-  documentation: { icon: BookOpen, color: 'text-blue-400' },
+  docs: { icon: Folder, color: 'text-blue-400' },
+  doc: { icon: Folder, color: 'text-blue-400' },
+  documentation: { icon: Folder, color: 'text-blue-400' },
 
   // Scripts
-  scripts: { icon: Terminal, color: 'text-green-500' },
-  script: { icon: Terminal, color: 'text-green-500' },
+  scripts: { icon: Folder, color: 'text-green-500' },
+  script: { icon: Folder, color: 'text-green-500' },
 
   // Database
-  database: { icon: Database, color: 'text-blue-500' },
-  db: { icon: Database, color: 'text-blue-500' },
-  migrations: { icon: Database, color: 'text-blue-400' },
-  migration: { icon: Database, color: 'text-blue-400' },
-  seeds: { icon: Database, color: 'text-green-500' },
-  seed: { icon: Database, color: 'text-green-500' },
+  database: { icon: Folder, color: 'text-blue-500' },
+  db: { icon: Folder, color: 'text-blue-500' },
+  migrations: { icon: Folder, color: 'text-blue-400' },
+  migration: { icon: Folder, color: 'text-blue-400' },
+  seeds: { icon: Folder, color: 'text-green-500' },
+  seed: { icon: Folder, color: 'text-green-500' },
 
   // Security
-  security: { icon: FolderLock, color: 'text-yellow-500' },
-  secure: { icon: FolderLock, color: 'text-yellow-500' },
-  auth: { icon: Lock, color: 'text-yellow-500' },
-  authentication: { icon: Lock, color: 'text-yellow-500' },
+  security: { icon: Folder, color: 'text-yellow-500' },
+  secure: { icon: Folder, color: 'text-yellow-500' },
+  auth: { icon: Folder, color: 'text-yellow-500' },
+  authentication: { icon: Folder, color: 'text-yellow-500' },
 
   // Server
-  server: { icon: Server, color: 'text-blue-500' },
-  servers: { icon: Server, color: 'text-blue-500' },
-  api: { icon: Server, color: 'text-green-500' },
-  apis: { icon: Server, color: 'text-green-500' },
-  backend: { icon: Server, color: 'text-blue-500' },
+  server: { icon: Folder, color: 'text-blue-500' },
+  servers: { icon: Folder, color: 'text-blue-500' },
+  api: { icon: Folder, color: 'text-green-500' },
+  apis: { icon: Folder, color: 'text-green-500' },
+  backend: { icon: Folder, color: 'text-blue-500' },
 
   // Client
-  client: { icon: Globe, color: 'text-blue-500' },
-  frontend: { icon: Globe, color: 'text-blue-500' },
-  web: { icon: Globe, color: 'text-blue-500' },
+  client: { icon: Folder, color: 'text-blue-500' },
+  frontend: { icon: Folder, color: 'text-blue-500' },
+  web: { icon: Folder, color: 'text-blue-500' },
 
   // Utils
-  utils: { icon: Cpu, color: 'text-gray-500' },
-  util: { icon: Cpu, color: 'text-gray-500' },
-  utilities: { icon: Cpu, color: 'text-gray-500' },
-  tools: { icon: Cpu, color: 'text-gray-500' },
-  tool: { icon: Cpu, color: 'text-gray-500' },
-  helpers: { icon: Cpu, color: 'text-gray-500' },
-  helper: { icon: Cpu, color: 'text-gray-500' },
+  utils: { icon: Folder, color: 'text-gray-500' },
+  util: { icon: Folder, color: 'text-gray-500' },
+  utilities: { icon: Folder, color: 'text-gray-500' },
+  tools: { icon: Folder, color: 'text-gray-500' },
+  tool: { icon: Folder, color: 'text-gray-500' },
+  helpers: { icon: Folder, color: 'text-gray-500' },
+  helper: { icon: Folder, color: 'text-gray-500' },
 
   // Hooks (React)
-  hooks: { icon: Zap, color: 'text-yellow-500' },
-  hook: { icon: Zap, color: 'text-yellow-500' },
+  hooks: { icon: Folder, color: 'text-yellow-500' },
+  hook: { icon: Folder, color: 'text-yellow-500' },
 
   // Types
-  types: { icon: Braces, color: 'text-blue-500' },
-  type: { icon: Braces, color: 'text-blue-500' },
-  typings: { icon: Braces, color: 'text-blue-500' },
-  '@types': { icon: Braces, color: 'text-blue-500' },
+  types: { icon: Folder, color: 'text-blue-500' },
+  type: { icon: Folder, color: 'text-blue-500' },
+  typings: { icon: Folder, color: 'text-blue-500' },
+  '@types': { icon: Folder, color: 'text-blue-500' },
 
   // Models
-  models: { icon: Database, color: 'text-purple-500' },
-  model: { icon: Database, color: 'text-purple-500' },
+  models: { icon: Folder, color: 'text-purple-500' },
+  model: { icon: Folder, color: 'text-purple-500' },
 
   // Views
-  views: { icon: Layout, color: 'text-purple-500' },
-  view: { icon: Layout, color: 'text-purple-500' },
-  pages: { icon: Layout, color: 'text-purple-500' },
-  page: { icon: Layout, color: 'text-purple-500' },
-  screens: { icon: Layout, color: 'text-purple-500' },
-  screen: { icon: Layout, color: 'text-purple-500' },
+  views: { icon: Folder, color: 'text-purple-500' },
+  view: { icon: Folder, color: 'text-purple-500' },
+  pages: { icon: Folder, color: 'text-purple-500' },
+  page: { icon: Folder, color: 'text-purple-500' },
+  screens: { icon: Folder, color: 'text-purple-500' },
+  screen: { icon: Folder, color: 'text-purple-500' },
 
   // Layouts
-  layouts: { icon: Layout, color: 'text-purple-500' },
-  layout: { icon: Layout, color: 'text-purple-500' },
+  layouts: { icon: Folder, color: 'text-purple-500' },
+  layout: { icon: Folder, color: 'text-purple-500' },
 
   // Services
-  services: { icon: Server, color: 'text-green-500' },
-  service: { icon: Server, color: 'text-green-500' },
+  services: { icon: Folder, color: 'text-green-500' },
+  service: { icon: Folder, color: 'text-green-500' },
 
   // Stores
-  stores: { icon: Database, color: 'text-purple-500' },
-  store: { icon: Database, color: 'text-purple-500' },
-  state: { icon: Database, color: 'text-purple-500' },
+  stores: { icon: Folder, color: 'text-purple-500' },
+  store: { icon: Folder, color: 'text-purple-500' },
+  state: { icon: Folder, color: 'text-purple-500' },
 
   // Context
-  context: { icon: Braces, color: 'text-blue-500' },
-  contexts: { icon: Braces, color: 'text-blue-500' },
+  context: { icon: Folder, color: 'text-blue-500' },
+  contexts: { icon: Folder, color: 'text-blue-500' },
 
   // Constants
-  constants: { icon: FileCode, color: 'text-gray-500' },
-  constant: { icon: FileCode, color: 'text-gray-500' },
-  const: { icon: FileCode, color: 'text-gray-500' },
+  constants: { icon: Folder, color: 'text-gray-500' },
+  constant: { icon: Folder, color: 'text-gray-500' },
+  const: { icon: Folder, color: 'text-gray-500' },
 
   // Core
-  core: { icon: Cpu, color: 'text-blue-500' },
+  core: { icon: Folder, color: 'text-blue-500' },
 
   // Common
   common: { icon: Folder, color: 'text-gray-500' },
   shared: { icon: Folder, color: 'text-gray-500' },
 
   // Examples
-  examples: { icon: BookOpen, color: 'text-green-500' },
-  example: { icon: BookOpen, color: 'text-green-500' },
-  demo: { icon: BookOpen, color: 'text-green-500' },
-  demos: { icon: BookOpen, color: 'text-green-500' },
+  examples: { icon: Folder, color: 'text-green-500' },
+  example: { icon: Folder, color: 'text-green-500' },
+  demo: { icon: Folder, color: 'text-green-500' },
+  demos: { icon: Folder, color: 'text-green-500' },
 
   // Logs
-  logs: { icon: FileText, color: 'text-gray-500' },
-  log: { icon: FileText, color: 'text-gray-500' },
+  logs: { icon: Folder, color: 'text-gray-500' },
+  log: { icon: Folder, color: 'text-gray-500' },
 
   // Cache
-  cache: { icon: FolderArchive, color: 'text-gray-500' },
-  '.cache': { icon: FolderArchive, color: 'text-gray-500' },
+  cache: { icon: Folder, color: 'text-gray-500' },
+  '.cache': { icon: Folder, color: 'text-gray-500' },
 
   // Temp
-  temp: { icon: FolderArchive, color: 'text-gray-500' },
-  tmp: { icon: FolderArchive, color: 'text-gray-500' },
-  '.tmp': { icon: FolderArchive, color: 'text-gray-500' },
+  temp: { icon: Folder, color: 'text-gray-500' },
+  tmp: { icon: Folder, color: 'text-gray-500' },
+  '.tmp': { icon: Folder, color: 'text-gray-500' },
 
   // Environment
-  env: { icon: FolderLock, color: 'text-yellow-500' },
-  environments: { icon: FolderLock, color: 'text-yellow-500' },
-  environment: { icon: FolderLock, color: 'text-yellow-500' },
+  env: { icon: Folder, color: 'text-yellow-500' },
+  environments: { icon: Folder, color: 'text-yellow-500' },
+  environment: { icon: Folder, color: 'text-yellow-500' },
 
   // Features
-  features: { icon: Zap, color: 'text-yellow-500' },
-  feature: { icon: Zap, color: 'text-yellow-500' },
-  modules: { icon: Package, color: 'text-blue-500' },
-  module: { icon: Package, color: 'text-blue-500' },
+  features: { icon: Folder, color: 'text-yellow-500' },
+  feature: { icon: Folder, color: 'text-yellow-500' },
+  modules: { icon: Folder, color: 'text-blue-500' },
+  module: { icon: Folder, color: 'text-blue-500' },
 
   // Plugins
-  plugins: { icon: Package, color: 'text-purple-500' },
-  plugin: { icon: Package, color: 'text-purple-500' },
+  plugins: { icon: Folder, color: 'text-purple-500' },
+  plugin: { icon: Folder, color: 'text-purple-500' },
 
   // Middleware
-  middleware: { icon: Cpu, color: 'text-gray-500' },
-  middlewares: { icon: Cpu, color: 'text-gray-500' },
+  middleware: { icon: Folder, color: 'text-gray-500' },
+  middlewares: { icon: Folder, color: 'text-gray-500' },
 
   // Interfaces
-  interfaces: { icon: Braces, color: 'text-blue-500' },
-  interface: { icon: Braces, color: 'text-blue-500' },
+  interfaces: { icon: Folder, color: 'text-blue-500' },
+  interface: { icon: Folder, color: 'text-blue-500' },
 
   // Locales
-  locales: { icon: Globe, color: 'text-blue-500' },
-  locale: { icon: Globe, color: 'text-blue-500' },
-  lang: { icon: Globe, color: 'text-blue-500' },
-  languages: { icon: Globe, color: 'text-blue-500' },
-  i18n: { icon: Globe, color: 'text-blue-500' },
+  locales: { icon: Folder, color: 'text-blue-500' },
+  locale: { icon: Folder, color: 'text-blue-500' },
+  lang: { icon: Folder, color: 'text-blue-500' },
+  languages: { icon: Folder, color: 'text-blue-500' },
+  i18n: { icon: Folder, color: 'text-blue-500' },
 
   // Design
-  design: { icon: Palette, color: 'text-pink-500' },
-  designs: { icon: Palette, color: 'text-pink-500' },
+  design: { icon: Folder, color: 'text-pink-500' },
+  designs: { icon: Folder, color: 'text-pink-500' },
 
   // Content
-  content: { icon: FileText, color: 'text-gray-500' },
-  contents: { icon: FileText, color: 'text-gray-500' },
+  content: { icon: Folder, color: 'text-gray-500' },
+  contents: { icon: Folder, color: 'text-gray-500' },
 
   // Data
-  data: { icon: Database, color: 'text-purple-500' },
+  data: { icon: Folder, color: 'text-purple-500' },
 
   // Config dotfiles
-  '.vscode': { icon: Settings, color: 'text-blue-500' },
-  '.idea': { icon: Settings, color: 'text-purple-500' },
-  '.vscode-test': { icon: Settings, color: 'text-blue-400' },
+  '.vscode': { icon: Folder, color: 'text-blue-500' },
+  '.idea': { icon: Folder, color: 'text-purple-500' },
+  '.vscode-test': { icon: Folder, color: 'text-blue-400' },
 };
 
 /**
