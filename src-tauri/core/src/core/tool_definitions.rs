@@ -652,5 +652,25 @@ pub fn get_tool_definitions() -> Vec<(ToolDefinition, ToolMetadata)> {
                 render_doing_ui: true,
             },
         ),
+        // Get Current Date and Time
+        (
+            ToolDefinition {
+                name: "getCurrentDateTime".to_string(),
+                description: "Get the current date and time in various formats. Returns ISO 8601 formatted strings, Unix timestamp, timezone information, and date/time components.".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+                requires_approval: false,
+            },
+            ToolMetadata {
+                category: ToolCategory::Read,
+                can_concurrent: true,
+                file_operation: false,
+                requires_approval: false,
+                render_doing_ui: false,
+            },
+        ),
     ]
 }

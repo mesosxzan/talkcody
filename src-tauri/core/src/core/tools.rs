@@ -689,6 +689,15 @@ async fn execute_tool_by_name(
                 error: platform_result.error,
             }
         }
+        // Get Current Date and Time
+        "getCurrentDateTime" | "get_current_datetime" => {
+            let result = crate::tools::get_current_datetime::execute().await;
+            ToolExecutionOutput {
+                success: result.success,
+                data: serde_json::to_value(&result).unwrap_or_default(),
+                error: result.error,
+            }
+        }
         _ => ToolExecutionOutput {
             success: false,
             data: serde_json::Value::Null,

@@ -25,6 +25,7 @@ pub const CANONICAL_TOOL_NAMES: &[&str] = &[
     "imageGeneration",
     "installSkill",
     "test_custom_tool",
+    "getCurrentDateTime",
 ];
 
 /// Normalize a tool name to the canonical camelCase identifier.
@@ -57,6 +58,7 @@ pub fn is_known_tool_name(name: &str) -> bool {
 
 fn legacy_aliases() -> HashMap<&'static str, &'static str> {
     HashMap::from([
+        ("get_current_datetime", "getCurrentDateTime"),
         ("read_file", "readFile"),
         ("read-file", "readFile"),
         ("write_file", "writeFile"),
@@ -96,6 +98,8 @@ fn legacy_aliases() -> HashMap<&'static str, &'static str> {
         ("install-skill", "installSkill"),
         ("install_skill_tool", "installSkill"),
         ("test-custom-tool", "test_custom_tool"),
+        ("get_current_datetime", "getCurrentDateTime"),
+        ("get-current-datetime", "getCurrentDateTime"),
         ("lsp", "lsp"),
     ])
 }

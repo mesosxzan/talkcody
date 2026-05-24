@@ -23,6 +23,7 @@ import { callAgent } from './call-agent-tool';
 import { codeSearch } from './code-search-tool';
 import { editFile } from './edit-file-tool';
 import { exitPlanModeTool } from './exit-plan-mode-tool';
+import { getCurrentDateTimeTool } from './get-current-datetime-tool';
 import { globTool } from './glob-tool';
 import { imageGenerationTool } from './image-generation-tool';
 import { installSkill } from './install-skill-tool';
@@ -143,6 +144,16 @@ export const TOOL_DEFINITIONS = {
       fileOperation: true,
       getTargetFile: (input) => (input?.filePath as string) || null,
       renderDoingUI: true,
+    },
+  },
+  getCurrentDateTime: {
+    tool: getCurrentDateTimeTool,
+    label: 'Get Current DateTime',
+    metadata: {
+      category: 'read' as ToolCategory,
+      canConcurrent: true,
+      fileOperation: false,
+      renderDoingUI: false,
     },
   },
   memoryRead: {
