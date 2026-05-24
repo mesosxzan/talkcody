@@ -428,14 +428,15 @@ function FileTreeNode({
   const isSelected = selectedFile === node.path;
   const isCut = clipboardState?.type === 'cut' && clipboardState.paths.includes(node.path);
   const isGitIgnored = node.is_git_ignored ?? false;
-  const paddingLeft = level * 4;
+  // Increased indentation for better visual hierarchy (16px per level)
+  const paddingLeft = level * 16;
 
   const fileTreeItem = (
     <button
       type="button"
       ref={nodeRef}
       className={cn(
-        'flex w-full cursor-pointer items-center border-0 px-2 py-1 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800',
+        'group relative flex w-full cursor-pointer items-center border-0 px-2 py-1 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800',
         isSelected && 'bg-blue-100 dark:bg-blue-900/30',
         isCut && 'opacity-50',
         isGitIgnored && 'opacity-60'
@@ -447,8 +448,15 @@ function FileTreeNode({
           handleClick(e as unknown as React.MouseEvent);
         }
       }}
-      style={{ paddingLeft: `${paddingLeft + 4}px` }}
+      style={{ paddingLeft: `${paddingLeft + 8}px` }}
     >
+      {/* Visual indent guide line for nested items */}
+      {level > 0 && (
+        <div
+          className="absolute left-0 top-0 h-full w-px bg-border/30 group-hover:bg-border/50 dark:bg-border/20 dark:group-hover:bg-border/40"
+          style={{ left: `${paddingLeft - 8}px` }}
+        />
+      )}
       <div className="flex min-w-0 flex-1 items-center">
         {node.is_directory ? (
           <>
@@ -594,7 +602,7 @@ function FileTreeNode({
           {(isCreatingFile || isCreatingFolder) && (
             <div
               className="flex cursor-text items-center px-2 py-1 text-sm"
-              style={{ paddingLeft: `${(level + 1) * 4 + 4}px` }}
+              style={{ paddingLeft: `${(level + 1) * 16 + 8}px` }}
             >
               <div className="flex min-w-0 flex-1 items-center">
                 <div className="mr-1 h-4 w-4" />
