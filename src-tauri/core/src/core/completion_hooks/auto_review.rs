@@ -1,5 +1,5 @@
 //! Auto Review Hook
-//!
+//!1
 //! Automatically triggers code review on completion if enabled.
 
 use super::{CompletionHook, HookContext, HookResult};

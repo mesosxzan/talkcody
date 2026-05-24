@@ -720,10 +720,11 @@ function createRepositoryStore() {
 
     // Refresh the file tree
     refreshFileTree: async () => {
-      const { rootPath } = get();
+      const { rootPath, expandedPaths: currentExpandedPaths } = get();
       if (!rootPath) return;
 
-      set({ isLoading: true, error: null });
+      // Note: We intentionally do NOT set isLoading here to avoid UI flicker
+      // File tree refresh should be transparent to the user (VSCode behavior)
 
       try {
         // Clear all caches first - both file content cache and directory tree cache
@@ -733,17 +734,18 @@ function createRepositoryStore() {
         // Then rebuild the directory tree with high-performance implementation
         const tree = await repositoryService.buildDirectoryTree(rootPath);
 
+        // Preserve the current expanded paths to maintain tree state after refresh
         set({
           fileTree: tree,
-          isLoading: false,
+          expandedPaths: new Set(currentExpandedPaths),
         });
       } catch (error) {
         const errorMessage = (error as Error).message;
         logger.error('Failed to refresh file tree:', error);
 
+        // Only set error state, not loading state
         set({
           error: errorMessage,
-          isLoading: false,
         });
 
         toast.error(getTranslations().RepositoryStore.errors.failedToRefreshTree(errorMessage));

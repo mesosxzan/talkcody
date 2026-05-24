@@ -87,10 +87,11 @@ impl FileWatcher {
             let debounce_duration = Duration::from_millis(500);
             let check_interval = Duration::from_millis(100);
 
-            // Trailing-edge debounce state
+            // Trailing-edge debounce state - track structure and content changes separately
             let mut pending_emit = false;
             let mut last_event_time = Instant::now();
-            let mut pending_paths: Vec<std::path::PathBuf> = Vec::new();
+            let mut pending_structure_paths: Vec<std::path::PathBuf> = Vec::new();
+            let mut pending_content_paths: Vec<std::path::PathBuf> = Vec::new();
 
             loop {
                 // Check stop flag first
@@ -102,29 +103,45 @@ impl FileWatcher {
                 // Use short timeout to allow checking for pending events
                 match receiver.recv_timeout(check_interval) {
                     Ok(Ok(event)) => {
-                        // Filter events we care about
-                        match event.kind {
-                            notify::EventKind::Create(_)
-                            | notify::EventKind::Remove(_)
-                            | notify::EventKind::Modify(notify::event::ModifyKind::Name(_))
-                            | notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
-                                // Check if the event is for files we care about
-                                let relevant_paths: Vec<_> = event
-                                    .paths
-                                    .iter()
-                                    .filter(|path| Self::should_watch_path(path))
-                                    .cloned()
-                                    .collect();
+                        // Check if the event is for files we care about
+                        let relevant_paths: Vec<_> = event
+                            .paths
+                            .iter()
+                            .filter(|path| Self::should_watch_path(path))
+                            .cloned()
+                            .collect();
 
-                                if !relevant_paths.is_empty() {
-                                    // Mark pending and update last event time
-                                    pending_emit = true;
-                                    last_event_time = Instant::now();
-                                    // Collect paths for logging/debugging
-                                    pending_paths.extend(relevant_paths);
+                        if !relevant_paths.is_empty() {
+                            // Determine if this is a structure change or content change
+                            // Only process known event types, ignore others
+                            let change_type = match event.kind {
+                                // Structure changes: Create, Remove, Rename
+                                notify::EventKind::Create(_) => Some(true),
+                                notify::EventKind::Remove(_) => Some(true),
+                                notify::EventKind::Modify(notify::event::ModifyKind::Name(_)) => {
+                                    Some(true)
+                                }
+                                // Content changes: Data modification (file content edit)
+                                notify::EventKind::Modify(notify::event::ModifyKind::Data(_)) => {
+                                    Some(false)
+                                }
+                                // Ignore other event types (e.g., Access, Any, etc.)
+                                _ => None,
+                            };
+
+                            // Only process if we have a known change type
+                            if let Some(is_structure_change) = change_type {
+                                // Mark pending and update last event time
+                                pending_emit = true;
+                                last_event_time = Instant::now();
+
+                                // Add paths to appropriate bucket
+                                if is_structure_change {
+                                    pending_structure_paths.extend(relevant_paths);
+                                } else {
+                                    pending_content_paths.extend(relevant_paths);
                                 }
                             }
-                            _ => {}
                         }
                     }
                     Ok(Err(e)) => {
@@ -144,24 +161,67 @@ impl FileWatcher {
                 if pending_emit {
                     let elapsed = Instant::now().duration_since(last_event_time);
                     if elapsed >= debounce_duration {
-                        log::debug!(
-                            "Emitting debounced file-system-changed event for {} paths to {:?}",
-                            pending_paths.len(),
-                            file_window_label
-                        );
+                        // Emit structure change event if any (Create/Remove/Name changes)
+                        if !pending_structure_paths.is_empty() {
+                            // Deduplicate paths
+                            let unique_paths: Vec<_> = pending_structure_paths
+                                .iter()
+                                .cloned()
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
 
-                        // Emit to specific window if label provided, otherwise broadcast
-                        let result = if let Some(ref label) = file_window_label {
-                            file_app_handle.emit_to(label, "file-system-changed", &pending_paths)
-                        } else {
-                            file_app_handle.emit("file-system-changed", &pending_paths)
-                        };
-
-                        if let Err(e) = result {
-                            log::error!("Failed to emit file system change event: {}", e);
+                            log::debug!(
+                                "Emitting file-structure-changed event for {} paths to {:?}",
+                                unique_paths.len(),
+                                file_window_label
+                            );
+                            let result = if let Some(ref label) = file_window_label {
+                                file_app_handle.emit_to(
+                                    label,
+                                    "file-structure-changed",
+                                    &unique_paths,
+                                )
+                            } else {
+                                file_app_handle.emit("file-structure-changed", &unique_paths)
+                            };
+                            if let Err(e) = result {
+                                log::error!("Failed to emit file-structure-changed event: {}", e);
+                            }
                         }
+
+                        // Emit content change event if any (Data changes)
+                        if !pending_content_paths.is_empty() {
+                            // Deduplicate paths
+                            let unique_paths: Vec<_> = pending_content_paths
+                                .iter()
+                                .cloned()
+                                .collect::<std::collections::HashSet<_>>()
+                                .into_iter()
+                                .collect();
+
+                            log::debug!(
+                                "Emitting file-content-changed event for {} paths to {:?}",
+                                unique_paths.len(),
+                                file_window_label
+                            );
+                            let result = if let Some(ref label) = file_window_label {
+                                file_app_handle.emit_to(
+                                    label,
+                                    "file-content-changed",
+                                    &unique_paths,
+                                )
+                            } else {
+                                file_app_handle.emit("file-content-changed", &unique_paths)
+                            };
+                            if let Err(e) = result {
+                                log::error!("Failed to emit file-content-changed event: {}", e);
+                            }
+                        }
+
                         pending_emit = false;
-                        pending_paths.clear();
+                        pending_structure_paths.clear();
+                        pending_content_paths.clear();
                     }
                 }
             }

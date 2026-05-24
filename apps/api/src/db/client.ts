@@ -1,4 +1,4 @@
-// Database client using Drizzle ORM and Turso (libsql)
+// Database client using Drizzle ORM and Turso (libsql)1
 
 import type { Client } from '@libsql/client';
 import { createClient } from '@libsql/client';

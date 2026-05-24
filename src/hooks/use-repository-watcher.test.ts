@@ -222,8 +222,39 @@ describe('useRepositoryWatcher', () => {
     });
   });
 
-  describe('file-system-changed handling', () => {
-    it('should trigger external file refresh for open files in multi-path payload', async () => {
+  describe('file-structure-changed handling', () => {
+    it('should debounce file tree refresh for structure changes', async () => {
+      const useRepositoryWatcher = await getHook();
+
+      renderHook(() => useRepositoryWatcher());
+
+      await vi.waitFor(() => {
+        expect(eventListeners.has('file-structure-changed')).toBe(true);
+      });
+
+      // Multiple file structure changes
+      act(() => {
+        emitEvent('file-structure-changed', ['/test/repo/file1.ts']);
+      });
+      act(() => {
+        emitEvent('file-structure-changed', ['/test/repo/file2.ts']);
+      });
+      act(() => {
+        emitEvent('file-structure-changed', ['/test/repo/file3.ts']);
+      });
+
+      // Before debounce completes
+      expect(mockRefreshFileTree).not.toHaveBeenCalled();
+
+      vi.advanceTimersByTime(200);
+
+      // Should only refresh once
+      expect(mockRefreshFileTree).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('file-content-changed handling', () => {
+    it('should trigger external file refresh for open files', async () => {
       const useRepositoryWatcher = await getHook();
 
       mockRepositoryState.openFiles = [
@@ -234,11 +265,11 @@ describe('useRepositoryWatcher', () => {
       renderHook(() => useRepositoryWatcher());
 
       await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
+        expect(eventListeners.has('file-content-changed')).toBe(true);
       });
 
       act(() => {
-        emitEvent('file-system-changed', [
+        emitEvent('file-content-changed', [
           '/test/repo/file1.ts',
           '/test/repo/file1.ts',
           '/test/repo/file3.ts',
@@ -251,109 +282,54 @@ describe('useRepositoryWatcher', () => {
       expect(mockHandleExternalFileChange).toHaveBeenCalledWith('/test/repo/file1.ts');
     });
 
-    it('should handle single object payload with path', async () => {
-      const useRepositoryWatcher = await getHook();
-
-      mockRepositoryState.openFiles = [
-        { path: '/test/repo/file1.ts', content: 'a', isLoading: false, error: null },
-      ];
-
-      renderHook(() => useRepositoryWatcher());
-
-      await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
-      });
-
-      act(() => {
-        emitEvent('file-system-changed', { path: '/test/repo/file1.ts' });
-      });
-
-      vi.advanceTimersByTime(150);
-
-      expect(mockHandleExternalFileChange).toHaveBeenCalledTimes(1);
-      expect(mockHandleExternalFileChange).toHaveBeenCalledWith('/test/repo/file1.ts');
-    });
-
-    it('should handle payload with paths array', async () => {
-      const useRepositoryWatcher = await getHook();
-
-      mockRepositoryState.openFiles = [
-        { path: '/test/repo/file2.ts', content: 'b', isLoading: false, error: null },
-      ];
-
-      renderHook(() => useRepositoryWatcher());
-
-      await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
-      });
-
-      act(() => {
-        emitEvent('file-system-changed', { paths: ['/test/repo/file2.ts', '/test/repo/file3.ts'] });
-      });
-
-      vi.advanceTimersByTime(150);
-
-      expect(mockHandleExternalFileChange).toHaveBeenCalledTimes(1);
-      expect(mockHandleExternalFileChange).toHaveBeenCalledWith('/test/repo/file2.ts');
-    });
-
-    it('should debounce file tree refresh', async () => {
+    it('should NOT trigger file tree refresh for content changes', async () => {
       const useRepositoryWatcher = await getHook();
 
       renderHook(() => useRepositoryWatcher());
 
       await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
-      });
-
-      // Multiple file changes
-      act(() => {
-        emitEvent('file-system-changed', ['/test/repo/file1.ts']);
-      });
-      act(() => {
-        emitEvent('file-system-changed', ['/test/repo/file2.ts']);
-      });
-      act(() => {
-        emitEvent('file-system-changed', ['/test/repo/file3.ts']);
-      });
-
-      // Before debounce completes
-      expect(mockRefreshFileTree).not.toHaveBeenCalled();
-
-      vi.advanceTimersByTime(200);
-
-      // Should only refresh once
-      expect(mockRefreshFileTree).toHaveBeenCalledTimes(1);
-    });
-
-    it('should also trigger git status refresh on file changes', async () => {
-      const useRepositoryWatcher = await getHook();
-
-      renderHook(() => useRepositoryWatcher());
-
-      await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
+        expect(eventListeners.has('file-content-changed')).toBe(true);
       });
 
       act(() => {
-        emitEvent('file-system-changed', ['/test/repo/file.ts']);
+        emitEvent('file-content-changed', ['/test/repo/file.ts']);
       });
 
       vi.advanceTimersByTime(300);
 
-      // Git status should also be refreshed when files change
+      // File tree should NOT be refreshed for content-only changes
+      expect(mockRefreshFileTree).not.toHaveBeenCalled();
+    });
+
+    it('should trigger git status refresh on content changes', async () => {
+      const useRepositoryWatcher = await getHook();
+
+      renderHook(() => useRepositoryWatcher());
+
+      await vi.waitFor(() => {
+        expect(eventListeners.has('file-content-changed')).toBe(true);
+      });
+
+      act(() => {
+        emitEvent('file-content-changed', ['/test/repo/file.ts']);
+      });
+
+      vi.advanceTimersByTime(300);
+
+      // Git status should be refreshed when file content changes
       expect(mockRefreshStatus).toHaveBeenCalled();
     });
   });
 
   describe('event listener setup', () => {
-    it('should set up listeners for both events', async () => {
+    it('should set up listeners for all events', async () => {
       const useRepositoryWatcher = await getHook();
 
       renderHook(() => useRepositoryWatcher());
 
       await vi.waitFor(() => {
-        expect(eventListeners.has('file-system-changed')).toBe(true);
+        expect(eventListeners.has('file-structure-changed')).toBe(true);
+        expect(eventListeners.has('file-content-changed')).toBe(true);
         expect(eventListeners.has('git-status-changed')).toBe(true);
       });
     });

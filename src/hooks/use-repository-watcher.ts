@@ -120,8 +120,23 @@ export function useRepositoryWatcher() {
 
     startWatching();
 
-    // Listen for file system changes
-    const unlistenFileSystem = listen('file-system-changed', (event) => {
+    // Listen for file structure changes (Create/Remove/Rename) - these require file tree refresh
+    const unlistenFileStructure = listen('file-structure-changed', (event) => {
+      const changedPaths = normalizeFileSystemPaths(event.payload);
+
+      if (changedPaths.length > 0) {
+        // Invalidate cache for changed paths
+        for (const changedPath of changedPaths) {
+          fastDirectoryTreeService.invalidatePath(changedPath);
+        }
+
+        // Debounced refresh of file tree - only for structure changes
+        debouncedRefreshFileTree();
+      }
+    });
+
+    // Listen for file content changes (Data modification) - these do NOT require file tree refresh
+    const unlistenFileContent = listen('file-content-changed', (event) => {
       const changedPaths = normalizeFileSystemPaths(event.payload);
 
       if (changedPaths.length > 0) {
@@ -130,6 +145,7 @@ export function useRepositoryWatcher() {
         const openFilePaths = new Set(currentOpenFiles.map((file) => file.path));
 
         for (const changedPath of uniquePaths) {
+          // Invalidate cache for the changed file
           fastDirectoryTreeService.invalidatePath(changedPath);
 
           // If the changed file is currently open, refresh its content
@@ -141,12 +157,7 @@ export function useRepositoryWatcher() {
         }
       }
 
-      // Debounced refresh of file tree
-      debouncedRefreshFileTree();
-
-      // Also debounced refresh git status when working directory files change
-      // This is needed because .git directory only changes on git add/commit,
-      // but git status should reflect working directory changes immediately
+      // Refresh git status for content changes (file modifications affect git status)
       debouncedRefreshGitStatusForFileChange();
     });
 
@@ -170,7 +181,8 @@ export function useRepositoryWatcher() {
         fileChangeGitTimeoutRef.current = null;
       }
 
-      unlistenFileSystem.then((fn) => fn());
+      unlistenFileStructure.then((fn) => fn());
+      unlistenFileContent.then((fn) => fn());
       unlistenGitStatus.then((fn) => fn());
 
       // Stop window-specific file watching

@@ -191,6 +191,31 @@ function FileTreeNode({
     }
   }, [selectedFile, node.path]);
 
+  // Auto-load children when directory is expanded but children are not loaded
+  // This handles the case after file tree refresh where expandedPaths is preserved
+  // but the tree nodes are re-created with is_lazy_loaded=true
+  useEffect(() => {
+    if (
+      node.is_directory &&
+      isExpanded &&
+      node.is_lazy_loaded &&
+      !isLoadingChildren &&
+      onLoadChildren
+    ) {
+      setIsLoadingChildren(true);
+      onLoadChildren(node)
+        .then(() => {
+          // Children loaded successfully
+        })
+        .catch((error) => {
+          logger.error('Failed to auto-load directory children:', error);
+        })
+        .finally(() => {
+          setIsLoadingChildren(false);
+        });
+    }
+  }, [node, isExpanded, isLoadingChildren, onLoadChildren]);
+
   const handleToggleDirectory = useCallback(async () => {
     if (node.is_directory && node.is_lazy_loaded && !isExpanded) {
       setIsLoadingChildren(true);

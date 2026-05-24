@@ -1,4 +1,4 @@
-// src/components/chat/auto-approve-button.tsx
+// src/components/chat/auto-approve-button.tsx 1111
 
 import { CheckCircle, Circle } from 'lucide-react';
 import { useEffect, useState } from 'react';
