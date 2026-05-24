@@ -434,6 +434,34 @@ pub async fn git_delete_tag(
     repository::delete_tag(&repo_path, &tag_name, remote.as_deref())
 }
 
+/// Merge a branch into current branch
+#[tauri::command]
+pub async fn git_merge_branch(
+    repo_path: String,
+    branch_name: String,
+    no_ff: Option<bool>,
+    message: Option<String>,
+) -> Result<String, String> {
+    repository::merge_branch(
+        &repo_path,
+        &branch_name,
+        no_ff.unwrap_or(false),
+        message.as_deref(),
+    )
+}
+
+/// Abort an in-progress merge
+#[tauri::command]
+pub async fn git_abort_regular_merge(repo_path: String) -> Result<(), String> {
+    repository::abort_merge(&repo_path)
+}
+
+/// Check if there is an ongoing merge
+#[tauri::command]
+pub async fn git_is_merging(repo_path: String) -> Result<bool, String> {
+    repository::is_merging(&repo_path)
+}
+
 /// Get file content at HEAD (committed version)
 #[tauri::command]
 pub async fn git_get_file_content_at_head(

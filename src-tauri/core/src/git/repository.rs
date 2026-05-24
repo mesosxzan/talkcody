@@ -573,6 +573,92 @@ pub fn delete_tag(repo_path: &str, tag_name: &str, remote: Option<&str>) -> Resu
     Ok(())
 }
 
+/// Merge a branch into the current branch
+pub fn merge_branch(
+    repo_path: &str,
+    branch_name: &str,
+    no_ff: bool,
+    message: Option<&str>,
+) -> Result<String, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let mut args = vec!["merge", branch_name];
+
+    if no_ff {
+        args.push("--no-ff");
+    }
+
+    if let Some(msg) = message {
+        args.push("-m");
+        args.push(msg);
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(&args)
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to merge branch: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        // Check for merge conflicts
+        if stderr.contains("CONFLICT") || stdout.contains("CONFLICT") {
+            return Err(format!(
+                "Merge conflict detected. Please resolve conflicts and commit.\n{}",
+                stderr
+            ));
+        }
+
+        return Err(format!(
+            "Failed to merge branch {}: {}",
+            branch_name, stderr
+        ));
+    }
+
+    Ok(format!("Merged branch {} into current branch", branch_name))
+}
+
+/// Abort an in-progress merge
+pub fn abort_merge(repo_path: &str) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(["merge", "--abort"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to abort merge: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "Failed to abort merge: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    Ok(())
+}
+
+/// Check if there is an ongoing merge
+pub fn is_merging(repo_path: &str) -> Result<bool, String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let output = crate::shell_utils::new_command("git")
+        .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| format!("Failed to check merge status: {}", e))?;
+
+    Ok(output.status.success())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

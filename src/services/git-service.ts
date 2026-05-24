@@ -271,6 +271,37 @@ export class GitService {
   async deleteTag(repoPath: string, tagName: string, remote?: string): Promise<void> {
     return invoke<void>('git_delete_tag', { repoPath, tagName, remote });
   }
+
+  /**
+   * Merge a branch into current branch
+   */
+  async mergeBranch(
+    repoPath: string,
+    branchName: string,
+    noFF?: boolean,
+    message?: string
+  ): Promise<string> {
+    return invoke<string>('git_merge_branch', {
+      repoPath,
+      branchName,
+      noFF,
+      message,
+    });
+  }
+
+  /**
+   * Abort an in-progress merge
+   */
+  async abortMerge(repoPath: string): Promise<void> {
+    return invoke<void>('git_abort_regular_merge', { repoPath });
+  }
+
+  /**
+   * Check if there is an ongoing merge
+   */
+  async isMerging(repoPath: string): Promise<boolean> {
+    return invoke<boolean>('git_is_merging', { repoPath });
+  }
 }
 
 // Export a singleton instance

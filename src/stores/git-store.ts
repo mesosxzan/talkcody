@@ -61,6 +61,9 @@ interface GitStore {
   createTag: (tagName: string, message?: string, target?: string) => Promise<void>;
   pushTag: (tagName?: string, remote?: string) => Promise<string>;
   deleteTag: (tagName: string, remote?: string) => Promise<void>;
+  mergeBranch: (branchName: string, noFF?: boolean, message?: string) => Promise<string>;
+  abortMerge: () => Promise<void>;
+  isMerging: () => Promise<boolean>;
   fetch: (remote?: string) => Promise<string>;
 
   // Git Operations
@@ -570,6 +573,58 @@ export const useGitStore = create<GitStore>((set, get) => ({
     } catch (error) {
       logger.error(`Failed to delete tag ${tagName}:`, error);
       throw error;
+    }
+  },
+
+  // Merge a branch
+  mergeBranch: async (branchName: string, noFF?: boolean, message?: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      const result = await gitService.mergeBranch(repositoryPath, branchName, noFF, message);
+      logger.info(`Merged branch: ${branchName}`);
+      // Refresh status and branches after merge
+      await Promise.all([get().refreshStatus(), get().loadBranches()]);
+      return result;
+    } catch (error) {
+      logger.error(`Failed to merge branch ${branchName}:`, error);
+      throw error;
+    }
+  },
+
+  // Abort merge
+  abortMerge: async () => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.abortMerge(repositoryPath);
+      logger.info('Aborted merge');
+      // Refresh status after abort
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to abort merge:', error);
+      throw error;
+    }
+  },
+
+  // Check if merging
+  isMerging: async () => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      return false;
+    }
+
+    try {
+      return await gitService.isMerging(repositoryPath);
+    } catch (error) {
+      logger.error('Failed to check merge status:', error);
+      return false;
     }
   },
 

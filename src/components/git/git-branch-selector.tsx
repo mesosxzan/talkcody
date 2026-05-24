@@ -2,6 +2,7 @@ import {
   Check,
   ChevronDown,
   GitBranch,
+  GitMerge,
   Loader2,
   Plus,
   RefreshCw,
@@ -37,6 +38,11 @@ export function GitBranchSelector() {
   const [tagMessage, setTagMessage] = useState('');
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [pushingBranch, setPushingBranch] = useState<string | null>(null);
+  const [showMergeBranch, setShowMergeBranch] = useState(false);
+  const [mergeBranchName, setMergeBranchName] = useState('');
+  const [mergeMessage, setMergeMessage] = useState('');
+  const [useNoFF, setUseNoFF] = useState(false);
+  const [isMerging, setIsMerging] = useState(false);
 
   const branches = useGitStore((state) => state.branches);
   const tags = useGitStore((state) => state.tags);
@@ -58,6 +64,7 @@ export function GitBranchSelector() {
   const createTag = useGitStore((state) => state.createTag);
   const pushTag = useGitStore((state) => state.pushTag);
   const deleteTag = useGitStore((state) => state.deleteTag);
+  const mergeBranch = useGitStore((state) => state.mergeBranch);
   const fetch = useGitStore((state) => state.fetch);
 
   const currentBranch = gitStatus?.branch?.name;
@@ -75,6 +82,10 @@ export function GitBranchSelector() {
       setShowCreateTag(false);
       setNewTagName('');
       setTagMessage('');
+      setShowMergeBranch(false);
+      setMergeBranchName('');
+      setMergeMessage('');
+      setUseNoFF(false);
     }
   }, [open, loadBranches, loadTags, loadRemoteBranches]);
 
@@ -257,6 +268,40 @@ export function GitBranchSelector() {
     [deleteTag]
   );
 
+  const handleMergeBranch = useCallback(
+    async (branchName: string, noFF: boolean, message?: string) => {
+      if (!branchName.trim()) {
+        toast.error('Please select a branch to merge');
+        return;
+      }
+
+      if (branchName === currentBranch) {
+        toast.error('Cannot merge a branch into itself');
+        return;
+      }
+
+      setIsMerging(true);
+      try {
+        const result = await mergeBranch(branchName, noFF, message);
+        toast.success(result);
+        setShowMergeBranch(false);
+        setMergeBranchName('');
+        setMergeMessage('');
+        setUseNoFF(false);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (errorMsg.includes('CONFLICT')) {
+          toast.error('Merge conflict detected. Please resolve conflicts and commit.');
+        } else {
+          toast.error(`Failed to merge branch: ${branchName}`);
+        }
+      } finally {
+        setIsMerging(false);
+      }
+    },
+    [mergeBranch, currentBranch]
+  );
+
   const isLoading = isLoadingBranches || isLoadingTags || isLoadingRemoteBranches;
 
   // Filter branches and tags based on search query
@@ -339,6 +384,15 @@ export function GitBranchSelector() {
             >
               <Tag className="h-3.5 w-3.5" />
             </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              onClick={() => setShowMergeBranch(!showMergeBranch)}
+              title="Merge branch"
+            >
+              <GitMerge className="h-3.5 w-3.5" />
+            </Button>
           </div>
         </div>
 
@@ -394,6 +448,49 @@ export function GitBranchSelector() {
                 {isCreatingTag ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Create Tag'}
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* Merge branch input */}
+        {showMergeBranch && (
+          <div className="border-b p-2 space-y-2">
+            <select
+              className="w-full h-7 text-xs px-2 border rounded"
+              onChange={(e) => setMergeBranchName(e.target.value)}
+              value={mergeBranchName}
+            >
+              <option value="">Select branch to merge...</option>
+              {filteredBranches
+                .filter((b) => b.name !== currentBranch)
+                .map((branch) => (
+                  <option key={branch.name} value={branch.name}>
+                    {branch.name}
+                  </option>
+                ))}
+            </select>
+            <Input
+              className="h-7 text-xs"
+              onChange={(e) => setMergeMessage(e.target.value)}
+              placeholder="Merge message (optional)"
+              value={mergeMessage}
+            />
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={useNoFF}
+                className="h-3 w-3"
+                onChange={(e) => setUseNoFF(e.target.checked)}
+              />
+              <span className="text-xs">No fast-forward</span>
+            </div>
+            <Button
+              size="sm"
+              className="h-7 w-full text-xs"
+              disabled={!mergeBranchName || isMerging}
+              onClick={() => handleMergeBranch(mergeBranchName, useNoFF, mergeMessage || undefined)}
+            >
+              {isMerging ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Merge Branch'}
+            </Button>
           </div>
         )}
 

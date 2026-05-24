@@ -2669,6 +2669,17 @@ export interface LocaleDefinition {
     deletedTag: string;
     failedToDeleteTag: string;
     pushAllTags: string;
+    mergeBranch: string;
+    mergeBranchTitle: string;
+    selectBranchToMerge: string;
+    mergeMessage: string;
+    mergeMessagePlaceholder: string;
+    noFastForward: string;
+    mergedBranch: string;
+    failedToMergeBranch: string;
+    mergeConflict: string;
+    cannotMergeSelf: string;
+    selectBranchFirst: string;
     diffView: string;
     original: string;
     current: string;
