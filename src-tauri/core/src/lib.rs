@@ -8,6 +8,7 @@ pub mod git;
 pub mod integrations;
 pub mod llm;
 pub mod platform;
+pub mod proxy_config;
 pub mod scheduler;
 pub mod security;
 pub mod storage;

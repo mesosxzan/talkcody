@@ -29,6 +29,7 @@ pub use talkcody_core::llm;
 pub use talkcody_core::lsp;
 pub use talkcody_core::oauth_callback_server;
 pub use talkcody_core::platform;
+pub use talkcody_core::proxy_config;
 pub use talkcody_core::scheduler;
 pub use talkcody_core::script_executor;
 pub use talkcody_core::search;
@@ -1039,6 +1040,8 @@ pub fn run() {
             http_proxy::check_local_port,
             http_proxy::get_system_proxy_env,
             http_proxy::test_proxy_connection,
+            proxy_config::set_global_proxy,
+            proxy_config::get_global_proxy,
             git::git_get_status,
             git::git_is_repository,
             git::git_get_all_file_statuses,

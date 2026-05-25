@@ -846,6 +846,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         isInitialized: true,
       });
 
+      // Sync proxy settings to Rust backend on initialization
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const state = get();
+        await invoke('set_global_proxy', {
+          enabled: state.proxy_enabled,
+          url: state.proxy_url || null,
+          proxyType: state.proxy_type || null,
+          noProxy: state.proxy_no_proxy || null,
+        });
+        logger.info('[SettingsStore] Proxy settings synced to Rust backend on init');
+      } catch (error) {
+        logger.error(
+          '[SettingsStore] Failed to sync proxy settings to Rust backend on init:',
+          error
+        );
+      }
+
       logger.info('Settings store initialized');
     } catch (error) {
       logger.error('Failed to initialize settings store:', error);
@@ -1577,6 +1595,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       proxy_auto_detect: settings.autoDetect,
       proxy_no_proxy: settings.noProxy,
     });
+
+    // Sync to Rust backend for shell commands (git, etc.)
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_global_proxy', {
+        enabled: settings.enabled,
+        url: settings.url || null,
+        proxyType: settings.type || null,
+        noProxy: settings.noProxy || null,
+      });
+      logger.info('[SettingsStore] Proxy settings synced to Rust backend');
+    } catch (error) {
+      logger.error('[SettingsStore] Failed to sync proxy settings to Rust backend:', error);
+    }
   },
 
   // Web Search Proxy Settings

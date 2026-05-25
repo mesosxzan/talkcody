@@ -10,17 +10,22 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 /// On Windows, this sets the `CREATE_NO_WINDOW` creation flag to prevent
 /// a console window from flashing when spawning child processes.
 /// On other platforms, this is equivalent to `std::process::Command::new()`.
+///
+/// This function also injects proxy environment variables if configured.
 pub fn new_command(program: &str) -> std::process::Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let mut cmd = std::process::Command::new(program);
         cmd.creation_flags(CREATE_NO_WINDOW);
+        inject_proxy_env(&mut cmd);
         cmd
     }
     #[cfg(not(windows))]
     {
-        std::process::Command::new(program)
+        let mut cmd = std::process::Command::new(program);
+        inject_proxy_env(&mut cmd);
+        cmd
     }
 }
 
@@ -29,16 +34,68 @@ pub fn new_command(program: &str) -> std::process::Command {
 /// On Windows, this sets the `CREATE_NO_WINDOW` creation flag to prevent
 /// a console window from flashing when spawning child processes.
 /// On other platforms, this is equivalent to `tokio::process::Command::new()`.
+///
+/// This function also injects proxy environment variables if configured.
 pub fn new_async_command(program: &str) -> tokio::process::Command {
     #[cfg(windows)]
     {
         let mut cmd = tokio::process::Command::new(program);
         cmd.creation_flags(CREATE_NO_WINDOW);
+        inject_proxy_env_async(&mut cmd);
         cmd
     }
     #[cfg(not(windows))]
     {
-        tokio::process::Command::new(program)
+        let mut cmd = tokio::process::Command::new(program);
+        inject_proxy_env_async(&mut cmd);
+        cmd
+    }
+}
+
+/// Inject proxy environment variables into a sync Command
+fn inject_proxy_env(cmd: &mut std::process::Command) {
+    // Try to get proxy config synchronously (non-blocking)
+    // Since we're in sync context, we use try_read
+    if let Ok(config) = crate::proxy_config::PROXY_CONFIG.try_read() {
+        if config.is_enabled() {
+            if let Some(ref url) = config.url {
+                cmd.env("HTTP_PROXY", url);
+                cmd.env("HTTPS_PROXY", url);
+                cmd.env("ALL_PROXY", url);
+                cmd.env("http_proxy", url);
+                cmd.env("https_proxy", url);
+                cmd.env("all_proxy", url);
+            }
+            if let Some(ref no_proxy) = config.no_proxy {
+                if !no_proxy.is_empty() {
+                    cmd.env("NO_PROXY", no_proxy);
+                    cmd.env("no_proxy", no_proxy);
+                }
+            }
+        }
+    }
+}
+
+/// Inject proxy environment variables into an async Command
+fn inject_proxy_env_async(cmd: &mut tokio::process::Command) {
+    // Try to get proxy config synchronously (non-blocking for async)
+    if let Ok(config) = crate::proxy_config::PROXY_CONFIG.try_read() {
+        if config.is_enabled() {
+            if let Some(ref url) = config.url {
+                cmd.env("HTTP_PROXY", url);
+                cmd.env("HTTPS_PROXY", url);
+                cmd.env("ALL_PROXY", url);
+                cmd.env("http_proxy", url);
+                cmd.env("https_proxy", url);
+                cmd.env("all_proxy", url);
+            }
+            if let Some(ref no_proxy) = config.no_proxy {
+                if !no_proxy.is_empty() {
+                    cmd.env("NO_PROXY", no_proxy);
+                    cmd.env("no_proxy", no_proxy);
+                }
+            }
+        }
     }
 }
 
