@@ -2860,6 +2860,8 @@ const zh: LocaleDefinition = {
       stageAllUntracked: '暂存所有未跟踪文件',
       generateMessage: 'AI 生成提交消息',
       generatingMessage: '正在生成提交消息...',
+      stageAll: '全部暂存',
+      unstageAllFiles: '全部取消暂存',
     },
   },
 };

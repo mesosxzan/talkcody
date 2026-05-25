@@ -2928,6 +2928,8 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
       stageAllUntracked: 'Stage all untracked files',
       generateMessage: 'AI generate commit message',
       generatingMessage: 'Generating commit message...',
+      stageAll: 'Stage all',
+      unstageAllFiles: 'Unstage all',
     },
   },
 };

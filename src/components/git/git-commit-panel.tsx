@@ -1,9 +1,7 @@
-import { Check, GitBranch, Loader2, Minus, Plus, RefreshCw, Upload } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Check, GitBranch, Loader2, RefreshCw, Upload } from 'lucide-react';
+import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
@@ -71,45 +69,25 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     }
   };
 
-  // Handle batch stage all modified files
-  const handleStageAllModified = async () => {
+  // Handle batch stage all files in a list
+  const handleStageAll = async (filePaths: string[]) => {
     try {
-      const filePaths = modifiedFiles.map((f) => f.path);
-      if (filePaths.length === 0) return;
-
       await stageFiles(filePaths);
-      toast.success(t.Git.messages.stageSuccess);
+      toast.success(t.Git.messages.stageAllSuccess);
     } catch (error) {
-      logger.error('Failed to stage all modified files:', error);
-      toast.error(t.Git.messages.stageSuccess);
+      logger.error('Failed to stage all files:', error);
+      toast.error(t.Git.messages.stageAllSuccess);
     }
   };
 
-  // Handle batch stage all untracked files
-  const handleStageAllUntracked = async () => {
+  // Handle batch unstage all files
+  const handleUnstageAll = async (filePaths: string[]) => {
     try {
-      const filePaths = untrackedFiles.map((f) => f.path);
-      if (filePaths.length === 0) return;
-
-      await stageFiles(filePaths);
-      toast.success(t.Git.messages.stageSuccess);
-    } catch (error) {
-      logger.error('Failed to stage all untracked files:', error);
-      toast.error(t.Git.messages.stageSuccess);
-    }
-  };
-
-  // Handle batch unstage all staged files
-  const handleUnstageAll = async () => {
-    try {
-      const filePaths = stagedFiles.map((f) => f.path);
-      if (filePaths.length === 0) return;
-
       await unstageFiles(filePaths);
-      toast.success(t.Git.messages.unstageSuccess);
+      toast.success(t.Git.messages.unstageAllSuccess);
     } catch (error) {
       logger.error('Failed to unstage all files:', error);
-      toast.error(t.Git.messages.unstageSuccess);
+      toast.error(t.Git.messages.unstageAllSuccess);
     }
   };
 
@@ -209,7 +187,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   };
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between border-b px-3 py-2">
         <div className="flex items-center gap-2">
@@ -275,58 +253,21 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
       </div>
 
       {/* File lists */}
-      <ScrollArea className="flex-1">
-        <div className="flex flex-col py-2">
-          {/* Staged files with batch unstage */}
-          {stagedFiles.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                {t.Git.staged} ({stagedFiles.length})
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 flex-shrink-0"
-                    onClick={handleUnstageAll}
-                  >
-                    <Minus className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">{t.Git.unstage}</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
+      <div className="flex-1 overflow-auto">
+        <div className="flex flex-col">
+          {/* Staged files */}
           <GitFileList
             files={stagedFiles}
             isStaged={true}
             onToggleStage={handleToggleStage}
             onFileClick={handleFileClick}
             defaultExpanded={true}
+            title={t.Git.staged}
+            maxVisibleHeight={180}
+            onUnstageAll={() => handleUnstageAll(stagedFiles.map((f) => f.path))}
           />
 
-          {/* Modified files with batch stage */}
-          {modifiedFiles.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                {t.Git.changes} ({modifiedFiles.length})
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 flex-shrink-0"
-                    onClick={handleStageAllModified}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">{t.Git.stage}</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
+          {/* Modified files */}
           <GitFileList
             files={modifiedFiles}
             isStaged={false}
@@ -334,35 +275,21 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             onFileClick={handleFileClick}
             onDiscard={handleDiscard}
             defaultExpanded={true}
+            title={t.Git.changes}
+            maxVisibleHeight={180}
+            onStageAll={() => handleStageAll(modifiedFiles.map((f) => f.path))}
           />
 
-          {/* Untracked files with batch stage */}
-          {untrackedFiles.length > 0 && (
-            <div className="flex items-center gap-1.5 px-2 py-1.5 border-b">
-              <span className="text-xs font-medium text-muted-foreground truncate min-w-0">
-                {t.Git.untracked} ({untrackedFiles.length})
-              </span>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 w-6 p-0 flex-shrink-0"
-                    onClick={handleStageAllUntracked}
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">{t.Git.stage}</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
+          {/* Untracked files */}
           <GitFileList
             files={untrackedFiles}
             isStaged={false}
             onToggleStage={handleToggleStage}
             onFileClick={handleFileClick}
             defaultExpanded={false}
+            title={t.Git.untracked}
+            maxVisibleHeight={180}
+            onStageAll={() => handleStageAll(untrackedFiles.map((f) => f.path))}
           />
 
           {/* Empty state */}
@@ -379,7 +306,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             </div>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

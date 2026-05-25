@@ -2763,6 +2763,8 @@ export interface LocaleDefinition {
       stageAllUntracked: string;
       generateMessage: string;
       generatingMessage: string;
+      stageAll: string;
+      unstageAllFiles: string;
     };
   };
 
