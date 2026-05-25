@@ -445,6 +445,10 @@ const DEFAULT_SETTINGS: Omit<SettingsState, 'loading' | 'error' | 'isInitialized
   websearch_proxy_use_global: true,
   websearch_proxy_url: '',
   websearch_proxy_type: 'http',
+  // Git Settings
+  git_executable_path: '',
+  git_auto_fetch_enabled: false,
+  git_auto_refresh_interval: 0,
 };
 
 // Database persistence layer
