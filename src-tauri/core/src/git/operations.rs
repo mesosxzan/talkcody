@@ -88,7 +88,7 @@ pub fn stage_files(repo_path: &str, file_paths: &[String]) -> Result<(), String>
     }
 
     for file_path in file_paths {
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["add", file_path])
             .current_dir(repo_path)
             .output()
@@ -113,7 +113,7 @@ pub fn unstage_files(repo_path: &str, file_paths: &[String]) -> Result<(), Strin
     }
 
     for file_path in file_paths {
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["reset", "HEAD", "--", file_path])
             .current_dir(repo_path)
             .output()
@@ -138,7 +138,7 @@ pub fn commit_changes(repo_path: &str, message: &str) -> Result<String, String> 
     }
 
     // Check if there are staged changes
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["diff", "--cached", "--quiet"])
         .current_dir(repo_path)
         .output()
@@ -149,7 +149,7 @@ pub fn commit_changes(repo_path: &str, message: &str) -> Result<String, String> 
     }
 
     // Commit
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["commit", "-m", message])
         .current_dir(repo_path)
         .output()
@@ -161,7 +161,7 @@ pub fn commit_changes(repo_path: &str, message: &str) -> Result<String, String> 
     }
 
     // Get the commit hash
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["rev-parse", "HEAD"])
         .current_dir(repo_path)
         .output()
@@ -181,7 +181,7 @@ pub fn stage_all(repo_path: &str) -> Result<(), String> {
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["add", "-A"])
         .current_dir(repo_path)
         .output()
@@ -203,7 +203,7 @@ pub fn discard_changes(repo_path: &str, file_path: &str) -> Result<(), String> {
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["checkout", "--", file_path])
         .current_dir(repo_path)
         .output()
@@ -233,7 +233,7 @@ pub fn push(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Resu
         b.to_string()
     } else {
         // Get current branch name
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(repo_path)
             .output()
@@ -247,7 +247,7 @@ pub fn push(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Resu
     };
 
     // Push to remote
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["push", remote_name, &branch_name])
         .current_dir(repo_path)
         .output()
@@ -280,7 +280,7 @@ pub async fn push_async(
         b.to_string()
     } else {
         // Get current branch name
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(repo_path)
             .output()
@@ -299,7 +299,7 @@ pub async fn push_async(
         .unwrap_or_else(|| generate_operation_id(repo_path, "push"));
 
     // Push to remote using async command with cancellation support
-    let mut child = crate::shell_utils::new_async_command("git")
+    let mut child = crate::shell_utils::new_git_async_command()
         .args(["push", &remote_name, &branch_name])
         .current_dir(repo_path)
         .spawn()
@@ -344,7 +344,7 @@ pub fn pull(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Resu
         b.to_string()
     } else {
         // Get current branch name
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(repo_path)
             .output()
@@ -358,7 +358,7 @@ pub fn pull(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Resu
     };
 
     // Pull from remote
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["pull", remote_name, &branch_name])
         .current_dir(repo_path)
         .output()
@@ -380,19 +380,19 @@ mod tests {
     fn create_temp_git_repo() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["init"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to initialize git repo");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.email", "test@example.com"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to configure git email");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.name", "Test User"])
             .current_dir(temp_dir.path())
             .output()
@@ -402,13 +402,13 @@ mod tests {
         let readme = temp_dir.path().join("README.md");
         std::fs::write(&readme, "# Initial").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()

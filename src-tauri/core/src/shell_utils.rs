@@ -1,9 +1,31 @@
 // Shell utility functions for cross-platform command execution
 
+use std::sync::RwLock;
+
 /// Windows flag to prevent console window from appearing when spawning processes.
 /// This prevents flashing cmd.exe windows in GUI applications.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Global Git executable path configuration
+/// If empty, uses default "git" command
+static GIT_EXECUTABLE_PATH: RwLock<String> = RwLock::new(String::new());
+
+/// Set the Git executable path
+pub fn set_git_executable_path(path: String) {
+    let mut git_path = GIT_EXECUTABLE_PATH.write().unwrap();
+    *git_path = path;
+}
+
+/// Get the Git executable path
+pub fn get_git_executable_path() -> String {
+    let git_path = GIT_EXECUTABLE_PATH.read().unwrap();
+    if git_path.is_empty() {
+        "git".to_string()
+    } else {
+        git_path.clone()
+    }
+}
 
 /// Create a new `std::process::Command` with console window hidden on Windows.
 ///
@@ -29,6 +51,15 @@ pub fn new_command(program: &str) -> std::process::Command {
     }
 }
 
+/// Create a new `std::process::Command` for Git with configured executable path.
+///
+/// Uses the configured Git executable path if set, otherwise falls back to "git".
+/// This function is used for all Git operations in the application.
+pub fn new_git_command() -> std::process::Command {
+    let git_path = get_git_executable_path();
+    new_command(&git_path)
+}
+
 /// Create a new `tokio::process::Command` with console window hidden on Windows.
 ///
 /// On Windows, this sets the `CREATE_NO_WINDOW` creation flag to prevent
@@ -50,6 +81,15 @@ pub fn new_async_command(program: &str) -> tokio::process::Command {
         inject_proxy_env_async(&mut cmd);
         cmd
     }
+}
+
+/// Create a new `tokio::process::Command` for Git with configured executable path.
+///
+/// Uses the configured Git executable path if set, otherwise falls back to "git".
+/// This function is used for all async Git operations in the application.
+pub fn new_git_async_command() -> tokio::process::Command {
+    let git_path = get_git_executable_path();
+    new_async_command(&git_path)
 }
 
 /// Inject proxy environment variables into a sync Command
@@ -119,6 +159,19 @@ pub fn get_windows_shell() -> String {
 /// Available on all platforms for use in cross-platform code
 pub fn is_powershell(shell: &str) -> bool {
     shell.to_lowercase().contains("powershell") || shell.to_lowercase().contains("pwsh")
+}
+
+/// Tauri command to set Git executable path from frontend
+#[tauri::command]
+pub fn set_git_executable(git_path: String) -> Result<(), String> {
+    set_git_executable_path(git_path);
+    Ok(())
+}
+
+/// Tauri command to get current Git executable path
+#[tauri::command]
+pub fn get_git_executable() -> Result<String, String> {
+    Ok(get_git_executable_path())
 }
 
 #[cfg(test)]

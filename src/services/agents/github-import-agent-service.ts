@@ -550,23 +550,29 @@ export async function importAgentFromGitHub(
     throw new Error(`Invalid repository format: ${repository}. Expected format: owner/repo`);
   }
 
+  // Validate and sanitize the path
+  const sanitizedPath = path?.replace(/^[/]+/, '').replace(/[/]+$/, '') || '';
+  if (!sanitizedPath) {
+    throw new Error('Path is required for importing agents from GitHub');
+  }
+
   const branches = uniqueBranches(branch);
-  const githubUrl = `https://github.com/${repository}/tree/${branches[0]}/${path}`;
+  const githubUrl = `https://github.com/${repository}/tree/${branches[0]}/${sanitizedPath}`;
 
   logger.info('Importing agent from GitHub:', {
     repository,
-    path,
+    path: sanitizedPath,
     agentId,
     githubUrl,
   });
 
-  const isMarkdownPath = path.toLowerCase().endsWith('.md');
+  const isMarkdownPath = sanitizedPath.toLowerCase().endsWith('.md');
 
   try {
     if (isMarkdownPath) {
       const branchAttempts: Array<{ branch: string; success: boolean; status: string }> = [];
       for (const currentBranch of branches) {
-        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${currentBranch}/${path}`;
+        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${currentBranch}/${sanitizedPath}`;
         const content = await fetchMarkdownFile(rawUrl);
         if (!content) {
           branchAttempts.push({ branch: currentBranch, success: false, status: 'fetch failed' });
@@ -578,7 +584,7 @@ export async function importAgentFromGitHub(
           const agentConfig = buildRemoteAgentConfig({
             parsed,
             repository,
-            githubPath: path,
+            githubPath: sanitizedPath,
             fallbackId: agentId,
           });
 
@@ -611,7 +617,7 @@ export async function importAgentFromGitHub(
     }> = [];
 
     for (const currentBranch of branches) {
-      const directoryUrl = `https://github.com/${owner}/${repo}/tree/${currentBranch}/${path}`;
+      const directoryUrl = `https://github.com/${owner}/${repo}/tree/${currentBranch}/${sanitizedPath}`;
       const response = await simpleFetch(directoryUrl, { method: 'GET' });
       if (!response.ok) {
         branchAttempts.push({
@@ -624,7 +630,13 @@ export async function importAgentFromGitHub(
       }
 
       const html = await response.text();
-      const markdownPaths = extractMarkdownPathsFromHtml(html, owner, repo, currentBranch, path);
+      const markdownPaths = extractMarkdownPathsFromHtml(
+        html,
+        owner,
+        repo,
+        currentBranch,
+        sanitizedPath
+      );
 
       if (markdownPaths.length === 0) {
         branchAttempts.push({

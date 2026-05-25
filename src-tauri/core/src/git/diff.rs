@@ -356,19 +356,19 @@ mod tests {
     fn create_temp_git_repo_with_commit() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["init"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to initialize git repo");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.email", "test@example.com"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to configure git email");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.name", "Test User"])
             .current_dir(temp_dir.path())
             .output()
@@ -378,13 +378,13 @@ mod tests {
         let readme = temp_dir.path().join("README.md");
         std::fs::write(&readme, "# Initial\nLine 2\nLine 3\n").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()
@@ -505,13 +505,13 @@ mod tests {
         let code_file = temp_dir.path().join("code.rs");
         std::fs::write(&code_file, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "code.rs"])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Add code.rs"])
             .current_dir(temp_dir.path())
             .output()
@@ -642,13 +642,13 @@ mod tests {
         let code_file = temp_dir.path().join("code.rs");
         std::fs::write(&code_file, "fn main() {}\n").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "code.rs"])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Add code.rs"])
             .current_dir(temp_dir.path())
             .output()

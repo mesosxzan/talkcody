@@ -148,6 +148,11 @@ fn validate_url(url_str: &str, allow_private_ip: bool) -> Result<(), String> {
 
     if let Ok(ip) = host.parse::<IpAddr>() {
         if !allow_private_ip && is_private_ip(&ip) {
+            log::warn!(
+                "URL validation blocked: private IP {} for URL: {}",
+                ip,
+                url_str
+            );
             return Err(format!(
                 "Access to private/internal IP addresses is not allowed: {}",
                 ip
@@ -165,6 +170,11 @@ fn validate_url(url_str: &str, allow_private_ip: bool) -> Result<(), String> {
     if let Ok(addrs) = socket_addr.to_socket_addrs() {
         for addr in addrs {
             if !allow_private_ip && is_private_ip(&addr.ip()) {
+                log::warn!(
+                    "URL validation blocked: resolved to private IP {} for URL: {}",
+                    addr.ip(),
+                    url_str
+                );
                 return Err(format!(
                     "Access to private/internal IP addresses is not allowed: {}",
                     addr.ip()

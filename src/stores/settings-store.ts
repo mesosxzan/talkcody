@@ -150,6 +150,11 @@ interface SettingsState {
   websearch_proxy_url: string; // Web search specific proxy URL
   websearch_proxy_type: string; // Web search proxy type
 
+  // Git Settings
+  git_executable_path: string; // Custom Git executable path (empty = use default 'git')
+  git_auto_fetch_enabled: boolean; // Auto fetch on repository open
+  git_auto_refresh_interval: number; // Auto refresh interval in seconds (0 = disabled)
+
   // Internal state
   loading: boolean;
   error: Error | null;
@@ -334,6 +339,14 @@ interface SettingsActions {
   getWebSearchProxyType: () => string;
   getWebSearchProxySettings: () => WebSearchProxySettings;
   setWebSearchProxySettings: (settings: WebSearchProxySettings) => Promise<void>;
+
+  // Git Settings
+  setGitExecutablePath: (path: string) => Promise<void>;
+  getGitExecutablePath: () => string;
+  setGitAutoFetchEnabled: (enabled: boolean) => Promise<void>;
+  getGitAutoFetchEnabled: () => boolean;
+  setGitAutoRefreshInterval: (interval: number) => Promise<void>;
+  getGitAutoRefreshInterval: () => number;
 
   // Convenience getters
   getModel: () => string;
@@ -545,6 +558,10 @@ class SettingsDatabase {
       websearch_proxy_use_global: 'true',
       websearch_proxy_url: '',
       websearch_proxy_type: 'http',
+      // Git Settings
+      git_executable_path: '',
+      git_auto_fetch_enabled: 'false',
+      git_auto_refresh_interval: '0',
     };
 
     const now = Date.now();
@@ -734,6 +751,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         'websearch_proxy_type'
       );
 
+      // Add Git settings keys
+      keys.push('git_executable_path', 'git_auto_fetch_enabled', 'git_auto_refresh_interval');
+
       const rawSettings = await settingsDb.getBatch(keys);
 
       // Parse API keys
@@ -842,6 +862,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         websearch_proxy_use_global: rawSettings.websearch_proxy_use_global !== 'false',
         websearch_proxy_url: rawSettings.websearch_proxy_url || '',
         websearch_proxy_type: rawSettings.websearch_proxy_type || 'http',
+        // Git Settings
+        git_executable_path: rawSettings.git_executable_path || '',
+        git_auto_fetch_enabled: rawSettings.git_auto_fetch_enabled === 'true',
+        git_auto_refresh_interval: Number(rawSettings.git_auto_refresh_interval) || 0,
         loading: false,
         isInitialized: true,
       });
@@ -1673,6 +1697,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
   },
 
+  // Git Settings
+  setGitExecutablePath: async (path: string) => {
+    await settingsDb.set('git_executable_path', path);
+    set({ git_executable_path: path });
+  },
+
+  getGitExecutablePath: () => {
+    return get().git_executable_path;
+  },
+
+  setGitAutoFetchEnabled: async (enabled: boolean) => {
+    await settingsDb.set('git_auto_fetch_enabled', enabled.toString());
+    set({ git_auto_fetch_enabled: enabled });
+  },
+
+  getGitAutoFetchEnabled: () => {
+    return get().git_auto_fetch_enabled;
+  },
+
+  setGitAutoRefreshInterval: async (interval: number) => {
+    await settingsDb.set('git_auto_refresh_interval', interval.toString());
+    set({ git_auto_refresh_interval: interval });
+  },
+
+  getGitAutoRefreshInterval: () => {
+    return get().git_auto_refresh_interval;
+  },
+
   // Convenience getters
   getModel: () => {
     return get().model;
@@ -1998,6 +2050,16 @@ export const settingsManager = {
   getWebSearchProxySettings: () => useSettingsStore.getState().getWebSearchProxySettings(),
   setWebSearchProxySettings: (settings: WebSearchProxySettings) =>
     useSettingsStore.getState().setWebSearchProxySettings(settings),
+
+  // Git Settings
+  setGitExecutablePath: (path: string) => useSettingsStore.getState().setGitExecutablePath(path),
+  getGitExecutablePath: () => useSettingsStore.getState().getGitExecutablePath(),
+  setGitAutoFetchEnabled: (enabled: boolean) =>
+    useSettingsStore.getState().setGitAutoFetchEnabled(enabled),
+  getGitAutoFetchEnabled: () => useSettingsStore.getState().getGitAutoFetchEnabled(),
+  setGitAutoRefreshInterval: (interval: number) =>
+    useSettingsStore.getState().setGitAutoRefreshInterval(interval),
+  getGitAutoRefreshInterval: () => useSettingsStore.getState().getGitAutoRefreshInterval(),
 };
 
 // Export settingsDb for direct database access (used by ThemeProvider before store initialization)

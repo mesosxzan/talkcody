@@ -322,6 +322,7 @@ export interface LocaleDefinition {
       hooks: string;
       remoteControl: string;
       memory: string;
+      git: string;
     };
     hooksScopeHint: string;
     account: {
@@ -734,6 +735,17 @@ export interface LocaleDefinition {
       tooltipDescription: string;
       defaultShell: string;
       shellHint: string;
+    };
+    git: {
+      title: string;
+      description: string;
+      executablePath: string;
+      executablePathPlaceholder: string;
+      executablePathHint: string;
+      autoFetch: string;
+      autoFetchHint: string;
+      autoRefreshInterval: string;
+      autoRefreshIntervalHint: string;
     };
     worktree: {
       title: string;

@@ -336,6 +336,7 @@ const en: LocaleDefinition = {
       hooks: 'Hooks',
       remoteControl: 'Remote Control',
       memory: 'Long-Term Memory',
+      git: 'Git',
     },
     account: {
       title: 'Account Settings',
@@ -771,6 +772,18 @@ const en: LocaleDefinition = {
         'Configure terminal appearance, font, and shell settings for the integrated terminal.',
       defaultShell: 'Default Shell',
       shellHint: 'Changes will take effect on the next terminal session. Windows only.',
+    },
+    git: {
+      title: 'Git Settings',
+      description: 'Configure Git executable and integration settings',
+      executablePath: 'Git Executable Path',
+      executablePathPlaceholder: 'Leave empty to use default git command',
+      executablePathHint:
+        'Specify a custom Git executable path if your Git installation uses a non-standard name or location.',
+      autoFetch: 'Auto Fetch',
+      autoFetchHint: 'Automatically fetch from remote when opening a repository',
+      autoRefreshInterval: 'Auto Refresh Interval (seconds)',
+      autoRefreshIntervalHint: 'Set to 0 to disable auto-refresh. Recommended: 30-300 seconds.',
     },
     worktree: {
       title: 'Worktree Settings',

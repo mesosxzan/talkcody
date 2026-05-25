@@ -183,7 +183,7 @@ pub fn checkout_branch(repo_path: &str, branch_name: &str) -> Result<(), String>
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["checkout", branch_name])
         .current_dir(repo_path)
         .output()
@@ -206,7 +206,7 @@ pub fn checkout_tag(repo_path: &str, tag_name: &str) -> Result<(), String> {
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["checkout", &format!("tags/{}", tag_name)])
         .current_dir(repo_path)
         .output()
@@ -238,7 +238,7 @@ pub fn create_branch(
         args.push(start);
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -305,7 +305,7 @@ pub fn fetch(repo_path: &str, remote: Option<&str>) -> Result<String, String> {
         args.push("--all");
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -341,7 +341,7 @@ pub fn checkout_remote_branch(
     });
 
     // Try to checkout with tracking
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["checkout", "-b", branch_name, "--track", remote_branch])
         .current_dir(repo_path)
         .output()
@@ -349,7 +349,7 @@ pub fn checkout_remote_branch(
 
     if !output.status.success() {
         // If tracking fails, try simple checkout (branch might already exist locally)
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["checkout", branch_name])
             .current_dir(repo_path)
             .output()
@@ -374,7 +374,7 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
     }
 
     // First check if we're on the branch to delete
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(repo_path)
         .output()
@@ -386,7 +386,7 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
     }
 
     // Try to delete the branch
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["branch", "-d", branch_name])
         .current_dir(repo_path)
         .output()
@@ -394,7 +394,7 @@ pub fn delete_branch(repo_path: &str, branch_name: &str) -> Result<(), String> {
 
     if !output.status.success() {
         // Try force delete if regular delete fails
-        let force_output = crate::shell_utils::new_command("git")
+        let force_output = crate::shell_utils::new_git_command()
             .args(["branch", "-D", branch_name])
             .current_dir(repo_path)
             .output()
@@ -430,7 +430,7 @@ pub fn push_branch(
         args.insert(2, "-u");
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -473,7 +473,7 @@ pub fn create_tag(
         args.push(tgt);
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -502,14 +502,14 @@ pub fn push_tag(
 
     let remote_name = remote.unwrap_or("origin");
     let output = if let Some(tag) = tag_name {
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["push", remote_name, "tag", tag])
             .current_dir(repo_path)
             .output()
             .map_err(|e| format!("Failed to push tag: {}", e))?
     } else {
         // Push all tags
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["push", remote_name, "--tags"])
             .current_dir(repo_path)
             .output()
@@ -539,7 +539,7 @@ pub fn delete_tag(repo_path: &str, tag_name: &str, remote: Option<&str>) -> Resu
     }
 
     // Delete local tag
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["tag", "-d", tag_name])
         .current_dir(repo_path)
         .output()
@@ -555,7 +555,7 @@ pub fn delete_tag(repo_path: &str, tag_name: &str, remote: Option<&str>) -> Resu
 
     // Delete remote tag if remote is specified
     if let Some(remote_name) = remote {
-        let output = crate::shell_utils::new_command("git")
+        let output = crate::shell_utils::new_git_command()
             .args(["push", remote_name, &format!(":refs/tags/{}", tag_name)])
             .current_dir(repo_path)
             .output()
@@ -595,7 +595,7 @@ pub fn merge_branch(
         args.push(msg);
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(&args)
         .current_dir(repo_path)
         .output()
@@ -628,7 +628,7 @@ pub fn abort_merge(repo_path: &str) -> Result<(), String> {
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["merge", "--abort"])
         .current_dir(repo_path)
         .output()
@@ -650,7 +650,7 @@ pub fn is_merging(repo_path: &str) -> Result<bool, String> {
         return Err(format!("Repository path does not exist: {}", repo_path));
     }
 
-    let output = crate::shell_utils::new_command("git")
+    let output = crate::shell_utils::new_git_command()
         .args(["rev-parse", "-q", "--verify", "MERGE_HEAD"])
         .current_dir(repo_path)
         .output()
@@ -668,20 +668,20 @@ mod tests {
     /// Helper to create a temporary git repository
     fn create_temp_git_repo() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["init"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to initialize git repo");
 
         // Configure git user for the repo
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.email", "test@example.com"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to configure git email");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.name", "Test User"])
             .current_dir(temp_dir.path())
             .output()
@@ -773,13 +773,13 @@ mod tests {
         let test_file = temp_dir.path().join("README.md");
         std::fs::write(&test_file, "# Test").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()
@@ -808,20 +808,20 @@ mod tests {
         let test_file = temp_dir.path().join("README.md");
         std::fs::write(&test_file, "# Test").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
         // Detach HEAD
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["checkout", "--detach", "HEAD"])
             .current_dir(temp_dir.path())
             .output()
@@ -844,20 +844,20 @@ mod tests {
         let test_file = temp_dir.path().join("README.md");
         std::fs::write(&test_file, "# Test").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
         // Create and checkout feature branch
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["checkout", "-b", "feature/test-branch"])
             .current_dir(temp_dir.path())
             .output()

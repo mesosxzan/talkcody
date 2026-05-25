@@ -20,6 +20,7 @@ import { AccountSettings } from '@/components/settings/account-settings';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { CustomToolsSettings } from '@/components/settings/custom-tools-settings';
 import { GeneralSettings } from '@/components/settings/general-settings';
+import { GitSettings } from '@/components/settings/git-settings';
 import { HooksSettings } from '@/components/settings/hooks-settings';
 import { LintSettings } from '@/components/settings/lint-settings';
 import { LspSettings } from '@/components/settings/lsp-settings';
@@ -108,6 +109,10 @@ export function SettingsPage() {
               <Terminal className="size-4" />
               {t.Settings.tabs.terminal || 'Terminal'}
             </TabsTrigger>
+            <TabsTrigger value="git" className="w-full justify-start gap-2 rounded-md px-3 py-2">
+              <GitBranch className="size-4" />
+              {t.Settings.tabs.git || 'Git'}
+            </TabsTrigger>
             <TabsTrigger value="proxy" className="w-full justify-start gap-2 rounded-md px-3 py-2">
               <Globe className="size-4" />
               {t.Proxy?.title || 'Proxy'}
@@ -171,6 +176,9 @@ export function SettingsPage() {
             </TabsContent>
             <TabsContent value="terminal" className="mt-0 flex-none space-y-6">
               <TerminalSettings />
+            </TabsContent>
+            <TabsContent value="git" className="mt-0 flex-none space-y-6">
+              <GitSettings />
             </TabsContent>
             <TabsContent value="proxy" className="mt-0 flex-none space-y-6">
               <ProxySettings />

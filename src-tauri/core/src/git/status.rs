@@ -151,19 +151,19 @@ mod tests {
     fn create_temp_git_repo_with_commit() -> TempDir {
         let temp_dir = TempDir::new().unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["init"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to initialize git repo");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.email", "test@example.com"])
             .current_dir(temp_dir.path())
             .output()
             .expect("Failed to configure git email");
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["config", "user.name", "Test User"])
             .current_dir(temp_dir.path())
             .output()
@@ -173,13 +173,13 @@ mod tests {
         let readme = temp_dir.path().join("README.md");
         std::fs::write(&readme, "# Initial").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "."])
             .current_dir(temp_dir.path())
             .output()
             .unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["commit", "-m", "Initial commit"])
             .current_dir(temp_dir.path())
             .output()
@@ -244,7 +244,7 @@ mod tests {
         let new_file = temp_dir.path().join("staged.txt");
         std::fs::write(&new_file, "staged content").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "staged.txt"])
             .current_dir(temp_dir.path())
             .output()
@@ -297,7 +297,7 @@ mod tests {
         let readme = temp_dir.path().join("README.md");
         std::fs::write(&readme, "# Modified").unwrap();
 
-        crate::shell_utils::new_command("git")
+        crate::shell_utils::new_git_command()
             .args(["add", "README.md"])
             .current_dir(temp_dir.path())
             .output()

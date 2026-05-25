@@ -323,6 +323,7 @@ const zh: LocaleDefinition = {
       hooks: 'Hooks',
       remoteControl: '远程控制',
       memory: '长期记忆',
+      git: 'Git',
     },
     account: {
       title: '账户设置',
@@ -740,6 +741,18 @@ const zh: LocaleDefinition = {
       tooltipDescription: '配置集成终端的外观、字体和 Shell 设置。',
       defaultShell: '默认 Shell',
       shellHint: '更改将在下次打开终端时生效。仅限 Windows。',
+    },
+    git: {
+      title: 'Git 设置',
+      description: '配置 Git 可执行程序和集成设置',
+      executablePath: 'Git 可执行程序路径',
+      executablePathPlaceholder: '留空则使用默认 git 命令',
+      executablePathHint:
+        '如果您的 Git 安装使用了非标准名称或位置，请指定自定义 Git 可执行程序路径。',
+      autoFetch: '自动拉取',
+      autoFetchHint: '打开仓库时自动从远程拉取更新',
+      autoRefreshInterval: '自动刷新间隔（秒）',
+      autoRefreshIntervalHint: '设置为 0 表示禁用自动刷新。推荐值：30-300 秒。',
     },
     worktree: {
       title: 'Worktree 设置',
