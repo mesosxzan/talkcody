@@ -52,6 +52,7 @@ const zh: LocaleDefinition = {
     refresh: '刷新',
     apply: '应用',
     discard: '放弃',
+    saved: '设置已保存',
   },
 
   Chat: {
@@ -2224,6 +2225,48 @@ const zh: LocaleDefinition = {
       editorNotReady: '编辑器未就绪',
       editorModelNotReady: '编辑器模型未就绪',
       unknownFixType: (fixId) => `未知的修复类型: ${fixId}`,
+    },
+  },
+
+  Proxy: {
+    title: '代理设置',
+    description: '配置网络连接的代理设置',
+    global: {
+      title: '全局代理',
+      enable: '启用全局代理',
+      enableDesc: '为所有网络请求使用代理',
+      url: '代理地址',
+      urlPlaceholder: 'http://127.0.0.1:7890 或 socks5://127.0.0.1:9050',
+      type: '代理类型',
+      autoDetect: '自动检测本地代理',
+      autoDetectDesc: '自动检测本地代理服务器',
+      noProxy: '绕过列表',
+      noProxyPlaceholder: 'localhost, 127.0.0.1, .local',
+      testConnection: '测试连接',
+      testing: '测试中...',
+      testSuccess: '代理连接成功',
+      testFailed: '代理连接失败',
+      detected: '自动检测',
+      fromEnv: '环境变量',
+      none: '未检测到代理',
+      status: '代理状态',
+    },
+    webSearch: {
+      title: '网页搜索代理',
+      description: '为网页搜索单独配置代理（覆盖全局设置）',
+      enable: '启用网页搜索代理',
+      useGlobal: '使用全局代理设置',
+      useGlobalDesc: '继承全局代理配置',
+      customUrl: '自定义代理地址',
+    },
+    types: {
+      http: 'HTTP',
+      socks5: 'SOCKS5',
+      socks5h: 'SOCKS5H（DNS 通过代理）',
+    },
+    hints: {
+      socks5h: '推荐用于隐私保护 - DNS 解析通过代理',
+      portCommon: '常用端口：7890 (HTTP), 9050 (SOCKS5), 1080',
     },
   },
 

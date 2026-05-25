@@ -3,7 +3,7 @@ import { getApiUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
 import { fetchWithTimeout } from '@/lib/utils';
 import { secureStorage } from '@/services/secure-storage';
-import type { WebSearchResult, WebSearchSource } from './types';
+import type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
 
 // Response from TalkCody search API
 interface TalkCodySearchResponse {
@@ -43,6 +43,12 @@ async function getDeviceId(): Promise<string> {
  * Free for all users with rate limits (100/day anonymous, 1000/day authenticated)
  */
 export class TalkCodySearch implements WebSearchSource {
+  private options: SearchOptions;
+
+  constructor(params?: SearchOptions) {
+    this.options = params || {};
+  }
+
   async search(query: string): Promise<WebSearchResult[]> {
     const t0 = performance.now();
 
@@ -69,6 +75,7 @@ export class TalkCodySearch implements WebSearchSource {
           query,
           numResults: 10,
           type: 'auto',
+          freshness: this.options.freshness, // Pass time filter to backend
         }),
         timeout: 30000, // 30 second timeout for search requests
       });

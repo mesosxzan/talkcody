@@ -19,10 +19,16 @@ Query Optimization Guidelines:
 - Use multiple searches only when topics are completely unrelated, not for comparisons`,
   inputSchema: z.object({
     query: z.string().min(1).max(100).describe('The search query'),
+    freshness: z
+      .enum(['hour', 'day', 'week', 'month', 'year'])
+      .optional()
+      .describe(
+        'Time range for search results. Use for time-sensitive queries like "latest news", "recent updates", or when you need current information.'
+      ),
   }),
   canConcurrent: true,
-  execute: async ({ query }) => {
-    return await webSearch(query);
+  execute: async ({ query, freshness }) => {
+    return await webSearch(query, { freshness });
   },
   renderToolDoing: ({ query }) => <SearchToolDoing query={query} />,
   renderToolResult: (result, { query } = {}) => <SearchToolResult results={result} query={query} />,

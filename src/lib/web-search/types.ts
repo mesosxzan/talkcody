@@ -7,6 +7,8 @@ export interface WebSearchResult {
 
 export interface SearchOptions {
   domains?: string[];
+  /** Time range for search results - improves freshness of results */
+  freshness?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }
 
 export interface WebSearchSource {

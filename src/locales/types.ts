@@ -53,6 +53,7 @@ export interface LocaleDefinition {
     refresh: string;
     apply: string;
     discard: string;
+    saved: string;
   };
 
   Chat: {
@@ -2521,6 +2522,48 @@ export interface LocaleDefinition {
         chart: string;
         table: string;
       };
+    };
+  };
+
+  Proxy: {
+    title: string;
+    description: string;
+    global: {
+      title: string;
+      enable: string;
+      enableDesc: string;
+      url: string;
+      urlPlaceholder: string;
+      type: string;
+      autoDetect: string;
+      autoDetectDesc: string;
+      noProxy: string;
+      noProxyPlaceholder: string;
+      testConnection: string;
+      testing: string;
+      testSuccess: string;
+      testFailed: string;
+      detected: string;
+      fromEnv: string;
+      none: string;
+      status: string;
+    };
+    webSearch: {
+      title: string;
+      description: string;
+      enable: string;
+      useGlobal: string;
+      useGlobalDesc: string;
+      customUrl: string;
+    };
+    types: {
+      http: string;
+      socks5: string;
+      socks5h: string;
+    };
+    hints: {
+      socks5h: string;
+      portCommon: string;
     };
   };
 

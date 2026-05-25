@@ -37,12 +37,24 @@ export class TavilySearch implements WebSearchSource {
     try {
       const requestBody: Record<string, unknown> = {
         query: query.slice(0, 1000),
-        search_depth: 'basic',
+        search_depth: 'advanced', // Use advanced for more real-time results
         include_answer: false,
         include_images: false,
         include_raw_content: false,
         max_results: 10,
       };
+
+      // Add time filter for fresher results
+      if (this.options.freshness) {
+        const daysMap: Record<string, number> = {
+          hour: 1,
+          day: 1,
+          week: 7,
+          month: 30,
+          year: 365,
+        };
+        requestBody.days = daysMap[this.options.freshness] || 7;
+      }
 
       const response = await fetchWithTimeout(TAVILY_URL, {
         method: 'POST',

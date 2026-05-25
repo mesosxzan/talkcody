@@ -30,6 +30,8 @@ interface SearchRequest {
   query: string;
   numResults?: number; // default 10, max 20
   type?: 'auto' | 'neural' | 'fast' | 'deep'; // default 'auto'
+  /** Time range for search results - improves freshness */
+  freshness?: 'hour' | 'day' | 'week' | 'month' | 'year';
 }
 
 // Response schema
@@ -55,14 +57,28 @@ function getSerperApiKey(env?: HonoContext['Bindings']): string | undefined {
 async function callSerperApi(
   query: string,
   numResults: number,
-  apiKey: string
+  apiKey: string,
+  freshness?: string
 ): Promise<SerperSearchResponse> {
   const endpoint = 'https://google.serper.dev/search';
 
-  const body = {
+  const body: Record<string, unknown> = {
     q: query,
     num: numResults,
   };
+
+  // Add time filter for fresher results
+  // Serper uses Google's tbs parameter for time filtering
+  if (freshness) {
+    const tbsMap: Record<string, string> = {
+      hour: 'qdr:h',
+      day: 'qdr:d',
+      week: 'qdr:w',
+      month: 'qdr:m',
+      year: 'qdr:y',
+    };
+    body.tbs = tbsMap[freshness] || 'qdr:d';
+  }
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -160,8 +176,13 @@ search.post('/', optionalAuthMiddleware, async (c) => {
       );
     }
 
-    // Call Serper API
-    const serperResponse = await callSerperApi(requestBody.query, numResults, serperApiKey);
+    // Call Serper API with time filter
+    const serperResponse = await callSerperApi(
+      requestBody.query,
+      numResults,
+      serperApiKey,
+      requestBody.freshness
+    );
 
     // Transform results
     const results = transformSerperResults(serperResponse.organic || []);

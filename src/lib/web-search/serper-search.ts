@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { fetchWithTimeout } from '@/lib/utils';
 import { readabilityExtractor } from '@/lib/utils/readability-extractor';
 import { settingsManager } from '@/stores/settings-store';
-import type { WebSearchResult, WebSearchSource } from './types';
+import type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
 
 const SERPER_SEARCH_ENDPOINT = 'https://google.serper.dev/search';
 
@@ -17,6 +17,12 @@ interface SerperResponse {
 }
 
 export class SerperSearch implements WebSearchSource {
+  private options: SearchOptions;
+
+  constructor(params?: SearchOptions) {
+    this.options = params || {};
+  }
+
   async search(query: string): Promise<WebSearchResult[]> {
     logger.info('SerperSearch: searching for', query);
 
@@ -31,13 +37,30 @@ export class SerperSearch implements WebSearchSource {
 
     try {
       // 1. Call Serper API to get search results
+      const body: Record<string, unknown> = {
+        q: query,
+        num: 10,
+      };
+
+      // Add time filter for fresher results
+      if (this.options.freshness) {
+        const tbsMap: Record<string, string> = {
+          hour: 'qdr:h',
+          day: 'qdr:d',
+          week: 'qdr:w',
+          month: 'qdr:m',
+          year: 'qdr:y',
+        };
+        body.tbs = tbsMap[this.options.freshness] || 'qdr:d';
+      }
+
       const response = await fetchWithTimeout(SERPER_SEARCH_ENDPOINT, {
         method: 'POST',
         headers: {
           'X-API-KEY': serperApiKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ q: query, num: 10 }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

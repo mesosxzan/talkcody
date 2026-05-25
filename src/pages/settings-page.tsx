@@ -4,6 +4,7 @@ import {
   Code,
   FileCode,
   GitBranch,
+  Globe,
   Info,
   Key,
   Keyboard,
@@ -24,6 +25,7 @@ import { LintSettings } from '@/components/settings/lint-settings';
 import { LspSettings } from '@/components/settings/lsp-settings';
 import { MemorySettings } from '@/components/settings/memory-settings';
 import { ModelTypeSettings } from '@/components/settings/model-type-settings';
+import { ProxySettings } from '@/components/settings/proxy-settings';
 import { RemoteControlSettings } from '@/components/settings/remote-control-settings';
 import { TerminalSettings } from '@/components/settings/terminal-settings';
 import { WorktreeSettings } from '@/components/settings/worktree-settings';
@@ -106,6 +108,10 @@ export function SettingsPage() {
               <Terminal className="size-4" />
               {t.Settings.tabs.terminal || 'Terminal'}
             </TabsTrigger>
+            <TabsTrigger value="proxy" className="w-full justify-start gap-2 rounded-md px-3 py-2">
+              <Globe className="size-4" />
+              {t.Proxy?.title || 'Proxy'}
+            </TabsTrigger>
             <TabsTrigger value="lint" className="w-full justify-start gap-2 rounded-md px-3 py-2">
               <FileCode className="size-4" />
               {t.Settings.tabs.lint || 'Lint'}
@@ -165,6 +171,9 @@ export function SettingsPage() {
             </TabsContent>
             <TabsContent value="terminal" className="mt-0 flex-none space-y-6">
               <TerminalSettings />
+            </TabsContent>
+            <TabsContent value="proxy" className="mt-0 flex-none space-y-6">
+              <ProxySettings />
             </TabsContent>
             <TabsContent value="lint" className="mt-0 flex-none space-y-6">
               <LintSettings />

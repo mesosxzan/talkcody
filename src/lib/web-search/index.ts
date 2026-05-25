@@ -1,13 +1,15 @@
 import { logger } from '@/lib/logger';
 import { settingsManager } from '@/stores/settings-store';
+import { DuckDuckGoSearch, isDuckDuckGoAvailable } from './duckduckgo-search';
 import { ExaSearch, isExaMCPAvailable } from './exa-search';
 import { GLMSearch, isGLMMCPAvailable } from './glm-search';
 import { isMiniMaxMCPAvailable, MiniMaxSearch } from './minimax-search';
 import { SerperSearch } from './serper-search';
 import { isTalkCodySearchAvailable, TalkCodySearch } from './talkcody-search';
 import { TavilySearch } from './tavily-search';
-import type { WebSearchResult } from './types';
+import type { SearchOptions, WebSearchResult } from './types';
 
+export { DuckDuckGoSearch } from './duckduckgo-search';
 export { ExaSearch } from './exa-search';
 export { GLMSearch } from './glm-search';
 export { MiniMaxSearch } from './minimax-search';
@@ -19,9 +21,15 @@ export type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
 
 /**
  * Unified web search function with fallback providers
- * Priority: TalkCody Internal (free) → Tavily → Serper → MiniMax Coding Plan → GLM Coding Plan → Exa (free)
+ * Priority: DuckDuckGo (free, privacy-focused) → TalkCody Internal → Tavily → Serper → MiniMax → GLM → Exa
  */
-export async function webSearch(query: string): Promise<WebSearchResult[]> {
+export async function webSearch(
+  query: string,
+  options?: SearchOptions
+): Promise<WebSearchResult[]> {
+  // Check DuckDuckGo availability (always true - no API key required)
+  const duckDuckGoAvailable = isDuckDuckGoAvailable();
+
   // Check TalkCody internal search availability (always true, API handles rate limiting)
   const talkCodyAvailable = isTalkCodySearchAvailable();
 
@@ -43,6 +51,7 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
   const glmAvailable = isGLMMCPAvailable();
 
   logger.info('Web Search - Available Providers', {
+    duckDuckGoAvailable,
     talkCodyAvailable,
     exaAvailable,
     hasTavilyKey,
@@ -53,9 +62,27 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
     hasZhipuKey,
     zhipuCodingPlanEnabled,
     glmAvailable,
+    freshness: options?.freshness,
   });
 
-  // Priority 0: TalkCody Internal Search (free with rate limits)
+  // Priority 0: DuckDuckGo Search (free, privacy-focused, no API key required)
+  if (duckDuckGoAvailable) {
+    try {
+      logger.info('Using DuckDuckGo Search (free, privacy-focused)');
+      const duckDuckGoSearch = new DuckDuckGoSearch(options);
+      const results = await duckDuckGoSearch.search(query);
+
+      if (results.length > 0) {
+        logger.info('DuckDuckGo search results count:', results.length);
+        return results;
+      }
+      logger.warn('DuckDuckGo search returned empty results, trying next provider');
+    } catch (error) {
+      logger.warn('DuckDuckGo search failed, trying next provider:', error);
+    }
+  }
+
+  // Priority 1: TalkCody Internal Search (free with rate limits)
   if (talkCodyAvailable) {
     try {
       logger.info('Using TalkCody Internal Search (free with rate limits)');
@@ -76,17 +103,17 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
     }
   }
 
-  // Priority 1: Tavily Search (if API key configured)
+  // Priority 2: Tavily Search (if API key configured)
   if (hasTavilyKey) {
     logger.info('Using Tavily Search');
-    const tavilySearch = new TavilySearch();
+    const tavilySearch = new TavilySearch(options);
     const results = await tavilySearch.search(query);
 
     logger.info('Tavily results count:', results.length);
     return results;
   }
 
-  // Priority 2: Serper Search (if API key configured)
+  // Priority 3: Serper Search (if API key configured)
   if (hasSerperKey) {
     try {
       logger.info('Using Serper Search');
@@ -103,7 +130,7 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
     }
   }
 
-  // Priority 3: MiniMax Coding Plan web_search (if API key + Coding Plan enabled + MCP connected)
+  // Priority 4: MiniMax Coding Plan web_search (if API key + Coding Plan enabled + MCP connected)
   if (hasMiniMaxKey && miniMaxCodingPlanEnabled && miniMaxAvailable) {
     try {
       logger.info('Using MiniMax Coding Plan web_search');
@@ -120,7 +147,7 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
     }
   }
 
-  // Priority 4: GLM Coding Plan webSearchPrime (if API key + Coding Plan enabled + MCP connected)
+  // Priority 5: GLM Coding Plan webSearchPrime (if API key + Coding Plan enabled + MCP connected)
   if (hasZhipuKey && zhipuCodingPlanEnabled && glmAvailable) {
     try {
       logger.info('Using GLM Coding Plan webSearchPrime');
@@ -137,11 +164,11 @@ export async function webSearch(query: string): Promise<WebSearchResult[]> {
     }
   }
 
-  // Priority 5: Exa Search (free, as last fallback)
+  // Priority 6: Exa Search (free, as last fallback)
   if (exaAvailable) {
     try {
       logger.info('Using Exa Search (free fallback)');
-      const exaSearch = new ExaSearch();
+      const exaSearch = new ExaSearch(options);
       const results = await exaSearch.search(query);
 
       if (results.length > 0) {

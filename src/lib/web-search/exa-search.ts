@@ -1,6 +1,15 @@
 import { logger } from '@/lib/logger';
 import { simpleFetch } from '@/lib/tauri-fetch';
-import type { WebSearchResult, WebSearchSource } from './types';
+import type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
+
+interface McpSearchArguments {
+  query: string;
+  numResults?: number;
+  livecrawl?: 'fallback' | 'preferred';
+  type?: 'auto' | 'fast' | 'deep';
+  startPublishedDate?: string;
+  endPublishedDate?: string;
+}
 
 interface McpSearchRequest {
   jsonrpc: string;
@@ -8,12 +17,7 @@ interface McpSearchRequest {
   method: string;
   params: {
     name: string;
-    arguments: {
-      query: string;
-      numResults?: number;
-      livecrawl?: 'fallback' | 'preferred';
-      type?: 'auto' | 'fast' | 'deep';
-    };
+    arguments: McpSearchArguments;
   };
 }
 
@@ -74,21 +78,49 @@ function parseExaPlainText(text: string): WebSearchResult[] {
 }
 
 /**
+ * Get date string for freshness filter
+ */
+function getStartDate(freshness: string): string {
+  const now = new Date();
+  const daysMap: Record<string, number> = {
+    hour: 1 / 24,
+    day: 1,
+    week: 7,
+    month: 30,
+    year: 365,
+  };
+  const days = daysMap[freshness] || 7;
+  now.setDate(now.getDate() - days);
+  const isoString = now.toISOString();
+  return isoString.split('T')[0] ?? ''; // YYYY-MM-DD format
+}
+
+/**
  * Call Exa MCP endpoint directly without going through MCP SDK
  */
-async function callExaMCPDirect(query: string, numResults: number): Promise<string> {
+async function callExaMCPDirect(
+  query: string,
+  numResults: number,
+  freshness?: string
+): Promise<string> {
+  const args: McpSearchArguments = {
+    query,
+    type: 'auto',
+    numResults,
+    livecrawl: 'preferred', // Prefer real-time crawling for fresher results
+  };
+
+  if (freshness) {
+    args.startPublishedDate = getStartDate(freshness);
+  }
+
   const searchRequest: McpSearchRequest = {
     jsonrpc: '2.0',
     id: Date.now(),
     method: 'tools/call',
     params: {
       name: 'web_search_exa',
-      arguments: {
-        query,
-        type: 'auto',
-        numResults,
-        livecrawl: 'fallback',
-      },
+      arguments: args,
     },
   };
 
@@ -142,11 +174,17 @@ async function callExaMCPDirect(query: string, numResults: number): Promise<stri
 }
 
 export class ExaSearch implements WebSearchSource {
+  private options: SearchOptions;
+
+  constructor(params?: SearchOptions) {
+    this.options = params || {};
+  }
+
   async search(query: string): Promise<WebSearchResult[]> {
     const t0 = performance.now();
 
     try {
-      const resultText = await callExaMCPDirect(query, 10);
+      const resultText = await callExaMCPDirect(query, 10, this.options.freshness);
       const t1 = performance.now();
       logger.info(`[Exa] Search completed in ${(t1 - t0).toFixed(0)}ms`);
 

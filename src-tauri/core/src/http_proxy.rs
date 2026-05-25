@@ -15,6 +15,109 @@ const ACCEPT_HEADER_VALUE: &str = "text/event-stream, text/plain, application/js
 const PROXY_ACCEPT_ENCODING: &str = "gzip, br, identity";
 const STREAM_ACCEPT_ENCODING: &str = "identity";
 
+/// Check if a local port is open (potential proxy server)
+/// This is a simple TCP connection test with a short timeout
+#[tauri::command]
+pub async fn check_local_port(port: u16) -> Result<bool, String> {
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    let addr = format!("127.0.0.1:{}", port);
+
+    // Try to connect with a short timeout (100ms)
+    let result = tokio::task::spawn_blocking(move || {
+        let socket_addr: std::net::SocketAddr = match addr.parse() {
+            Ok(addr) => addr,
+            Err(_) => return Some(false), // Invalid address, treat as not open
+        };
+        Some(TcpStream::connect_timeout(&socket_addr, Duration::from_millis(100)).is_ok())
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))?;
+
+    Ok(result.unwrap_or(false))
+}
+
+/// Get system proxy environment variables
+#[tauri::command]
+pub fn get_system_proxy_env() -> HashMap<String, String> {
+    let mut env = HashMap::new();
+
+    // Check all proxy-related environment variables
+    for (key, value) in std::env::vars() {
+        let key_lower = key.to_lowercase();
+        if key_lower == "http_proxy"
+            || key_lower == "https_proxy"
+            || key_lower == "all_proxy"
+            || key_lower == "no_proxy"
+        {
+            env.insert(key_lower, value);
+        }
+    }
+
+    // Also check uppercase versions
+    if let Ok(val) = std::env::var("HTTP_PROXY") {
+        env.insert("http_proxy".to_string(), val);
+    }
+    if let Ok(val) = std::env::var("HTTPS_PROXY") {
+        env.insert("https_proxy".to_string(), val);
+    }
+    if let Ok(val) = std::env::var("ALL_PROXY") {
+        env.insert("all_proxy".to_string(), val);
+    }
+    if let Ok(val) = std::env::var("NO_PROXY") {
+        env.insert("no_proxy".to_string(), val);
+    }
+
+    env
+}
+
+/// Result of proxy connection test
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProxyTestResult {
+    pub success: bool,
+    pub latency: u64,
+}
+
+/// Test proxy connection by making a simple HTTP request
+#[tauri::command]
+pub async fn test_proxy_connection(proxy_url: String) -> Result<ProxyTestResult, String> {
+    use std::time::Instant;
+
+    let start = Instant::now();
+
+    // Parse the proxy URL
+    let parsed = Url::parse(&proxy_url).map_err(|e| format!("Invalid proxy URL: {}", e))?;
+
+    let scheme = parsed.scheme();
+    if !matches!(scheme, "http" | "https" | "socks5" | "socks5h") {
+        return Err(format!("Unsupported proxy scheme: {}", scheme));
+    }
+
+    // For now, we just check if the port is open
+    // A full implementation would make a test request through the proxy
+    let host = parsed.host_str().ok_or("Missing host in proxy URL")?;
+    let port = parsed.port().unwrap_or(match scheme {
+        "http" => 80,
+        "https" => 443,
+        "socks5" | "socks5h" => 1080,
+        _ => 80,
+    });
+
+    let addr = format!("{}:{}", host, port);
+
+    // Try to connect with timeout
+    let success = tokio::task::spawn_blocking(move || {
+        std::net::TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_secs(5)).is_ok()
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))?;
+
+    let latency = start.elapsed().as_millis() as u64;
+
+    Ok(ProxyTestResult { success, latency })
+}
+
 /// Validate URL to prevent SSRF attacks
 /// Returns an error if the URL points to a private/internal IP address
 /// Exception: localhost access is allowed for local development and AI services

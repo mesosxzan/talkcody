@@ -12,6 +12,22 @@ import { DEFAULT_SHORTCUTS } from '@/types/shortcuts';
 
 export const DEFAULT_PROJECT = 'default';
 
+// Proxy settings types
+export interface ProxySettings {
+  enabled: boolean;
+  url: string;
+  type: string;
+  autoDetect: boolean;
+  noProxy: string;
+}
+
+export interface WebSearchProxySettings {
+  enabled: boolean;
+  useGlobalProxy: boolean;
+  url: string;
+  type: string;
+}
+
 // Generate default API key settings from provider configs
 function generateDefaultApiKeySettings(): Record<string, string> {
   const settings: Record<string, string> = {};
@@ -120,6 +136,19 @@ interface SettingsState {
   // Prompt Enhancement Settings
   prompt_enhancement_context_enabled: boolean;
   prompt_enhancement_model: string;
+
+  // Proxy Settings (Global)
+  proxy_enabled: boolean; // Enable global proxy
+  proxy_url: string; // Proxy URL (http://host:port or socks5://host:port)
+  proxy_type: string; // Proxy type: 'http' | 'socks5' | 'socks5h'
+  proxy_auto_detect: boolean; // Auto-detect local proxy
+  proxy_no_proxy: string; // Bypass list (comma-separated)
+
+  // Web Search Proxy Settings (Separate from global)
+  websearch_proxy_enabled: boolean; // Enable proxy for web search
+  websearch_proxy_use_global: boolean; // Use global proxy settings
+  websearch_proxy_url: string; // Web search specific proxy URL
+  websearch_proxy_type: string; // Web search proxy type
 
   // Internal state
   loading: boolean;
@@ -280,6 +309,32 @@ interface SettingsActions {
   setPromptEnhancementModel: (model: string) => Promise<void>;
   getPromptEnhancementModel: () => string;
 
+  // Proxy Settings
+  setProxyEnabled: (enabled: boolean) => Promise<void>;
+  getProxyEnabled: () => boolean;
+  setProxyUrl: (url: string) => Promise<void>;
+  getProxyUrl: () => string;
+  setProxyType: (type: string) => Promise<void>;
+  getProxyType: () => string;
+  setProxyAutoDetect: (autoDetect: boolean) => Promise<void>;
+  getProxyAutoDetect: () => boolean;
+  setProxyNoProxy: (noProxy: string) => Promise<void>;
+  getProxyNoProxy: () => string;
+  getProxySettings: () => ProxySettings;
+  setProxySettings: (settings: ProxySettings) => Promise<void>;
+
+  // Web Search Proxy Settings
+  setWebSearchProxyEnabled: (enabled: boolean) => Promise<void>;
+  getWebSearchProxyEnabled: () => boolean;
+  setWebSearchProxyUseGlobal: (useGlobal: boolean) => Promise<void>;
+  getWebSearchProxyUseGlobal: () => boolean;
+  setWebSearchProxyUrl: (url: string) => Promise<void>;
+  getWebSearchProxyUrl: () => string;
+  setWebSearchProxyType: (type: string) => Promise<void>;
+  getWebSearchProxyType: () => string;
+  getWebSearchProxySettings: () => WebSearchProxySettings;
+  setWebSearchProxySettings: (settings: WebSearchProxySettings) => Promise<void>;
+
   // Convenience getters
   getModel: () => string;
   getAgentId: () => string;
@@ -366,6 +421,17 @@ const DEFAULT_SETTINGS: Omit<SettingsState, 'loading' | 'error' | 'isInitialized
   lsp_show_hints: false,
   prompt_enhancement_context_enabled: false,
   prompt_enhancement_model: '',
+  // Proxy Settings (Global)
+  proxy_enabled: false,
+  proxy_url: '',
+  proxy_type: 'http',
+  proxy_auto_detect: true,
+  proxy_no_proxy: '',
+  // Web Search Proxy Settings
+  websearch_proxy_enabled: false,
+  websearch_proxy_use_global: true,
+  websearch_proxy_url: '',
+  websearch_proxy_type: 'http',
 };
 
 // Database persistence layer
@@ -1404,6 +1470,142 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return get().prompt_enhancement_model || '';
   },
 
+  // Proxy Settings (Global)
+  setProxyEnabled: async (enabled: boolean) => {
+    await settingsDb.set('proxy_enabled', enabled.toString());
+    set({ proxy_enabled: enabled });
+  },
+
+  getProxyEnabled: () => {
+    return get().proxy_enabled;
+  },
+
+  setProxyUrl: async (url: string) => {
+    await settingsDb.set('proxy_url', url);
+    set({ proxy_url: url });
+  },
+
+  getProxyUrl: () => {
+    return get().proxy_url;
+  },
+
+  setProxyType: async (type: string) => {
+    await settingsDb.set('proxy_type', type);
+    set({ proxy_type: type });
+  },
+
+  getProxyType: () => {
+    return get().proxy_type;
+  },
+
+  setProxyAutoDetect: async (autoDetect: boolean) => {
+    await settingsDb.set('proxy_auto_detect', autoDetect.toString());
+    set({ proxy_auto_detect: autoDetect });
+  },
+
+  getProxyAutoDetect: () => {
+    return get().proxy_auto_detect;
+  },
+
+  setProxyNoProxy: async (noProxy: string) => {
+    await settingsDb.set('proxy_no_proxy', noProxy);
+    set({ proxy_no_proxy: noProxy });
+  },
+
+  getProxyNoProxy: () => {
+    return get().proxy_no_proxy;
+  },
+
+  getProxySettings: () => {
+    const state = get();
+    return {
+      enabled: state.proxy_enabled,
+      url: state.proxy_url,
+      type: state.proxy_type,
+      autoDetect: state.proxy_auto_detect,
+      noProxy: state.proxy_no_proxy,
+    };
+  },
+
+  setProxySettings: async (settings: ProxySettings) => {
+    await settingsDb.setBatch({
+      proxy_enabled: settings.enabled.toString(),
+      proxy_url: settings.url,
+      proxy_type: settings.type,
+      proxy_auto_detect: settings.autoDetect.toString(),
+      proxy_no_proxy: settings.noProxy,
+    });
+    set({
+      proxy_enabled: settings.enabled,
+      proxy_url: settings.url,
+      proxy_type: settings.type,
+      proxy_auto_detect: settings.autoDetect,
+      proxy_no_proxy: settings.noProxy,
+    });
+  },
+
+  // Web Search Proxy Settings
+  setWebSearchProxyEnabled: async (enabled: boolean) => {
+    await settingsDb.set('websearch_proxy_enabled', enabled.toString());
+    set({ websearch_proxy_enabled: enabled });
+  },
+
+  getWebSearchProxyEnabled: () => {
+    return get().websearch_proxy_enabled;
+  },
+
+  setWebSearchProxyUseGlobal: async (useGlobal: boolean) => {
+    await settingsDb.set('websearch_proxy_use_global', useGlobal.toString());
+    set({ websearch_proxy_use_global: useGlobal });
+  },
+
+  getWebSearchProxyUseGlobal: () => {
+    return get().websearch_proxy_use_global;
+  },
+
+  setWebSearchProxyUrl: async (url: string) => {
+    await settingsDb.set('websearch_proxy_url', url);
+    set({ websearch_proxy_url: url });
+  },
+
+  getWebSearchProxyUrl: () => {
+    return get().websearch_proxy_url;
+  },
+
+  setWebSearchProxyType: async (type: string) => {
+    await settingsDb.set('websearch_proxy_type', type);
+    set({ websearch_proxy_type: type });
+  },
+
+  getWebSearchProxyType: () => {
+    return get().websearch_proxy_type;
+  },
+
+  getWebSearchProxySettings: () => {
+    const state = get();
+    return {
+      enabled: state.websearch_proxy_enabled,
+      useGlobalProxy: state.websearch_proxy_use_global,
+      url: state.websearch_proxy_url,
+      type: state.websearch_proxy_type,
+    };
+  },
+
+  setWebSearchProxySettings: async (settings: WebSearchProxySettings) => {
+    await settingsDb.setBatch({
+      websearch_proxy_enabled: settings.enabled.toString(),
+      websearch_proxy_use_global: settings.useGlobalProxy.toString(),
+      websearch_proxy_url: settings.url,
+      websearch_proxy_type: settings.type,
+    });
+    set({
+      websearch_proxy_enabled: settings.enabled,
+      websearch_proxy_use_global: settings.useGlobalProxy,
+      websearch_proxy_url: settings.url,
+      websearch_proxy_type: settings.type,
+    });
+  },
+
   // Convenience getters
   getModel: () => {
     return get().model;
@@ -1698,6 +1900,37 @@ export const settingsManager = {
   getLspShowInfo: () => useSettingsStore.getState().getLspShowInfo(),
   setLspShowHints: (show: boolean) => useSettingsStore.getState().setLspShowHints(show),
   getLspShowHints: () => useSettingsStore.getState().getLspShowHints(),
+
+  // Proxy Settings
+  setProxyEnabled: (enabled: boolean) => useSettingsStore.getState().setProxyEnabled(enabled),
+  getProxyEnabled: () => useSettingsStore.getState().getProxyEnabled(),
+  setProxyUrl: (url: string) => useSettingsStore.getState().setProxyUrl(url),
+  getProxyUrl: () => useSettingsStore.getState().getProxyUrl(),
+  setProxyType: (type: string) => useSettingsStore.getState().setProxyType(type),
+  getProxyType: () => useSettingsStore.getState().getProxyType(),
+  setProxyAutoDetect: (autoDetect: boolean) =>
+    useSettingsStore.getState().setProxyAutoDetect(autoDetect),
+  getProxyAutoDetect: () => useSettingsStore.getState().getProxyAutoDetect(),
+  setProxyNoProxy: (noProxy: string) => useSettingsStore.getState().setProxyNoProxy(noProxy),
+  getProxyNoProxy: () => useSettingsStore.getState().getProxyNoProxy(),
+  getProxySettings: () => useSettingsStore.getState().getProxySettings(),
+  setProxySettings: (settings: ProxySettings) =>
+    useSettingsStore.getState().setProxySettings(settings),
+
+  // Web Search Proxy Settings
+  setWebSearchProxyEnabled: (enabled: boolean) =>
+    useSettingsStore.getState().setWebSearchProxyEnabled(enabled),
+  getWebSearchProxyEnabled: () => useSettingsStore.getState().getWebSearchProxyEnabled(),
+  setWebSearchProxyUseGlobal: (useGlobal: boolean) =>
+    useSettingsStore.getState().setWebSearchProxyUseGlobal(useGlobal),
+  getWebSearchProxyUseGlobal: () => useSettingsStore.getState().getWebSearchProxyUseGlobal(),
+  setWebSearchProxyUrl: (url: string) => useSettingsStore.getState().setWebSearchProxyUrl(url),
+  getWebSearchProxyUrl: () => useSettingsStore.getState().getWebSearchProxyUrl(),
+  setWebSearchProxyType: (type: string) => useSettingsStore.getState().setWebSearchProxyType(type),
+  getWebSearchProxyType: () => useSettingsStore.getState().getWebSearchProxyType(),
+  getWebSearchProxySettings: () => useSettingsStore.getState().getWebSearchProxySettings(),
+  setWebSearchProxySettings: (settings: WebSearchProxySettings) =>
+    useSettingsStore.getState().setWebSearchProxySettings(settings),
 };
 
 // Export settingsDb for direct database access (used by ThemeProvider before store initialization)
