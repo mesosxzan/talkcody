@@ -19,6 +19,7 @@ const NETWORK_ERROR_PATTERNS = [
 ];
 
 const PRIVATE_IP_HEADER = 'x-talkcody-allow-private-ip';
+const PROXY_URL_HEADER = 'x-talkcody-proxy-url';
 
 /**
  * Check if an error is a network-related error that should trigger retry
@@ -49,6 +50,8 @@ export interface ProxyRequest {
   body?: string;
   request_id?: number;
   allow_private_ip?: boolean;
+  /** Optional proxy URL to use for this request. If provided, this proxy will be used instead of system proxy settings. */
+  proxyUrl?: string;
 }
 
 export interface ProxyResponse {
@@ -135,6 +138,22 @@ function popAllowPrivateIp(headers: Record<string, string>): boolean {
 }
 
 /**
+ * Extract proxy URL from headers if present
+ * This allows callers to specify a custom proxy for the request
+ */
+function popProxyUrl(headers: Record<string, string>): string | undefined {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === PROXY_URL_HEADER) {
+      const value = headers[key];
+      delete headers[key];
+      return value || undefined;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Check if the body is a type that cannot be serialized to string (FormData, Blob, ArrayBuffer, etc.)
  * These types require native fetch to handle properly (multipart/form-data encoding)
  */
@@ -171,6 +190,7 @@ export async function simpleFetch(input: RequestInfo | URL, init?: RequestInit):
 
   const { url, method, headers, body } = extractRequestParams(input, init);
   const allowPrivateIp = popAllowPrivateIp(headers);
+  const proxyUrl = popProxyUrl(headers);
 
   const proxyRequest: ProxyRequest = {
     url,
@@ -178,6 +198,7 @@ export async function simpleFetch(input: RequestInfo | URL, init?: RequestInit):
     headers,
     body,
     allow_private_ip: allowPrivateIp,
+    proxyUrl,
   };
 
   let lastError: Error | undefined;
@@ -225,6 +246,7 @@ function createStreamFetch(): TauriFetchFunction {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const { url, method, headers, body } = extractRequestParams(input, init);
     const allowPrivateIp = popAllowPrivateIp(headers);
+    const proxyUrl = popProxyUrl(headers);
     const signal = init?.signal;
 
     let lastError: Error | undefined;
@@ -242,6 +264,7 @@ function createStreamFetch(): TauriFetchFunction {
         body,
         request_id: requestId,
         allow_private_ip: allowPrivateIp,
+        proxyUrl,
       };
 
       // Setup streaming infrastructure (fresh for each attempt)
@@ -376,3 +399,9 @@ function createStreamFetch(): TauriFetchFunction {
 }
 
 export const streamFetch = createStreamFetch();
+
+/**
+ * Header name for specifying a custom proxy URL in fetch requests
+ * Usage: headers.set(PROXY_URL_HEADER, 'http://proxy.example.com:8080')
+ */
+export const PROXY_URL_HEADER_NAME = PROXY_URL_HEADER;

@@ -241,6 +241,11 @@ pub struct ProxyRequest {
     pub body: Option<String>,
     pub request_id: Option<u32>,
     pub allow_private_ip: Option<bool>,
+    /// Optional proxy URL to use for this request
+    /// If provided, this proxy will be used instead of system proxy settings
+    /// Supported formats: http://host:port, socks5://host:port, socks5h://host:port
+    #[serde(rename = "proxyUrl")]
+    pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -355,7 +360,6 @@ pub async fn proxy_fetch(request: ProxyRequest) -> Result<ProxyResponse, String>
         .unwrap_or(false);
 
     // Configure client with proper decompression and connection settings
-    // For localhost requests, disable proxy to avoid issues with system proxy settings.
     let mut client_builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .gzip(true)
@@ -363,10 +367,19 @@ pub async fn proxy_fetch(request: ProxyRequest) -> Result<ProxyResponse, String>
         .tcp_nodelay(true)
         .pool_max_idle_per_host(5);
 
+    // Handle proxy configuration
     if is_localhost {
         // Bypass proxy for localhost connections (e.g., local MCP servers)
         client_builder = client_builder.no_proxy();
+        log::info!("Bypassing proxy for localhost request");
+    } else if let Some(ref proxy_url) = request.proxy_url {
+        // Use custom proxy if provided
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|e| format!("Invalid proxy URL '{}': {}", proxy_url, e))?;
+        client_builder = client_builder.proxy(proxy);
+        log::info!("Using custom proxy: {}", proxy_url);
     }
+    // If neither localhost nor custom proxy, reqwest will use system proxy settings
 
     let client = client_builder
         .build()
@@ -548,7 +561,6 @@ async fn stream_fetch_inner<R: tauri::Runtime>(
         .unwrap_or(false);
 
     // Configure client with connection settings for streaming and avoid auto-decompression.
-    // For localhost requests, disable proxy to avoid issues with system proxy settings.
     let mut client_builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .gzip(false)
@@ -556,10 +568,22 @@ async fn stream_fetch_inner<R: tauri::Runtime>(
         .tcp_nodelay(true) // Reduce latency for streaming
         .pool_max_idle_per_host(5); // Enable connection pooling
 
+    // Handle proxy configuration
     if is_localhost {
         // Bypass proxy for localhost connections (e.g., local MCP servers)
         client_builder = client_builder.no_proxy();
+        log::info!("Bypassing proxy for localhost stream request");
+    } else if let Some(ref proxy_url) = request.proxy_url {
+        // Use custom proxy if provided
+        let proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+            let err = format!("Invalid proxy URL '{}': {}", proxy_url, e);
+            emit_end(0, Some(err.clone()));
+            err
+        })?;
+        client_builder = client_builder.proxy(proxy);
+        log::info!("Using custom proxy for stream: {}", proxy_url);
     }
+    // If neither localhost nor custom proxy, reqwest will use system proxy settings
 
     let client = client_builder.build().map_err(|e| {
         emit_end(0, Some(format!("Failed to build client: {}", e)));

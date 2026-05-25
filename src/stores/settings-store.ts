@@ -25,7 +25,7 @@ export interface WebSearchProxySettings {
   enabled: boolean;
   useGlobalProxy: boolean;
   url: string;
-  type: string;
+  type: 'http' | 'socks5' | 'socks5h' | string;
 }
 
 // Generate default API key settings from provider configs
@@ -534,6 +534,17 @@ class SettingsDatabase {
       lsp_show_hints: 'false',
       prompt_enhancement_context_enabled: 'false',
       prompt_enhancement_model: '',
+      // Proxy Settings (Global)
+      proxy_enabled: 'false',
+      proxy_url: '',
+      proxy_type: 'http',
+      proxy_auto_detect: 'true',
+      proxy_no_proxy: '',
+      // Web Search Proxy Settings
+      websearch_proxy_enabled: 'false',
+      websearch_proxy_use_global: 'true',
+      websearch_proxy_url: '',
+      websearch_proxy_type: 'http',
     };
 
     const now = Date.now();
@@ -710,6 +721,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         keys.push(`shortcut_${action}`);
       }
 
+      // Add proxy settings keys
+      keys.push(
+        'proxy_enabled',
+        'proxy_url',
+        'proxy_type',
+        'proxy_auto_detect',
+        'proxy_no_proxy',
+        'websearch_proxy_enabled',
+        'websearch_proxy_use_global',
+        'websearch_proxy_url',
+        'websearch_proxy_type'
+      );
+
       const rawSettings = await settingsDb.getBatch(keys);
 
       // Parse API keys
@@ -807,6 +831,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         prompt_enhancement_context_enabled:
           rawSettings.prompt_enhancement_context_enabled !== 'false',
         prompt_enhancement_model: rawSettings.prompt_enhancement_model || '',
+        // Proxy Settings (Global)
+        proxy_enabled: rawSettings.proxy_enabled === 'true',
+        proxy_url: rawSettings.proxy_url || '',
+        proxy_type: rawSettings.proxy_type || 'http',
+        proxy_auto_detect: rawSettings.proxy_auto_detect !== 'false',
+        proxy_no_proxy: rawSettings.proxy_no_proxy || '',
+        // Web Search Proxy Settings
+        websearch_proxy_enabled: rawSettings.websearch_proxy_enabled === 'true',
+        websearch_proxy_use_global: rawSettings.websearch_proxy_use_global !== 'false',
+        websearch_proxy_url: rawSettings.websearch_proxy_url || '',
+        websearch_proxy_type: rawSettings.websearch_proxy_type || 'http',
         loading: false,
         isInitialized: true,
       });

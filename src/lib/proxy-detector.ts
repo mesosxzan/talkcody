@@ -11,7 +11,7 @@ export interface ProxyConfig {
   /** Proxy URL for all traffic (supports http, socks5, socks5h) */
   url?: string;
   /** Proxy type */
-  type?: 'http' | 'socks5' | 'socks5h';
+  type?: 'http' | 'socks5' | 'socks5h' | string;
   /** Auto-detect local proxy */
   autoDetect: boolean;
   /** Bypass list (comma-separated domains/IPs) */
@@ -30,7 +30,7 @@ export interface WebSearchProxyConfig {
   /** Web search specific proxy URL (if not using global) */
   url?: string;
   /** Proxy type */
-  type?: 'http' | 'socks5' | 'socks5h';
+  type?: 'http' | 'socks5' | 'socks5h' | string;
 }
 
 /**

@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
-import { getEffectiveWebSearchProxy, toTauriProxyFormat } from '@/lib/proxy-detector';
-import { simpleFetch } from '@/lib/tauri-fetch';
+import { getEffectiveWebSearchProxy } from '@/lib/proxy-detector';
+import { PROXY_URL_HEADER_NAME, simpleFetch } from '@/lib/tauri-fetch';
 import { settingsManager } from '@/stores/settings-store';
 import type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
 
@@ -49,17 +49,34 @@ async function searchDuckDuckGoHTML(query: string, freshness?: string): Promise<
   const searchUrl = `https://html.duckduckgo.com/html/?${params.toString()}`;
 
   try {
+    // Get effective proxy configuration for web search
+    const globalProxySettings = settingsManager.getProxySettings();
+    const webSearchProxySettings = settingsManager.getWebSearchProxySettings();
+    const effectiveProxy = await getEffectiveWebSearchProxy(
+      webSearchProxySettings,
+      globalProxySettings
+    );
+
+    // Build headers with proxy if enabled
+    const headers: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
+    };
+
+    // Add proxy URL header if proxy is configured
+    if (effectiveProxy.enabled && effectiveProxy.url) {
+      headers[PROXY_URL_HEADER_NAME] = effectiveProxy.url;
+      logger.info(`[DuckDuckGo HTML] Using proxy: ${effectiveProxy.url}`);
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const response = await simpleFetch(searchUrl, {
       method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7',
-      },
+      headers,
       signal: controller.signal,
     });
 
@@ -138,14 +155,31 @@ async function searchDuckDuckGoInstant(query: string): Promise<WebSearchResult[]
   });
 
   try {
+    // Get effective proxy configuration for web search
+    const globalProxySettings = settingsManager.getProxySettings();
+    const webSearchProxySettings = settingsManager.getWebSearchProxySettings();
+    const effectiveProxy = await getEffectiveWebSearchProxy(
+      webSearchProxySettings,
+      globalProxySettings
+    );
+
+    // Build headers with proxy if enabled
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+    };
+
+    // Add proxy URL header if proxy is configured
+    if (effectiveProxy.enabled && effectiveProxy.url) {
+      headers[PROXY_URL_HEADER_NAME] = effectiveProxy.url;
+      logger.info(`[DuckDuckGo Instant] Using proxy: ${effectiveProxy.url}`);
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     const response = await simpleFetch(`${DUCKDUCKGO_API}?${params.toString()}`, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-      },
+      headers,
       signal: controller.signal,
     });
 

@@ -2535,6 +2535,14 @@ export interface LocaleDefinition {
       url: string;
       urlPlaceholder: string;
       type: string;
+      protocol: string;
+      host: string;
+      port: string;
+      username: string;
+      usernamePlaceholder: string;
+      password: string;
+      passwordPlaceholder: string;
+      preview: string;
       autoDetect: string;
       autoDetectDesc: string;
       noProxy: string;
@@ -2547,6 +2555,7 @@ export interface LocaleDefinition {
       fromEnv: string;
       none: string;
       status: string;
+      noProxyConfigured: string;
     };
     webSearch: {
       title: string;
@@ -2561,9 +2570,24 @@ export interface LocaleDefinition {
       socks5: string;
       socks5h: string;
     };
+    test: {
+      title: string;
+      description: string;
+      testUrl: string;
+      currentProxy: string;
+      detectedIp: string;
+    };
+    errors: {
+      hostRequired: string;
+      portRequired: string;
+      portInvalid: string;
+    };
     hints: {
       socks5h: string;
       portCommon: string;
+      manualPriority: string;
+      webSearchSeparate: string;
+      useGlobalHint: string;
     };
   };
 
