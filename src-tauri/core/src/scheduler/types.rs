@@ -116,6 +116,8 @@ pub enum ScheduledTaskSchedule {
 pub struct ScheduledTaskPayload {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default)]
     pub auto_approve_edits: bool,

@@ -7,13 +7,16 @@ import { logger } from '@/lib/logger';
 import { generateId } from '@/lib/utils';
 import { getLocale, type SupportedLocale } from '@/locales';
 import { useProviderStore } from '@/providers/stores/provider-store';
+import { agentRegistry } from '@/services/agents/agent-registry';
 import { executionService } from '@/services/execution-service';
 import { messageService } from '@/services/message-service';
 import { notificationService } from '@/services/notification-service';
+import { previewSystemPrompt } from '@/services/prompt/preview';
 import { scheduledTaskDeliveryService } from '@/services/scheduled-tasks/scheduled-task-delivery-service';
 import { taskService } from '@/services/task-service';
+import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 import { useSettingsStore } from '@/stores/settings-store';
-import type { UIMessage } from '@/types/agent';
+import type { AgentToolSet, UIMessage } from '@/types/agent';
 import type {
   CreateScheduledTaskInput,
   DEFAULT_DELIVERY_POLICY,
@@ -239,7 +242,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   _onTrigger: async (event: ScheduledTaskTriggerEvent) => {
     const { jobId, runId, payload, projectId } = event;
-    logger.info('[ScheduledTaskStore] Job triggered:', { jobId, runId });
+    logger.info('[ScheduledTaskStore] Job triggered:', { jobId, runId, payload, projectId });
 
     let createdTaskId: string | null = null;
     try {
@@ -253,7 +256,24 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
         await providerStore.initialize();
       }
 
-      const requestedModel = (payload.model ?? settingsState.model ?? '').trim();
+      // 1. Resolve agent - use same logic as chat-box.tsx
+      const agentId = payload.agentId || settingsState.getAgentId();
+      let agent = await agentRegistry.getWithResolvedTools(agentId);
+      if (!agent) {
+        logger.warn('[ScheduledTaskStore] Agent not found, falling back to planner', { agentId });
+        agent = await agentRegistry.getWithResolvedTools('planner');
+      }
+
+      // 2. Get model from agent or settings
+      const resolvedAgentModel = (agent as (typeof agent & { model?: string }) | undefined)?.model;
+      const resolvedFallbackModels =
+        (agent as (typeof agent & { fallbackModels?: string[] }) | undefined)?.fallbackModels ?? [];
+      const requestedModel = (
+        payload.model ??
+        resolvedAgentModel ??
+        settingsState.model ??
+        ''
+      ).trim();
       let model = requestedModel;
 
       if (!model) {
@@ -302,23 +322,67 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
         );
       }
 
+      // 3. Create task with projectId to ensure workspace is set correctly
       createdTaskId = await taskService.createTask(payload.message, {
         projectId: projectId ?? undefined,
       });
 
+      logger.info('[ScheduledTaskStore] Task created:', {
+        taskId: createdTaskId,
+        projectId,
+        agentId,
+        model,
+      });
+
+      // 4. Build system prompt - use same logic as chat-box.tsx and task-queue-service.ts
+      let systemPrompt: string | undefined;
+      if (agent) {
+        if (typeof agent.systemPrompt === 'function') {
+          systemPrompt = await Promise.resolve(agent.systemPrompt());
+        } else if (agent.systemPrompt) {
+          systemPrompt = agent.systemPrompt;
+        }
+
+        // Handle dynamic prompt - same as chat-box.tsx
+        if (agent.dynamicPrompt?.enabled) {
+          try {
+            const root = await getEffectiveWorkspaceRoot(createdTaskId);
+            const { finalSystemPrompt } = await previewSystemPrompt({
+              agent: agent,
+              workspaceRoot: root,
+              taskId: createdTaskId,
+            });
+            systemPrompt = finalSystemPrompt;
+            logger.info('[ScheduledTaskStore] Dynamic prompt composed for scheduled task');
+          } catch (error) {
+            logger.warn('[ScheduledTaskStore] Failed to compose dynamic prompt:', error);
+          }
+        }
+      }
+
+      const tools = agent?.tools ?? {};
+
+      // 5. Add user message
       const userChatMessage: UIMessage = {
         id: generateId(),
         role: 'user',
         content: payload.message,
         timestamp: new Date(),
+        assistantId: agentId,
       };
-      await messageService.addUserMessage(createdTaskId, payload.message);
+      await messageService.addUserMessage(createdTaskId, payload.message, {
+        agentId,
+      });
 
+      // 6. Start execution - use same logic as chat-box.tsx and task-queue-service.ts
       await executionService.startExecution({
         taskId: createdTaskId,
         messages: [userChatMessage],
         model,
-        agentId: payload.agentId,
+        fallbackModels: resolvedFallbackModels.length > 0 ? resolvedFallbackModels : undefined,
+        systemPrompt,
+        tools,
+        agentId,
         isNewTask: true,
         userMessage: payload.message,
       });

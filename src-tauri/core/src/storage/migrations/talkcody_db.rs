@@ -607,6 +607,16 @@ pub fn talkcody_migrations() -> MigrationRegistry {
         down_sql: Some("ALTER TABLE scheduled_tasks DROP COLUMN paused_at;"),
     });
 
+    // Migration 11: Add payload_agent_id column to scheduled_tasks
+    registry.register(Migration {
+        version: 11,
+        name: "add_scheduled_tasks_payload_agent_id",
+        up_sql: r#"
+            ALTER TABLE scheduled_tasks ADD COLUMN payload_agent_id TEXT;
+        "#,
+        down_sql: Some("ALTER TABLE scheduled_tasks DROP COLUMN payload_agent_id;"),
+    });
+
     registry
 }
 
@@ -617,6 +627,6 @@ mod tests {
     #[test]
     fn test_talkcody_migrations_count() {
         let registry = talkcody_migrations();
-        assert_eq!(registry.migrations().len(), 10);
+        assert_eq!(registry.migrations().len(), 11);
     }
 }

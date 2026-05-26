@@ -22,12 +22,9 @@ const createTaskMock = vi.fn(async () => 'test-task-id');
 const notifyScheduledTaskResultMock = vi.fn(async () => {});
 const deliverMock = vi.fn(async () => ({ status: 'none', deliveredAt: null as number | null }));
 const addUserMessageMock = vi.fn(async () => 'test-message-id');
+const getWithResolvedToolsMock = vi.fn(async () => undefined);
 
-vi.mock('@/stores/settings-store', () => ({
-  useSettingsStore: {
-    getState: vi.fn(() => settingsState),
-  },
-}));
+
 
 vi.mock('@/providers/stores/provider-store', () => ({
   useProviderStore: {
@@ -65,6 +62,33 @@ vi.mock('@/services/message-service', () => ({
   },
 }));
 
+vi.mock('@/services/agents/agent-registry', () => ({
+  agentRegistry: {
+    getWithResolvedTools: getWithResolvedToolsMock,
+  },
+}));
+
+vi.mock('@/services/workspace-root-service', () => ({
+  getEffectiveWorkspaceRoot: vi.fn(async () => '/test/workspace'),
+}));
+
+vi.mock('@/services/prompt/preview', () => ({
+  previewSystemPrompt: vi.fn(async () => ({ finalSystemPrompt: 'test prompt' })),
+}));
+
+vi.mock('@/stores/settings-store', () => ({
+  useSettingsStore: {
+    getState: vi.fn(() => settingsState),
+  },
+  settingsManager: {
+    getProject: vi.fn(async () => 'default'),
+    getAutoApproveEditsGlobal: vi.fn(async () => false),
+    getAutoApprovePlanGlobal: vi.fn(async () => false),
+    getAutoCodeReviewGlobal: vi.fn(async () => false),
+    getAutoGitCommitGlobal: vi.fn(async () => false),
+  },
+}));
+
 describe('scheduled-task-store', () => {
   beforeEach(async () => {
     settingsState = {
@@ -72,6 +96,7 @@ describe('scheduled-task-store', () => {
       model: '',
       isInitialized: true,
       initialize: vi.fn(async () => {}),
+      getAgentId: vi.fn(() => 'planner'),
     };
 
     providerState = {
@@ -106,6 +131,9 @@ describe('scheduled-task-store', () => {
     notifyScheduledTaskResultMock.mockClear();
     deliverMock.mockClear();
     addUserMessageMock.mockClear();
+    getWithResolvedToolsMock.mockClear();
+    // Default: agent not found, so agentId will be undefined
+    getWithResolvedToolsMock.mockResolvedValue(undefined);
   });
 
   it('uses a fallback model when neither payload.model nor settings.model is set', async () => {
@@ -222,6 +250,17 @@ describe('scheduled-task-store', () => {
     providerState.getAvailableModel = vi.fn(() => providerState.availableModels[0] ?? null);
     providerState.isModelAvailable = vi.fn((model) => model === 'gpt-5-mini');
 
+    // Mock agent exists with tools and system prompt
+    getWithResolvedToolsMock.mockResolvedValue({
+      id: 'custom-agent-123',
+      name: 'Custom Agent',
+      description: 'A custom agent',
+      systemPrompt: 'You are a custom agent.',
+      tools: { bash: {} },
+      model: 'gpt-5-mini',
+      fallbackModels: [],
+    });
+
     const { useScheduledTaskStore } = await import('./scheduled-task-store');
     useScheduledTaskStore.setState({
       tasks: [
@@ -254,16 +293,23 @@ describe('scheduled-task-store', () => {
       projectId: null,
     });
 
+    // Verify agent was resolved
+    expect(getWithResolvedToolsMock).toHaveBeenCalledWith('custom-agent-123');
+
+    // Verify execution was called with agent configuration
     expect(startExecutionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         messages: [
           expect.objectContaining({
             role: 'user',
             content: 'hello',
+            assistantId: 'custom-agent-123',
           }),
         ],
         model: 'gpt-5-mini',
         agentId: 'custom-agent-123',
+        systemPrompt: 'You are a custom agent.',
+        tools: { bash: {} },
         userMessage: 'hello',
       })
     );
