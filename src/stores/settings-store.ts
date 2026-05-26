@@ -892,6 +892,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         );
       }
 
+      // Sync git executable path to Rust backend on initialization
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const state = get();
+        await invoke('set_git_executable', {
+          gitPath: state.git_executable_path || '',
+        });
+        logger.info('[SettingsStore] Git executable path synced to Rust backend on init');
+      } catch (error) {
+        logger.error(
+          '[SettingsStore] Failed to sync git executable path to Rust backend on init:',
+          error
+        );
+      }
+
       logger.info('Settings store initialized');
     } catch (error) {
       logger.error('Failed to initialize settings store:', error);
@@ -1705,6 +1720,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   setGitExecutablePath: async (path: string) => {
     await settingsDb.set('git_executable_path', path);
     set({ git_executable_path: path });
+
+    // Sync to Rust backend
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_git_executable', {
+        gitPath: path || '',
+      });
+      logger.info('[SettingsStore] Git executable path synced to Rust backend');
+    } catch (error) {
+      logger.error('[SettingsStore] Failed to sync git executable path to Rust backend:', error);
+    }
   },
 
   getGitExecutablePath: () => {

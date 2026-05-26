@@ -1044,6 +1044,7 @@ pub fn run() {
             proxy_config::get_global_proxy,
             shell_utils::set_git_executable,
             shell_utils::get_git_executable,
+            shell_utils::test_git_executable,
             git::git_get_status,
             git::git_is_repository,
             git::git_get_all_file_statuses,

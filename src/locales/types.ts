@@ -746,6 +746,13 @@ export interface LocaleDefinition {
       autoFetchHint: string;
       autoRefreshInterval: string;
       autoRefreshIntervalHint: string;
+      testGit: string;
+      saveGitPath: string;
+      testing: string;
+      testSuccess: string;
+      testFailed: string;
+      pathSaved: string;
+      pathReset: string;
     };
     worktree: {
       title: string;

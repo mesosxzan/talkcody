@@ -14,7 +14,8 @@ static GIT_EXECUTABLE_PATH: RwLock<String> = RwLock::new(String::new());
 /// Set the Git executable path
 pub fn set_git_executable_path(path: String) {
     let mut git_path = GIT_EXECUTABLE_PATH.write().unwrap();
-    *git_path = path;
+    // Trim quotes from the path (common on Windows)
+    *git_path = path.trim_matches('"').trim_matches('\'').to_string();
 }
 
 /// Get the Git executable path
@@ -172,6 +173,59 @@ pub fn set_git_executable(git_path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_git_executable() -> Result<String, String> {
     Ok(get_git_executable_path())
+}
+
+/// Tauri command to test Git executable path
+/// Returns the git version string if successful
+#[tauri::command]
+pub fn test_git_executable(git_path: String) -> Result<String, String> {
+    let path_to_test = if git_path.is_empty() {
+        "git".to_string()
+    } else {
+        // Trim quotes from the path (common on Windows)
+        git_path.trim_matches('"').trim_matches('\'').to_string()
+    };
+
+    let output = new_command(&path_to_test)
+        .arg("--version")
+        .output()
+        .map_err(|e| {
+            let error_msg = e.to_string();
+            // Provide more helpful error messages
+            if error_msg.contains("No such file or directory")
+                || error_msg.contains("The system cannot find the file specified")
+            {
+                format!(
+                    "Git executable not found at '{}'. Please verify the path is correct.",
+                    path_to_test
+                )
+            } else if error_msg.contains("Permission denied")
+                || error_msg.contains("Access is denied")
+            {
+                format!(
+                    "Permission denied to execute '{}'. Please check file permissions.",
+                    path_to_test
+                )
+            } else {
+                format!("Failed to execute git at '{}': {}", path_to_test, error_msg)
+            }
+        })?;
+
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        Ok(version)
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if error.is_empty() {
+            format!(
+                "Git executable '{}' returned exit code {}. Please verify it is a valid git executable.",
+                path_to_test,
+                output.status.code().unwrap_or(-1)
+            )
+        } else {
+            error
+        })
+    }
 }
 
 #[cfg(test)]

@@ -784,6 +784,13 @@ const en: LocaleDefinition = {
       autoFetchHint: 'Automatically fetch from remote when opening a repository',
       autoRefreshInterval: 'Auto Refresh Interval (seconds)',
       autoRefreshIntervalHint: 'Set to 0 to disable auto-refresh. Recommended: 30-300 seconds.',
+      testGit: 'Test',
+      saveGitPath: 'Save',
+      testing: 'Testing...',
+      testSuccess: 'Git is working: {version}',
+      testFailed: 'Test failed: {error}',
+      pathSaved: 'Git path saved',
+      pathReset: 'Git path reset to default',
     },
     worktree: {
       title: 'Worktree Settings',

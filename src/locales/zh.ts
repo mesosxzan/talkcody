@@ -753,6 +753,13 @@ const zh: LocaleDefinition = {
       autoFetchHint: '打开仓库时自动从远程拉取更新',
       autoRefreshInterval: '自动刷新间隔（秒）',
       autoRefreshIntervalHint: '设置为 0 表示禁用自动刷新。推荐值：30-300 秒。',
+      testGit: '测试',
+      saveGitPath: '保存',
+      testing: '测试中...',
+      testSuccess: 'Git 工作正常: {version}',
+      testFailed: '测试失败: {error}',
+      pathSaved: 'Git 路径已保存',
+      pathReset: 'Git 路径已重置为默认',
     },
     worktree: {
       title: 'Worktree 设置',
