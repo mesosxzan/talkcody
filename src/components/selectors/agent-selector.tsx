@@ -7,6 +7,7 @@ import { logger } from '@/lib/logger';
 import { agentRegistry } from '@/services/agents/agent-registry';
 import { agentService } from '@/services/database/agent-service';
 import { useAgentStore } from '@/stores/agent-store';
+import { useTaskStore } from '@/stores/task-store';
 import { NavigationView } from '@/types/navigation';
 import { BaseSelector } from './base-selector';
 
@@ -22,6 +23,10 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
   const agentsMap = useAgentStore((state) => state.agents);
   const isLoadingAgents = useAgentStore((state) => state.isLoading);
   const refreshToken = useAgentStore((state) => state.refreshToken);
+
+  // Get current task and messages
+  const currentTaskId = useTaskStore((state) => state.currentTaskId);
+  const getMessages = useTaskStore((state) => state.getMessages);
 
   // Track enabled state for database agents
   const [dbAgentEnabledMap, setDbAgentEnabledMap] = useState<Map<string, boolean>>(new Map());
@@ -42,6 +47,24 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
     };
     loadEnabledState(refreshToken);
   }, [refreshToken]);
+
+  // Get the agent ID from the last user message in the current task
+  const lastUserMessageAgentId = useMemo(() => {
+    if (!currentTaskId) return null;
+    const messages = getMessages(currentTaskId);
+    if (!messages || messages.length === 0) return null;
+    // Find the last user message
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg && msg.role === 'user' && msg.assistantId) {
+        return msg.assistantId;
+      }
+    }
+    return null;
+  }, [currentTaskId, getMessages]);
+
+  // Use the last user message's agent ID if available, otherwise use global setting
+  const currentAgentId = lastUserMessageAgentId || settings.assistantId;
 
   const agents = useMemo(() => {
     const allAgents = Array.from(agentsMap.values());
@@ -101,7 +124,7 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
       items={agentItems}
       onValueChange={handleChange}
       placeholder="Select agent"
-      value={settings.assistantId}
+      value={currentAgentId}
     />
   );
 }

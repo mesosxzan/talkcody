@@ -162,9 +162,12 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
           const { value, unit } = msToInterval(task.schedule.everyMs);
           setIntervalValue(value);
           setIntervalUnit(unit);
+        } else if (task.schedule?.kind === 'cron') {
+          setCronExpr(task.schedule.expr ?? '0 9 * * 1-5');
+          setCronTz(task.schedule.tz ?? '');
         } else {
-          setCronExpr(task.schedule?.expr ?? '0 9 * * 1-5');
-          setCronTz(task.schedule?.tz ?? '');
+          setCronExpr('0 9 * * 1-5');
+          setCronTz('');
         }
       } catch (err) {
         logger.error('Failed to populate task data:', err);
