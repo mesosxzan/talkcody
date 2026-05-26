@@ -1,5 +1,5 @@
 // src/pages/scheduled-tasks-page.tsx
-import { ChevronDown, ChevronRight, Clock, Pause, Play, Plus, Resume, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Pause, Play, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ScheduledTaskFormModal } from '@/components/scheduled-tasks/scheduled-task-form-modal';
@@ -22,6 +22,8 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useLocale } from '@/hooks/use-locale';
+import { useAgentStore } from '@/stores/agent-store';
+import { useProjectStore } from '@/stores/project-store';
 import { useScheduledTaskStore } from '@/stores/scheduled-task-store';
 import { type JobStatus, type ScheduledTask, scheduleToSummary } from '@/types/scheduled-task';
 
@@ -202,15 +204,28 @@ export function ScheduledTasksPage() {
     triggerNow,
   } = useScheduledTaskStore();
 
+  // Initialize projects and agents
+  const refreshProjects = useProjectStore((state) => state.refreshProjects);
+  const loadAgents = useAgentStore((state) => state.loadAgents);
+
   const [formOpen, setFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | undefined>();
   const [deleteTarget, setDeleteTarget] = useState<ScheduledTask | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    loadTasks();
-    loadStats();
-  }, [loadTasks, loadStats]);
+    const initializeData = async () => {
+      try {
+        console.log('[ScheduledTasksPage] Starting initialization...');
+        await Promise.all([loadTasks(), loadStats(), refreshProjects(), loadAgents()]);
+        console.log('[ScheduledTasksPage] Initialization complete');
+      } catch (error) {
+        console.error('[ScheduledTasksPage] Failed to initialize:', error);
+        toast.error('Failed to load scheduled tasks data');
+      }
+    };
+    initializeData();
+  }, [loadTasks, loadStats, refreshProjects, loadAgents]);
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {

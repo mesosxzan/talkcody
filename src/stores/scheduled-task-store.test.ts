@@ -211,4 +211,111 @@ describe('scheduled-task-store', () => {
       })
     );
   });
+
+  it('passes agentId to execution service when specified in payload', async () => {
+    providerState.availableModels.push({
+      key: 'gpt-5-mini',
+      name: 'GPT-5 mini',
+      provider: 'openai',
+      inputPricing: '1',
+    });
+    providerState.getAvailableModel = vi.fn(() => providerState.availableModels[0] ?? null);
+    providerState.isModelAvailable = vi.fn((model) => model === 'gpt-5-mini');
+
+    const { useScheduledTaskStore } = await import('./scheduled-task-store');
+    useScheduledTaskStore.setState({
+      tasks: [
+        {
+          id: 'job-1',
+          name: 'Job',
+          description: '',
+          projectId: null,
+          schedule: { kind: 'every', everyMs: 60_000 },
+          payload: { message: 'hello', agentId: 'custom-agent-123' },
+          executionPolicy: { maxConcurrentRuns: 1, catchUp: false, staggerMs: -1 },
+          retryPolicy: { maxAttempts: 1, backoffMs: [1000] },
+          notificationPolicy: { notifyOnSuccess: false, notifyOnFailure: true },
+          deliveryPolicy: { enabled: false },
+          offlinePolicy: { enabled: false, minuteGranularity: 1 },
+          status: 'enabled',
+          nextRunAt: null,
+          lastRunAt: null,
+          pausedAt: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+
+    await useScheduledTaskStore.getState()._onTrigger({
+      jobId: 'job-1',
+      runId: 'run-1',
+      payload: { message: 'hello', agentId: 'custom-agent-123' },
+      projectId: null,
+    });
+
+    expect(startExecutionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: [
+          expect.objectContaining({
+            role: 'user',
+            content: 'hello',
+          }),
+        ],
+        model: 'gpt-5-mini',
+        agentId: 'custom-agent-123',
+        userMessage: 'hello',
+      })
+    );
+  });
+
+  it('uses projectId from event when specified', async () => {
+    providerState.availableModels.push({
+      key: 'gpt-5-mini',
+      name: 'GPT-5 mini',
+      provider: 'openai',
+      inputPricing: '1',
+    });
+    providerState.getAvailableModel = vi.fn(() => providerState.availableModels[0] ?? null);
+    providerState.isModelAvailable = vi.fn((model) => model === 'gpt-5-mini');
+
+    const { useScheduledTaskStore } = await import('./scheduled-task-store');
+    useScheduledTaskStore.setState({
+      tasks: [
+        {
+          id: 'job-1',
+          name: 'Job',
+          description: '',
+          projectId: 'project-456',
+          schedule: { kind: 'every', everyMs: 60_000 },
+          payload: { message: 'hello' },
+          executionPolicy: { maxConcurrentRuns: 1, catchUp: false, staggerMs: -1 },
+          retryPolicy: { maxAttempts: 1, backoffMs: [1000] },
+          notificationPolicy: { notifyOnSuccess: false, notifyOnFailure: true },
+          deliveryPolicy: { enabled: false },
+          offlinePolicy: { enabled: false, minuteGranularity: 1 },
+          status: 'enabled',
+          nextRunAt: null,
+          lastRunAt: null,
+          pausedAt: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        },
+      ],
+    });
+
+    await useScheduledTaskStore.getState()._onTrigger({
+      jobId: 'job-1',
+      runId: 'run-1',
+      payload: { message: 'hello' },
+      projectId: 'project-456',
+    });
+
+    expect(createTaskMock).toHaveBeenCalledWith(
+      'hello',
+      expect.objectContaining({
+        projectId: 'project-456',
+      })
+    );
+  });
 });

@@ -1403,6 +1403,12 @@ export interface LocaleDefinition {
       schedule: string;
       prompt: string;
       promptPlaceholder: string;
+      agent: string;
+      agentPlaceholder: string;
+      agentHint: string;
+      project: string;
+      projectPlaceholder: string;
+      projectHint: string;
       naturalLanguageSchedule: string;
       naturalLanguageSchedulePlaceholder: string;
       atTime: string;

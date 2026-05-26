@@ -318,6 +318,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
         taskId: createdTaskId,
         messages: [userChatMessage],
         model,
+        agentId: payload.agentId,
         isNewTask: true,
         userMessage: payload.message,
       });

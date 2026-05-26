@@ -22,8 +22,13 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useLocale } from '@/hooks/use-locale';
+import { logger } from '@/lib/logger';
+import { agentService } from '@/services/database/agent-service';
 import { scheduledTaskNlpService } from '@/services/scheduled-tasks/scheduled-task-nlp-service';
+import { useAgentStore } from '@/stores/agent-store';
+import { useProjectStore } from '@/stores/project-store';
 import { useScheduledTaskStore } from '@/stores/scheduled-task-store';
+import type { DbAgent } from '@/types/db-agent';
 import {
   type CreateScheduledTaskInput,
   DEFAULT_DELIVERY_POLICY,
@@ -34,6 +39,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskSchedule,
 } from '@/types/scheduled-task';
+import type { Project } from '@/types/task';
 
 interface Props {
   open: boolean;
@@ -75,6 +81,19 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
   const { createTask, updateTask, previewCron, cronPreview } = useScheduledTaskStore();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isParsingNlp, setIsParsingNlp] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Agent selection state
+  const agentsMap = useAgentStore((state) => state.agents);
+  const isLoadingAgents = useAgentStore((state) => state.isLoading);
+  const [dbAgentEnabledMap, setDbAgentEnabledMap] = useState<Map<string, boolean>>(new Map());
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+
+  // Project selection state
+  const projects = useProjectStore((state) => state.projects);
+  const isLoadingProjects = useProjectStore((state) => state.isLoading);
+  const refreshProjects = useProjectStore((state) => state.refreshProjects);
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
 
   const [name, setName] = useState('');
   const [promptMessage, setPromptMessage] = useState('');
@@ -104,40 +123,58 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
   useEffect(() => {
     if (!open) return;
 
+    setError(null); // Clear previous errors
+
+    // Load projects when modal opens
+    refreshProjects().catch((error) => {
+      logger.error('Failed to refresh projects:', error);
+      setError('Failed to load projects');
+    });
+
     if (task) {
-      setName(task.name);
-      setPromptMessage(task.payload.message);
-      setNlScheduleText(task.scheduleNlText ?? '');
-      setAutoApproveEdits(task.payload.autoApproveEdits ?? false);
-      setAutoApprovePlan(task.payload.autoApprovePlan ?? false);
-      setScheduleKind(task.schedule.kind);
-      setMaxAttempts(task.retryPolicy.maxAttempts);
-      setBackoffText(task.retryPolicy.backoffMs.join(','));
-      setNotifyOnSuccess(task.notificationPolicy?.notifyOnSuccess ?? false);
-      setNotifyOnFailure(task.notificationPolicy?.notifyOnFailure ?? true);
-      setOfflineEnabled(task.offlinePolicy?.enabled ?? false);
-      setDeliveryEnabled(task.deliveryPolicy?.enabled ?? false);
-      setDeliveryChannel(task.deliveryPolicy?.channelId ?? 'telegram');
-      setDeliveryTarget(task.deliveryPolicy?.target ?? '');
-      if (task.executionPolicy.staggerMs === -1) setStaggerMode('auto');
-      else if (task.executionPolicy.staggerMs === 0) setStaggerMode('none');
-      else {
-        setStaggerMode('custom');
-        setStaggerMs(task.executionPolicy.staggerMs);
-      }
-      if (task.schedule.kind === 'at') {
-        setAtDatetime(isoToLocalDatetime(task.schedule.at));
-      } else if (task.schedule.kind === 'every') {
-        const { value, unit } = msToInterval(task.schedule.everyMs);
-        setIntervalValue(value);
-        setIntervalUnit(unit);
-      } else {
-        setCronExpr(task.schedule.expr);
-        setCronTz(task.schedule.tz ?? '');
+      try {
+        setName(task.name);
+        setPromptMessage(task.payload?.message ?? '');
+        setSelectedAgentId(task.payload?.agentId ?? '');
+        setSelectedProjectId(task.projectId ?? '');
+        setNlScheduleText(task.scheduleNlText ?? '');
+        setAutoApproveEdits(task.payload?.autoApproveEdits ?? false);
+        setAutoApprovePlan(task.payload?.autoApprovePlan ?? false);
+        setScheduleKind(task.schedule?.kind ?? 'cron');
+        setMaxAttempts(task.retryPolicy?.maxAttempts ?? 2);
+        setBackoffText((task.retryPolicy?.backoffMs ?? [30000, 60000]).join(','));
+        setNotifyOnSuccess(task.notificationPolicy?.notifyOnSuccess ?? false);
+        setNotifyOnFailure(task.notificationPolicy?.notifyOnFailure ?? true);
+        setOfflineEnabled(task.offlinePolicy?.enabled ?? false);
+        setDeliveryEnabled(task.deliveryPolicy?.enabled ?? false);
+        setDeliveryChannel(task.deliveryPolicy?.channelId ?? 'telegram');
+        setDeliveryTarget(task.deliveryPolicy?.target ?? '');
+        const staggerMs = task.executionPolicy?.staggerMs ?? -1;
+        if (staggerMs === -1) setStaggerMode('auto');
+        else if (staggerMs === 0) setStaggerMode('none');
+        else {
+          setStaggerMode('custom');
+          setStaggerMs(staggerMs);
+        }
+        if (task.schedule?.kind === 'at' && task.schedule.at) {
+          setAtDatetime(isoToLocalDatetime(task.schedule.at));
+        } else if (task.schedule?.kind === 'every' && task.schedule.everyMs) {
+          const { value, unit } = msToInterval(task.schedule.everyMs);
+          setIntervalValue(value);
+          setIntervalUnit(unit);
+        } else {
+          setCronExpr(task.schedule?.expr ?? '0 9 * * 1-5');
+          setCronTz(task.schedule?.tz ?? '');
+        }
+      } catch (err) {
+        logger.error('Failed to populate task data:', err);
+        setError('Failed to load task data');
       }
     } else {
       setName('');
       setPromptMessage('');
+      setSelectedAgentId('');
+      setSelectedProjectId('');
       setNlScheduleText('');
       setScheduleKind('cron');
       setAtDatetime('');
@@ -159,7 +196,7 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
       setDeliveryTarget('');
     }
     setCronError('');
-  }, [open, task]);
+  }, [open, task, refreshProjects]);
 
   const effectiveStaggerMs = useMemo(() => {
     if (staggerMode === 'auto') return -1;
@@ -174,6 +211,54 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
       { staggerMs: effectiveStaggerMs }
     );
   }, [open, scheduleKind, cronExpr, cronTz, effectiveStaggerMs, previewCron]);
+
+  // Load enabled state for database agents
+  useEffect(() => {
+    let cancelled = false;
+    const loadEnabledState = async () => {
+      try {
+        const dbAgents = await agentService.listAgents({ includeHidden: false });
+        if (cancelled) return;
+        const enabledMap = new Map<string, boolean>();
+        for (const agent of dbAgents) {
+          enabledMap.set(agent.id, agent.is_enabled);
+        }
+        setDbAgentEnabledMap(enabledMap);
+      } catch (error) {
+        if (cancelled) return;
+        logger.error('Failed to load agent enabled state:', error);
+        // Set empty map to prevent infinite loading
+        setDbAgentEnabledMap(new Map());
+      }
+    };
+    if (open) {
+      loadEnabledState();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const availableAgents = useMemo(() => {
+    const allAgents = Array.from(agentsMap.values());
+    return allAgents.filter((a) => {
+      // Filter hidden agents
+      if (a.hidden) return false;
+
+      // For system agents, check in-memory enabled state
+      if (a.isDefault) {
+        return true; // System agents are always available in the selector
+      }
+
+      // For user agents, check database enabled state
+      const isEnabled = dbAgentEnabledMap.get(a.id);
+      return isEnabled !== false; // Default to true if not found
+    });
+  }, [agentsMap, dbAgentEnabledMap]);
+
+  const availableProjects = useMemo(() => {
+    return projects;
+  }, [projects]);
 
   const buildSchedule = (): ScheduledTaskSchedule => {
     switch (scheduleKind) {
@@ -241,11 +326,13 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
     try {
       const payload = {
         message: promptMessage.trim(),
+        agentId: selectedAgentId.trim() || undefined,
         autoApproveEdits,
         autoApprovePlan,
       };
       const base = {
         name: name.trim(),
+        projectId: selectedProjectId.trim() || undefined,
         schedule: buildSchedule(),
         scheduleNlText: nlScheduleText.trim() || undefined,
         payload,
@@ -297,6 +384,10 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
           <DialogTitle>{task ? t.ScheduledTasks.editTask : t.ScheduledTasks.newTask}</DialogTitle>
         </DialogHeader>
 
+        {error && (
+          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+        )}
+
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label htmlFor="st-name">{t.ScheduledTasks.fields.name}</Label>
@@ -306,6 +397,63 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
               onChange={(e) => setName(e.target.value)}
               placeholder={t.ScheduledTasks.fields.namePlaceholder}
             />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1">
+              <Label htmlFor="st-agent">{t.ScheduledTasks.fields.agent}</Label>
+              <Select
+                value={selectedAgentId || '__none__'}
+                onValueChange={(v) => setSelectedAgentId(v === '__none__' ? '' : v)}
+                disabled={isLoadingAgents}
+              >
+                <SelectTrigger id="st-agent">
+                  <SelectValue placeholder={t.ScheduledTasks.fields.agentPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    {t.ScheduledTasks.fields.agentPlaceholder}
+                  </SelectItem>
+                  {availableAgents.map((agent) => (
+                    <SelectItem key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.ScheduledTasks.fields.agentHint}</p>
+            </div>
+
+            <div className="space-y-1">
+              <Label htmlFor="st-project">{t.ScheduledTasks.fields.project}</Label>
+              <Select
+                value={selectedProjectId || '__none__'}
+                onValueChange={(v) => setSelectedProjectId(v === '__none__' ? '' : v)}
+                disabled={isLoadingProjects}
+              >
+                <SelectTrigger id="st-project">
+                  <SelectValue placeholder={t.ScheduledTasks.fields.projectPlaceholder} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">
+                    {t.ScheduledTasks.fields.projectPlaceholder}
+                  </SelectItem>
+                  {availableProjects.map((project) => (
+                    <SelectItem key={project.id} value={project.id}>
+                      <div className="flex flex-col items-start gap-1">
+                        <div className="w-full truncate font-medium">{project.name}</div>
+                        {project.root_path && (
+                          <div className="w-full truncate text-muted-foreground text-xs">
+                            {project.root_path}
+                          </div>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t.ScheduledTasks.fields.projectHint}</p>
+            </div>
           </div>
 
           <div className="space-y-1">

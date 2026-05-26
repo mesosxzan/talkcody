@@ -51,6 +51,8 @@ export interface ScheduledTaskScheduleDraft {
 export interface ScheduledTaskPayload {
   /** Prompt sent to the agent */
   message: string;
+  /** Optional agent ID to use for execution */
+  agentId?: string;
   /** Optional model override */
   model?: string;
   /** Whether to auto-approve edits */
