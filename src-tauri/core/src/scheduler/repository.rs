@@ -34,21 +34,23 @@ impl ScheduledTaskRepository {
                 r#"INSERT INTO scheduled_tasks (
                     id, name, description, project_id,
                     schedule_kind, schedule_at, schedule_every_ms, schedule_cron_expr, schedule_tz,
-                    schedule_nl_text,
                     payload_message, payload_model, payload_auto_approve_edits, payload_auto_approve_plan,
                     exec_max_concurrent_runs, exec_catch_up, exec_stagger_ms,
                     retry_max_attempts, retry_backoff_ms,
+                    status, next_run_at, last_run_at, created_at, updated_at,
+                    schedule_nl_text,
                     notification_policy_json, delivery_policy_json, offline_policy_json,
-                    status, next_run_at, last_run_at, created_at, updated_at
+                    paused_at
                 ) VALUES (
-                    ?,?,?,?,
-                    ?,?,?,?,?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?, ?, ?,
                     ?,
-                    ?,?,?,?,
-                    ?,?,?,
-                    ?,?,
-                    ?,?, ?,
-                    ?,?,?,?,?
+                    ?, ?, ?,
+                    ?
                 )"#,
                 vec![
                     serde_json::json!(task.id),
@@ -60,7 +62,6 @@ impl ScheduledTaskRepository {
                     serde_json::json!(every_ms),
                     serde_json::json!(cron_expr),
                     serde_json::json!(tz),
-                    serde_json::json!(task.schedule_nl_text),
                     serde_json::json!(task.payload.message),
                     serde_json::json!(task.payload.model),
                     serde_json::json!(task.payload.auto_approve_edits as i64),
@@ -70,14 +71,16 @@ impl ScheduledTaskRepository {
                     serde_json::json!(task.execution_policy.stagger_ms),
                     serde_json::json!(task.retry_policy.max_attempts),
                     serde_json::json!(retry_json),
-                    serde_json::json!(notification_json),
-                    serde_json::json!(delivery_json),
-                    serde_json::json!(offline_json),
                     serde_json::json!(task.status.as_str()),
                     serde_json::json!(task.next_run_at),
                     serde_json::json!(task.last_run_at),
                     serde_json::json!(task.created_at),
                     serde_json::json!(task.updated_at),
+                    serde_json::json!(task.schedule_nl_text),
+                    serde_json::json!(notification_json),
+                    serde_json::json!(delivery_json),
+                    serde_json::json!(offline_json),
+                    serde_json::json!(task.paused_at),
                 ],
             )
             .await
@@ -161,11 +164,36 @@ impl ScheduledTaskRepository {
 
     pub async fn set_status(&self, id: &str, status: &JobStatus) -> Result<(), String> {
         let now = chrono::Utc::now().timestamp_millis();
+        let paused_at = if *status == JobStatus::Paused {
+            Some(now)
+        } else {
+            None
+        };
         self.db
             .execute(
-                "UPDATE scheduled_tasks SET status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE scheduled_tasks SET status = ?, paused_at = ?, updated_at = ? WHERE id = ?",
                 vec![
                     serde_json::json!(status.as_str()),
+                    serde_json::json!(paused_at),
+                    serde_json::json!(now),
+                    serde_json::json!(id),
+                ],
+            )
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn pause_task(&self, id: &str) -> Result<(), String> {
+        self.set_status(id, &JobStatus::Paused).await
+    }
+
+    pub async fn resume_task(&self, id: &str, next_run_at: Option<i64>) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.db
+            .execute(
+                "UPDATE scheduled_tasks SET status = 'enabled', paused_at = NULL, next_run_at = ?, updated_at = ? WHERE id = ?",
+                vec![
+                    serde_json::json!(next_run_at),
                     serde_json::json!(now),
                     serde_json::json!(id),
                 ],
@@ -196,7 +224,7 @@ impl ScheduledTaskRepository {
                     exec_max_concurrent_runs = ?, exec_catch_up = ?, exec_stagger_ms = ?,
                     retry_max_attempts = ?, retry_backoff_ms = ?,
                     notification_policy_json = ?, delivery_policy_json = ?, offline_policy_json = ?,
-                    status = ?, next_run_at = ?, updated_at = ?
+                    status = ?, next_run_at = ?, paused_at = ?, updated_at = ?
                 WHERE id = ?"#,
                 vec![
                     serde_json::json!(task.name),
@@ -222,6 +250,7 @@ impl ScheduledTaskRepository {
                     serde_json::json!(offline_json),
                     serde_json::json!(task.status.as_str()),
                     serde_json::json!(task.next_run_at),
+                    serde_json::json!(task.paused_at),
                     serde_json::json!(task.updated_at),
                     serde_json::json!(id),
                 ],
@@ -468,6 +497,7 @@ fn row_to_task(row: &serde_json::Value) -> Result<ScheduledTask, String> {
             .unwrap_or(JobStatus::Disabled),
         next_run_at: row["next_run_at"].as_i64(),
         last_run_at: row["last_run_at"].as_i64(),
+        paused_at: row.get("paused_at").and_then(|v| v.as_i64()),
         created_at: row["created_at"].as_i64().unwrap_or(0),
         updated_at: row["updated_at"].as_i64().unwrap_or(0),
     })

@@ -77,7 +77,7 @@ export interface ScheduledTaskRetryPolicy {
   backoffMs: number[];
 }
 
-export type JobStatus = 'enabled' | 'disabled' | 'completed' | 'error';
+export type JobStatus = 'enabled' | 'disabled' | 'paused' | 'completed' | 'error';
 
 export interface ScheduledTask {
   id: string;
@@ -98,6 +98,8 @@ export interface ScheduledTask {
   nextRunAt: number | null;
   /** Unix timestamp ms of last successful run */
   lastRunAt: number | null;
+  /** Unix timestamp ms when the task was paused */
+  pausedAt: number | null;
   createdAt: number;
   updatedAt: number;
 }

@@ -597,6 +597,16 @@ pub fn talkcody_migrations() -> MigrationRegistry {
         down_sql: None,
     });
 
+    // Migration 10: Add paused_at column to scheduled_tasks
+    registry.register(Migration {
+        version: 10,
+        name: "add_scheduled_tasks_paused_at",
+        up_sql: r#"
+            ALTER TABLE scheduled_tasks ADD COLUMN paused_at INTEGER DEFAULT NULL;
+        "#,
+        down_sql: Some("ALTER TABLE scheduled_tasks DROP COLUMN paused_at;"),
+    });
+
     registry
 }
 
@@ -607,6 +617,6 @@ mod tests {
     #[test]
     fn test_talkcody_migrations_count() {
         let registry = talkcody_migrations();
-        assert_eq!(registry.migrations().len(), 9);
+        assert_eq!(registry.migrations().len(), 10);
     }
 }

@@ -43,6 +43,8 @@ interface ScheduledTaskState {
   deleteTask: (id: string) => Promise<void>;
   enableTask: (id: string) => Promise<ScheduledTask>;
   disableTask: (id: string) => Promise<ScheduledTask>;
+  pauseTask: (id: string) => Promise<ScheduledTask>;
+  resumeTask: (id: string) => Promise<ScheduledTask>;
   triggerNow: (id: string) => Promise<string>;
   loadRuns: (jobId: string) => Promise<void>;
   loadStats: () => Promise<void>;
@@ -147,6 +149,17 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   enableTask: async (id: string) => get().updateTask(id, { status: 'enabled' }),
   disableTask: async (id: string) => get().updateTask(id, { status: 'disabled' }),
+  pauseTask: async (id: string) => {
+    const updated = await invoke<ScheduledTask>('pause_scheduled_task', { id });
+    set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? updated : t)) }));
+    return updated;
+  },
+  resumeTask: async (id: string) => {
+    const updated = await invoke<ScheduledTask>('resume_scheduled_task', { id });
+    set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? updated : t)) }));
+    await get().syncOfflineRunner(get().tasks.some((task) => task.offlinePolicy?.enabled));
+    return updated;
+  },
 
   triggerNow: async (id: string) => invoke<string>('trigger_scheduled_task_now', { jobId: id }),
 

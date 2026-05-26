@@ -1367,6 +1367,8 @@ export interface LocaleDefinition {
     created: string;
     updated: string;
     triggered: string;
+    paused: string;
+    resumed: string;
     noTasks: string;
     noRuns: string;
     noPreview: string;
@@ -1441,6 +1443,7 @@ export interface LocaleDefinition {
     status: {
       enabled: string;
       disabled: string;
+      paused: string;
       completed: string;
       error: string;
     };
@@ -1456,6 +1459,8 @@ export interface LocaleDefinition {
       runNow: string;
       enable: string;
       disable: string;
+      pause: string;
+      resume: string;
       viewTask: string;
       parseNaturalLanguage: string;
     };

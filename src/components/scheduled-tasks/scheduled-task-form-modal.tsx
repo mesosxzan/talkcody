@@ -84,7 +84,7 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
   const [intervalValue, setIntervalValue] = useState(30);
   const [intervalUnit, setIntervalUnit] = useState<'minutes' | 'hours' | 'days'>('minutes');
   const [cronExpr, setCronExpr] = useState('0 9 * * 1-5');
-  const [cronTz, setCronTz] = useState('');
+  const [cronTz, setCronTz] = useState('Asia/Shanghai');
   const [cronError, setCronError] = useState('');
   const [autoApproveEdits, setAutoApproveEdits] = useState(false);
   const [autoApprovePlan, setAutoApprovePlan] = useState(false);
@@ -144,7 +144,7 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
       setIntervalValue(30);
       setIntervalUnit('minutes');
       setCronExpr('0 9 * * 1-5');
-      setCronTz('');
+      setCronTz('Asia/Shanghai');
       setAutoApproveEdits(false);
       setAutoApprovePlan(false);
       setMaxAttempts(2);

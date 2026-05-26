@@ -192,6 +192,7 @@ impl Default for ScheduledTaskRetryPolicy {
 pub enum JobStatus {
     Enabled,
     Disabled,
+    Paused,
     Completed,
     Error,
 }
@@ -201,6 +202,7 @@ impl JobStatus {
         match self {
             JobStatus::Enabled => "enabled",
             JobStatus::Disabled => "disabled",
+            JobStatus::Paused => "paused",
             JobStatus::Completed => "completed",
             JobStatus::Error => "error",
         }
@@ -213,6 +215,7 @@ impl std::str::FromStr for JobStatus {
         match s {
             "enabled" => Ok(JobStatus::Enabled),
             "disabled" => Ok(JobStatus::Disabled),
+            "paused" => Ok(JobStatus::Paused),
             "completed" => Ok(JobStatus::Completed),
             "error" => Ok(JobStatus::Error),
             _ => Err(format!("Unknown job status: {}", s)),
@@ -245,6 +248,8 @@ pub struct ScheduledTask {
     pub next_run_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
 }

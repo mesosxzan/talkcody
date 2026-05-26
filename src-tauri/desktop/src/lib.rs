@@ -1198,6 +1198,8 @@ pub fn run() {
             scheduler::preview_scheduled_task_cron,
             scheduler::claim_scheduled_task_runs,
             scheduler::get_scheduled_task_stats,
+            scheduler::pause_scheduled_task,
+            scheduler::resume_scheduled_task,
             scheduled_tasks::scheduled_task_runner_status,
             scheduled_tasks::scheduled_task_runner_sync,
             scheduled_tasks::scheduled_task_runner_run_now,

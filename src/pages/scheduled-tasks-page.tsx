@@ -1,5 +1,5 @@
 // src/pages/scheduled-tasks-page.tsx
-import { ChevronDown, ChevronRight, Clock, Play, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Clock, Pause, Play, Plus, Resume, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ScheduledTaskFormModal } from '@/components/scheduled-tasks/scheduled-task-form-modal';
@@ -30,6 +30,7 @@ function JobStatusBadge({ status }: { status: JobStatus }) {
   const variantMap: Record<JobStatus, 'default' | 'secondary' | 'destructive' | 'outline'> = {
     enabled: 'default',
     disabled: 'outline',
+    paused: 'secondary',
     completed: 'secondary',
     error: 'destructive',
   };
@@ -53,6 +54,8 @@ interface TaskRowProps {
   onEdit: () => void;
   onDelete: () => void;
   onToggleEnable: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onRunNow: () => void;
 }
 
@@ -63,6 +66,8 @@ function TaskRow({
   onEdit,
   onDelete,
   onToggleEnable,
+  onPause,
+  onResume,
   onRunNow,
 }: TaskRowProps) {
   const { t } = useLocale();
@@ -105,7 +110,9 @@ function TaskRow({
             <Switch
               checked={task.status === 'enabled'}
               onCheckedChange={onToggleEnable}
-              disabled={task.status === 'completed' || task.status === 'error'}
+              disabled={
+                task.status === 'completed' || task.status === 'error' || task.status === 'paused'
+              }
             />
           </TooltipTrigger>
           <TooltipContent>
@@ -114,6 +121,30 @@ function TaskRow({
               : t.ScheduledTasks.actions.enable}
           </TooltipContent>
         </Tooltip>
+
+        {(task.status === 'enabled' || task.status === 'paused') && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0"
+                onClick={task.status === 'paused' ? onResume : onPause}
+              >
+                {task.status === 'paused' ? (
+                  <Play className="h-3.5 w-3.5" />
+                ) : (
+                  <Pause className="h-3.5 w-3.5" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {task.status === 'paused'
+                ? t.ScheduledTasks.actions.resume
+                : t.ScheduledTasks.actions.pause}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         <Tooltip>
           <TooltipTrigger asChild>
@@ -166,6 +197,8 @@ export function ScheduledTasksPage() {
     deleteTask,
     enableTask,
     disableTask,
+    pauseTask,
+    resumeTask,
     triggerNow,
   } = useScheduledTaskStore();
 
@@ -208,6 +241,24 @@ export function ScheduledTasksPage() {
       } else {
         await enableTask(task.id);
       }
+    } catch (err) {
+      toast.error(String(err));
+    }
+  };
+
+  const handlePause = async (task: ScheduledTask) => {
+    try {
+      await pauseTask(task.id);
+      toast.success(t.ScheduledTasks.paused);
+    } catch (err) {
+      toast.error(String(err));
+    }
+  };
+
+  const handleResume = async (task: ScheduledTask) => {
+    try {
+      await resumeTask(task.id);
+      toast.success(t.ScheduledTasks.resumed);
     } catch (err) {
       toast.error(String(err));
     }
@@ -288,6 +339,8 @@ export function ScheduledTasksPage() {
                   }}
                   onDelete={() => setDeleteTarget(task)}
                   onToggleEnable={() => handleToggleEnable(task)}
+                  onPause={() => handlePause(task)}
+                  onResume={() => handleResume(task)}
                   onRunNow={() => handleRunNow(task)}
                 />
               ))}

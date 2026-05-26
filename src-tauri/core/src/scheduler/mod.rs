@@ -295,6 +295,7 @@ pub async fn create_scheduled_task(
         status: JobStatus::Enabled,
         next_run_at,
         last_run_at: None,
+        paused_at: None,
         created_at: now_ms,
         updated_at: now_ms,
     };
@@ -355,6 +356,7 @@ pub async fn update_scheduled_task(
         status: request.status.unwrap_or(existing.status),
         next_run_at,
         last_run_at: existing.last_run_at,
+        paused_at: existing.paused_at,
         created_at: existing.created_at,
         updated_at: now_ms,
     };
@@ -453,6 +455,39 @@ pub fn preview_scheduled_task_cron(
         count.unwrap_or(5),
         job_id.as_deref().unwrap_or("preview"),
     )
+}
+
+#[tauri::command]
+pub async fn pause_scheduled_task(
+    db: tauri::State<'_, Arc<Database>>,
+    id: String,
+) -> Result<ScheduledTask, String> {
+    let repo = ScheduledTaskRepository::new(Arc::clone(&db));
+    repo.pause_task(&id).await?;
+    repo.find_by_id(&id)
+        .await?
+        .ok_or_else(|| format!("Scheduled task not found: {}", id))
+}
+
+#[tauri::command]
+pub async fn resume_scheduled_task(
+    db: tauri::State<'_, Arc<Database>>,
+    id: String,
+) -> Result<ScheduledTask, String> {
+    let repo = ScheduledTaskRepository::new(Arc::clone(&db));
+    let existing = repo
+        .find_by_id(&id)
+        .await?
+        .ok_or_else(|| format!("Scheduled task not found: {}", id))?;
+
+    let now_ms = now_unix_ms();
+    let next_run_at =
+        compute_next_run_at(&existing.schedule, &existing.execution_policy, now_ms, &id).ok();
+
+    repo.resume_task(&id, next_run_at).await?;
+    repo.find_by_id(&id)
+        .await?
+        .ok_or_else(|| format!("Scheduled task not found: {}", id))
 }
 
 #[tauri::command]
