@@ -2259,6 +2259,11 @@ const zh: LocaleDefinition = {
     },
   },
 
+  FileEditor: {
+    editMode: '编辑模式',
+    previewMode: '预览模式',
+  },
+
   Proxy: {
     title: '代理设置',
     description: '配置网络连接的代理设置',

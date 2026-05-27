@@ -3,12 +3,14 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import type { editor } from 'monaco-editor';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import MarkdownPreview from '@/components/file-editor/markdown-preview';
 import { Button } from '@/components/ui/button';
 import { EDITOR_OPTIONS } from '@/constants/editor';
 import { useTheme } from '@/hooks/use-theme';
 import { logger } from '@/lib/logger';
 import { createTextModelService } from '@/services/monaco-text-model-service';
 import { repositoryService } from '@/services/repository-service';
+import type { EditorViewMode } from '@/types/file-editor';
 import { setupMonacoDiagnostics, setupMonacoTheme } from '@/utils/monaco-utils';
 
 const MONACO_LOAD_RETRY_INTERVAL = 100;
@@ -151,10 +153,11 @@ function BinaryFileWarning({ onOpenAnyway }: { onOpenAnyway: () => void }) {
 
 interface FileEditorContentProps {
   filePath: string;
-  currentContent: string;
+  currentContent: string | null;
   onContentChange: (value: string | undefined) => void;
   onEditorDidMount: (editor: editor.IStandaloneCodeEditor, monaco: Monaco) => void;
   onSave: () => void;
+  viewMode?: EditorViewMode;
 }
 
 export function FileEditorContent({
@@ -163,6 +166,7 @@ export function FileEditorContent({
   onContentChange,
   onEditorDidMount,
   onSave,
+  viewMode = 'edit',
 }: FileEditorContentProps) {
   const fileName = repositoryService.getFileNameFromPath(filePath);
   const language = repositoryService.getLanguageFromExtension(fileName);
@@ -180,6 +184,7 @@ export function FileEditorContent({
   // Check file type
   const isImage = isImageFile(filePath);
   const isBinary = isBinaryFile(filePath);
+  const isMarkdown = language === 'markdown';
 
   // Use useMonaco hook to get Monaco instance before editor renders
   // This allows us to create overrideServices with the Monaco instance
@@ -310,6 +315,15 @@ export function FileEditorContent({
     onEditorDidMount(editor, monaco);
   };
 
+  // Render Markdown preview if in preview mode (after all hooks are called)
+  if (isMarkdown && viewMode === 'preview') {
+    return (
+      <div className="min-h-0 flex-1">
+        <MarkdownPreview content={currentContent || ''} className="h-full" />
+      </div>
+    );
+  }
+
   // Render image preview for image files
   if (isImage) {
     return (
@@ -357,7 +371,7 @@ export function FileEditorContent({
         options={EDITOR_OPTIONS}
         overrideServices={overrideServices}
         theme={resolvedTheme === 'light' ? 'light-ai' : 'vs-dark-ai'}
-        value={currentContent}
+        value={currentContent ?? undefined}
       />
     </div>
   );

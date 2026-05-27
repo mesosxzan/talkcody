@@ -2321,6 +2321,11 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
     },
   },
 
+  FileEditor: {
+    editMode: 'Edit Mode',
+    previewMode: 'Preview Mode',
+  },
+
   Proxy: {
     title: 'Proxy Settings',
     description: 'Configure proxy settings for network connections',

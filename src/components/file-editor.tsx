@@ -8,9 +8,10 @@ import { useLintDiagnostics } from '@/hooks/use-lint-diagnostics';
 import { useLsp } from '@/hooks/use-lsp';
 import { useMonacoEditor } from '@/hooks/use-monaco-editor';
 import { logger } from '@/lib/logger';
+import { repositoryService } from '@/services/repository-service';
 import { useLintStore } from '@/stores/lint-store';
 import { useRepositoryStore } from '@/stores/window-scoped-repository-store';
-import type { FileEditorProps } from '@/types/file-editor';
+import type { EditorViewMode, FileEditorProps } from '@/types/file-editor';
 import { DiffFileEditor } from './file-editor/diff-file-editor';
 import { FileEditorContent } from './file-editor/file-editor-content';
 import { FileEditorEmptyState } from './file-editor/file-editor-empty-state';
@@ -38,6 +39,15 @@ export function FileEditor({
 
   // Lint settings - only subscribe to enabled state to avoid unnecessary re-renders
   const lintEnabled = useLintStore((state) => state.settings.enabled);
+
+  // View mode state for Markdown preview
+  const [viewMode, setViewMode] = React.useState<EditorViewMode>('edit');
+
+  // Reset view mode when file changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally reset state when filePath changes
+  React.useEffect(() => {
+    setViewMode('edit');
+  }, [filePath]);
 
   // Handle cross-file navigation from Monaco editor
   const handleOpenFile = React.useCallback(
@@ -247,6 +257,11 @@ export function FileEditor({
   const displayHasUnsavedChanges =
     propHasUnsavedChanges !== undefined ? propHasUnsavedChanges : hasUnsavedChanges;
 
+  // Check if current file is a Markdown file
+  const fileName = filePath ? repositoryService.getFileNameFromPath(filePath) : '';
+  const language = repositoryService.getLanguageFromExtension(fileName);
+  const isMarkdownFile = language === 'markdown';
+
   return (
     <div className="flex h-full flex-1 flex-col">
       <FileEditorHeader
@@ -256,6 +271,9 @@ export function FileEditor({
         isAICompleting={isAICompleting}
         isSaving={isSaving}
         lastSavedTime={lastSavedTime}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        isMarkdownFile={isMarkdownFile}
       />
 
       <FileEditorContent
@@ -264,6 +282,7 @@ export function FileEditor({
         onContentChange={handleContentChangeWithCallback}
         onEditorDidMount={handleEditorDidMountWithGit}
         onSave={() => saveFileInternal(filePath, currentContent)}
+        viewMode={viewMode}
       />
     </div>
   );

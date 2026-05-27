@@ -1,14 +1,15 @@
-import { AlertCircle, AlertTriangle, Info } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Eye, FileCode, Info } from 'lucide-react';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/use-locale';
 import { projectIndexer } from '@/services/project-indexer';
 import { repositoryService } from '@/services/repository-service';
 import { getRelativePath } from '@/services/repository-utils';
 import { useLintStore } from '@/stores/lint-store';
 import { useRepositoryStore } from '@/stores/window-scoped-repository-store';
-import type { AICompletionState } from '@/types/file-editor';
+import type { AICompletionState, EditorViewMode } from '@/types/file-editor';
 import { formatLastSavedTime } from '@/utils/monaco-utils';
 
 interface FileEditorHeaderProps {
@@ -18,6 +19,9 @@ interface FileEditorHeaderProps {
   isAICompleting: boolean;
   currentAICompletion: AICompletionState | null;
   lastSavedTime: Date | null;
+  viewMode?: EditorViewMode;
+  onViewModeChange?: (mode: EditorViewMode) => void;
+  isMarkdownFile?: boolean;
 }
 
 export function FileEditorHeader({
@@ -27,6 +31,9 @@ export function FileEditorHeader({
   isAICompleting,
   currentAICompletion,
   lastSavedTime,
+  viewMode = 'edit',
+  onViewModeChange,
+  isMarkdownFile = false,
 }: FileEditorHeaderProps) {
   const t = useTranslation();
   const fileName = repositoryService.getFileNameFromPath(filePath);
@@ -94,6 +101,39 @@ export function FileEditorHeader({
         </div>
 
         <div className="flex flex-shrink-0 items-center gap-2">
+          {/* Markdown view mode toggle */}
+          {isMarkdownFile && onViewModeChange && (
+            <TooltipProvider>
+              <div className="flex items-center gap-1 rounded-md bg-muted p-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onViewModeChange('edit')}
+                      className={`h-7 px-2 ${viewMode === 'edit' ? 'bg-background shadow-sm' : ''}`}
+                    >
+                      <FileCode className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t.FileEditor.editMode}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onViewModeChange('preview')}
+                      className={`h-7 px-2 ${viewMode === 'preview' ? 'bg-background shadow-sm' : ''}`}
+                    >
+                      <Eye className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t.FileEditor.previewMode}</TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
+          )}
           <span className="rounded bg-gray-200 px-2 py-0.5 text-xs dark:bg-gray-700">
             {language}
           </span>

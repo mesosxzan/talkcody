@@ -2228,6 +2228,11 @@ export interface LocaleDefinition {
     };
   };
 
+  FileEditor: {
+    editMode: string;
+    previewMode: string;
+  };
+
   // Claude Usage Dashboard
   usage: {
     title: string;

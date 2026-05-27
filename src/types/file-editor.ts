@@ -1,5 +1,7 @@
 import type { IPosition } from 'monaco-editor';
 
+export type EditorViewMode = 'edit' | 'preview';
+
 export interface DiffInfo {
   additions: number;
   deletions: number;

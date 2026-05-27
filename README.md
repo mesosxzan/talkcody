@@ -1,7 +1,4 @@
 
-<div align="center">
-
-<h1 style="border-bottom: none;">TalkCody</h1>
 
 **Free, Open-Source AI Coding Agent**
 
@@ -12,7 +9,6 @@
 
 [![TalkCody](https://cdn.talkcody.com/images/talkcody-architecture.jpg)](https://talkcody.com)
 
-</div>
 
 ## Overview
 
