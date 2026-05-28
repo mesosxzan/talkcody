@@ -72,6 +72,7 @@ interface GitStore {
   commit: (message: string) => Promise<string>;
   stageAll: () => Promise<void>;
   discardChanges: (filePath: string) => Promise<void>;
+  deleteUntrackedFile: (filePath: string) => Promise<void>;
   push: (remote?: string, branch?: string) => Promise<string>;
   pull: (remote?: string, branch?: string) => Promise<string>;
   cancelPush: () => Promise<void>;
@@ -750,6 +751,24 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().refreshStatus();
     } catch (error) {
       logger.error('Failed to discard changes:', error);
+      throw error;
+    }
+  },
+
+  // Delete an untracked file from the working directory
+  deleteUntrackedFile: async (filePath: string) => {
+    const { repositoryPath } = get();
+    if (!repositoryPath) {
+      throw new Error('No repository path set');
+    }
+
+    try {
+      await gitService.deleteUntrackedFile(repositoryPath, filePath);
+      logger.info(`Deleted untracked file: ${filePath}`);
+      // Refresh status after deletion
+      await get().refreshStatus();
+    } catch (error) {
+      logger.error('Failed to delete untracked file:', error);
       throw error;
     }
   },

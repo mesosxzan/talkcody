@@ -2724,6 +2724,9 @@ export interface LocaleDefinition {
     discard: string;
     discardConfirm: string;
     discardDescription: string;
+    deleteFile: string;
+    deleteFileConfirm: string;
+    deleteFileDescription: string;
     generateMessage: string;
     generating: string;
     refresh: string;
@@ -2812,6 +2815,8 @@ export interface LocaleDefinition {
       stageSuccess: string;
       unstageSuccess: string;
       discardSuccess: string;
+      deleteFileSuccess: string;
+      deleteFileFailed: string;
       commitSuccess: string;
       generateSuccess: string;
       noStagedChanges: string;

@@ -1,5 +1,7 @@
-import { FileText, Minus, Plus, X } from 'lucide-react';
+import { FileText, Minus, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useLocale } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import type { FileStatus } from '@/types/git';
 import { GitFileStatus } from '@/types/git';
@@ -10,6 +12,7 @@ interface GitFileItemProps {
   onToggleStage: (filePath: string, stage: boolean) => void;
   onFileClick: (filePath: string) => void;
   onDiscard?: (filePath: string) => void;
+  onDelete?: (filePath: string) => void;
 }
 
 export function GitFileItem({
@@ -18,9 +21,15 @@ export function GitFileItem({
   onToggleStage,
   onFileClick,
   onDiscard,
+  onDelete,
 }: GitFileItemProps) {
+  const { t } = useLocale();
   const statusIcon = getStatusIcon(file.status);
   const statusColor = getStatusColor(file.status);
+
+  // Determine which action button to show (discard or delete)
+  const showDiscard = !isStaged && file.status !== GitFileStatus.Untracked && onDiscard;
+  const showDelete = !isStaged && file.status === GitFileStatus.Untracked && onDelete;
 
   return (
     <div className="group flex items-center gap-2 rounded px-2 py-1.5 hover:bg-muted/50">
@@ -54,18 +63,43 @@ export function GitFileItem({
       </button>
 
       {/* Discard button (only for unstaged modified files) */}
-      {!isStaged && file.status !== GitFileStatus.Untracked && onDiscard && (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDiscard(file.path);
-          }}
-        >
-          <X className="h-3 w-3 text-muted-foreground hover:text-destructive" />
-        </Button>
+      {showDiscard && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDiscard(file.path);
+              }}
+            >
+              <X className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">{t.Git.discard}</TooltipContent>
+        </Tooltip>
+      )}
+
+      {/* Delete button (only for unstaged untracked files) */}
+      {showDelete && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(file.path);
+              }}
+            >
+              <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">{t.Git.deleteFile}</TooltipContent>
+        </Tooltip>
       )}
     </div>
   );

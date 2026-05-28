@@ -24,6 +24,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
   const unstageFiles = useGitStore((state) => state.unstageFiles);
   const commit = useGitStore((state) => state.commit);
   const discardChanges = useGitStore((state) => state.discardChanges);
+  const deleteUntrackedFile = useGitStore((state) => state.deleteUntrackedFile);
   const push = useGitStore((state) => state.push);
   const cancelPush = useGitStore((state) => state.cancelPush);
   const isPushing = useGitStore((state) => state.isPushing);
@@ -99,6 +100,17 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
     } catch (error) {
       logger.error('Failed to discard changes:', error);
       toast.error(t.Git.messages.discardSuccess);
+    }
+  };
+
+  // Handle delete untracked file
+  const handleDelete = async (filePath: string) => {
+    try {
+      await deleteUntrackedFile(filePath);
+      toast.success(t.Git.messages.deleteFileSuccess);
+    } catch (error) {
+      logger.error('Failed to delete untracked file:', error);
+      toast.error(t.Git.messages.deleteFileFailed);
     }
   };
 
@@ -286,6 +298,7 @@ export function GitCommitPanel({ onFileClick }: GitCommitPanelProps) {
             isStaged={false}
             onToggleStage={handleToggleStage}
             onFileClick={handleFileClick}
+            onDelete={handleDelete}
             defaultExpanded={false}
             title={t.Git.untracked}
             maxVisibleHeight={180}

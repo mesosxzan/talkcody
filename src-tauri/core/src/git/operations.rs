@@ -220,6 +220,43 @@ pub fn discard_changes(repo_path: &str, file_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Delete an untracked file from the working directory
+/// This permanently removes the file from disk (equivalent to `rm` on the file)
+pub fn delete_untracked_file(repo_path: &str, file_path: &str) -> Result<(), String> {
+    if !Path::new(repo_path).exists() {
+        return Err(format!("Repository path does not exist: {}", repo_path));
+    }
+
+    let full_path = Path::new(repo_path).join(file_path);
+
+    // Security check: ensure the resolved path is within the repository
+    let canonical_repo = std::fs::canonicalize(repo_path)
+        .map_err(|e| format!("Failed to resolve repository path: {}", e))?;
+    let canonical_file = full_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve file path: {}", e))?;
+
+    if !canonical_file.starts_with(&canonical_repo) {
+        return Err(format!(
+            "File path '{}' is outside the repository",
+            file_path
+        ));
+    }
+
+    // Only allow deleting files, not directories
+    if !canonical_file.is_file() {
+        return Err(format!(
+            "Path '{}' is not a regular file. Only files can be deleted.",
+            file_path
+        ));
+    }
+
+    std::fs::remove_file(&canonical_file)
+        .map_err(|e| format!("Failed to delete file '{}': {}", file_path, e))?;
+
+    Ok(())
+}
+
 /// Push commits to remote repository (sync version)
 pub fn push(repo_path: &str, remote: Option<&str>, branch: Option<&str>) -> Result<String, String> {
     if !Path::new(repo_path).exists() {

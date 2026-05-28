@@ -1070,6 +1070,7 @@ pub fn run() {
             git::git_commit,
             git::git_stage_all,
             git::git_discard_changes,
+            git::git_delete_untracked_file,
             git::git_get_file_diff,
             git::git_push,
             git::git_push_async,

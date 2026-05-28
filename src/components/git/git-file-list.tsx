@@ -12,6 +12,7 @@ interface GitFileListProps {
   onToggleStage: (filePath: string, stage: boolean) => void;
   onFileClick: (filePath: string) => void;
   onDiscard?: (filePath: string) => void;
+  onDelete?: (filePath: string) => void;
   defaultExpanded?: boolean;
   title: string;
   maxVisibleHeight?: number;
@@ -25,6 +26,7 @@ export function GitFileList({
   onToggleStage,
   onFileClick,
   onDiscard,
+  onDelete,
   defaultExpanded = true,
   title,
   maxVisibleHeight = 200,
@@ -124,6 +126,7 @@ export function GitFileList({
               onToggleStage={onToggleStage}
               onFileClick={onFileClick}
               onDiscard={onDiscard}
+              onDelete={onDelete}
             />
           ))}
         </div>

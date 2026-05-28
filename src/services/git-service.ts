@@ -103,6 +103,14 @@ export class GitService {
   }
 
   /**
+   * Delete an untracked file from the working directory
+   * This permanently removes the file from disk
+   */
+  async deleteUntrackedFile(repoPath: string, filePath: string): Promise<void> {
+    return invoke<void>('git_delete_untracked_file', { repoPath, filePath });
+  }
+
+  /**
    * Gets diff for a specific file
    */
   async getFileDiff(repoPath: string, filePath: string): Promise<FileDiff> {

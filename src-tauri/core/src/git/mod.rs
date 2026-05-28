@@ -259,6 +259,12 @@ pub async fn git_discard_changes(repo_path: String, file_path: String) -> Result
     operations::discard_changes(&repo_path, &file_path)
 }
 
+/// Delete an untracked file from the working directory
+#[tauri::command]
+pub async fn git_delete_untracked_file(repo_path: String, file_path: String) -> Result<(), String> {
+    operations::delete_untracked_file(&repo_path, &file_path)
+}
+
 /// Get diff for a specific file
 #[tauri::command]
 pub async fn git_get_file_diff(repo_path: String, file_path: String) -> Result<FileDiff, String> {
