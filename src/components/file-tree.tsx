@@ -1,5 +1,6 @@
 // src/components/file-tree.tsx
 import { ask } from '@tauri-apps/plugin-dialog';
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import {
   ChevronDown,
   ChevronRight,
@@ -8,6 +9,8 @@ import {
   Edit,
   File,
   Folder,
+  FolderOpen,
+  Globe,
   Plus,
   RefreshCw,
   Scissors,
@@ -450,6 +453,34 @@ function FileTreeNode({
     toast.success(t.FileTree.success.refreshed);
   };
 
+  const handleRevealInFolder = async () => {
+    try {
+      await revealItemInDir(node.path);
+    } catch (error) {
+      logger.error('Failed to reveal item in folder:', error);
+      toast.error(
+        t.FileTree.errors.failedToRevealInFolder(
+          error instanceof Error ? error.message : 'Unknown error'
+        )
+      );
+    }
+  };
+
+  const handleOpenInBrowser = async () => {
+    try {
+      await openPath(node.path);
+    } catch (error) {
+      logger.error('Failed to open file in browser:', error);
+      toast.error(
+        t.FileTree.errors.failedToOpenInBrowser(
+          error instanceof Error ? error.message : 'Unknown error'
+        )
+      );
+    }
+  };
+
+  const isHtmlFile = !node.is_directory && /^(.+)\.(html|htm)$/i.test(node.name);
+
   const isSelected = selectedFile === node.path;
   const isCut = clipboardState?.type === 'cut' && clipboardState.paths.includes(node.path);
   const isGitIgnored = node.is_git_ignored ?? false;
@@ -604,6 +635,17 @@ function FileTreeNode({
             <ContextMenuItem onClick={handleCopyRelativePath}>
               <Copy className="mr-2 h-4 w-4" />
               {t.FileTree.contextMenu.copyRelativePath}
+            </ContextMenuItem>
+          )}
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={handleRevealInFolder}>
+            <FolderOpen className="mr-2 h-4 w-4" />
+            {t.FileTree.contextMenu.openInFolder}
+          </ContextMenuItem>
+          {isHtmlFile && (
+            <ContextMenuItem onClick={handleOpenInBrowser}>
+              <Globe className="mr-2 h-4 w-4" />
+              {t.FileTree.contextMenu.openInBrowser}
             </ContextMenuItem>
           )}
           <ContextMenuSeparator />

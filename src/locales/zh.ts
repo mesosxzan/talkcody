@@ -1895,6 +1895,8 @@ const zh: LocaleDefinition = {
       pasteFailed: (message) => `粘贴失败：${message}`,
       deleteFailed: (name, message) => `无法删除 ${name}：${message}`,
       repositoryPathNotAvailable: '仓库路径不可用',
+      failedToRevealInFolder: (message) => `在文件管理器中显示失败：${message}`,
+      failedToOpenInBrowser: (message) => `在浏览器中打开失败：${message}`,
     },
     contextMenu: {
       newFile: '新建文件',
@@ -1907,6 +1909,8 @@ const zh: LocaleDefinition = {
       deleting: '删除中...',
       copyPath: '复制路径',
       copyRelativePath: '复制相对路径',
+      openInFolder: '在文件管理器中显示',
+      openInBrowser: '在浏览器中打开',
       refresh: '刷新',
     },
     placeholder: {
@@ -2265,6 +2269,7 @@ const zh: LocaleDefinition = {
   FileEditor: {
     editMode: '编辑模式',
     previewMode: '预览模式',
+    openInBrowser: '在浏览器中打开',
   },
 
   Proxy: {

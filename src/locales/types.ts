@@ -1869,6 +1869,8 @@ export interface LocaleDefinition {
       pasteFailed: (message: string) => string;
       deleteFailed: (name: string, message: string) => string;
       repositoryPathNotAvailable: string;
+      failedToRevealInFolder: (message: string) => string;
+      failedToOpenInBrowser: (message: string) => string;
     };
     contextMenu: {
       newFile: string;
@@ -1881,6 +1883,8 @@ export interface LocaleDefinition {
       deleting: string;
       copyPath: string;
       copyRelativePath: string;
+      openInFolder: string;
+      openInBrowser: string;
       refresh: string;
     };
     placeholder: {
@@ -2234,6 +2238,7 @@ export interface LocaleDefinition {
   FileEditor: {
     editMode: string;
     previewMode: string;
+    openInBrowser: string;
   };
 
   // Claude Usage Dashboard

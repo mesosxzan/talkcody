@@ -9,6 +9,22 @@
     "core:default",
     "core:event:allow-listen",
     "opener:default",
+    "opener:allow-reveal-item-in-dir",
+    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-reveal-item-in-dir",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "**" }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "**" }
+      ]
+    },
     "dialog:default",
     "fs:default",
     "fs:allow-fstat",

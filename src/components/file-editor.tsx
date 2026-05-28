@@ -261,6 +261,7 @@ export function FileEditor({
   const fileName = filePath ? repositoryService.getFileNameFromPath(filePath) : '';
   const language = repositoryService.getLanguageFromExtension(fileName);
   const isMarkdownFile = language === 'markdown';
+  const isHtmlFile = /^(.+)\.(html|htm)$/i.test(fileName ?? '');
 
   return (
     <div className="flex h-full flex-1 flex-col">
@@ -274,6 +275,7 @@ export function FileEditor({
         viewMode={viewMode}
         onViewModeChange={setViewMode}
         isMarkdownFile={isMarkdownFile}
+        isHtmlFile={isHtmlFile}
       />
 
       <FileEditorContent

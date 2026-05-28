@@ -1950,6 +1950,8 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
       pasteFailed: (message) => `Paste failed: ${message}`,
       deleteFailed: (name, message) => `Failed to delete ${name}: ${message}`,
       repositoryPathNotAvailable: 'Repository path not available',
+      failedToRevealInFolder: (message) => `Failed to reveal in file manager: ${message}`,
+      failedToOpenInBrowser: (message) => `Failed to open in browser: ${message}`,
     },
     contextMenu: {
       newFile: 'New File',
@@ -1962,6 +1964,8 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
       deleting: 'Deleting...',
       copyPath: 'Copy Path',
       copyRelativePath: 'Copy Relative Path',
+      openInFolder: 'Reveal in File Manager',
+      openInBrowser: 'Open in Browser',
       refresh: 'Refresh',
     },
     placeholder: {
@@ -2327,6 +2331,7 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
   FileEditor: {
     editMode: 'Edit Mode',
     previewMode: 'Preview Mode',
+    openInBrowser: 'Open in Browser',
   },
 
   Proxy: {

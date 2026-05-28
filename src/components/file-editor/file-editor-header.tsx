@@ -1,4 +1,5 @@
-import { AlertCircle, AlertTriangle, Eye, FileCode, Info } from 'lucide-react';
+import { openPath } from '@tauri-apps/plugin-opener';
+import { AlertCircle, AlertTriangle, Eye, FileCode, Globe, Info } from 'lucide-react';
 import { useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +23,7 @@ interface FileEditorHeaderProps {
   viewMode?: EditorViewMode;
   onViewModeChange?: (mode: EditorViewMode) => void;
   isMarkdownFile?: boolean;
+  isHtmlFile?: boolean;
 }
 
 export function FileEditorHeader({
@@ -34,6 +36,7 @@ export function FileEditorHeader({
   viewMode = 'edit',
   onViewModeChange,
   isMarkdownFile = false,
+  isHtmlFile = false,
 }: FileEditorHeaderProps) {
   const t = useTranslation();
   const fileName = repositoryService.getFileNameFromPath(filePath);
@@ -132,6 +135,24 @@ export function FileEditorHeader({
                   <TooltipContent>{t.FileEditor.previewMode}</TooltipContent>
                 </Tooltip>
               </div>
+            </TooltipProvider>
+          )}
+          {/* HTML open in browser button */}
+          {isHtmlFile && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => openPath(filePath)}
+                    className="h-7 gap-1.5 px-2"
+                  >
+                    <Globe className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t.FileEditor.openInBrowser}</TooltipContent>
+              </Tooltip>
             </TooltipProvider>
           )}
           <span className="rounded bg-gray-200 px-2 py-0.5 text-xs dark:bg-gray-700">
