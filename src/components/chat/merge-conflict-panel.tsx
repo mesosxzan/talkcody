@@ -42,7 +42,8 @@ export function MergeConflictPanel({
         {/* Conflicted files list */}
         <div className="space-y-1 max-h-40 overflow-y-auto">
           {conflictedFiles.map((filePath) => {
-            const fileName = filePath.split('/').pop() || filePath;
+            // Handle both Windows and Unix path separators
+            const fileName = filePath.split(/[/\\]/).pop() || filePath;
             return (
               <div
                 key={filePath}

@@ -23,7 +23,8 @@ export function CurrentFileButton({ disabled, onAddFile }: CurrentFileButtonProp
   }
 
   // Get filename for tooltip
-  const fileName = currentFile.path.split('/').pop() || currentFile.path;
+  // Handle both Windows and Unix path separators
+  const fileName = currentFile.path.split(/[/\\]/).pop() || currentFile.path;
 
   return (
     <Tooltip>

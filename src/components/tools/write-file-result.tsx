@@ -7,7 +7,8 @@ interface WriteFileResultProps {
 }
 
 export function WriteFileResult({ filePath, content }: WriteFileResultProps) {
-  const fileName = filePath.split('/').pop() || filePath;
+  // Handle both Windows and Unix path separators
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
   const lineCount = content.split('\n').length;
 
   return (

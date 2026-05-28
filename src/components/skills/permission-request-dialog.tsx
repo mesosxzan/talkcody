@@ -83,7 +83,8 @@ export function PermissionRequestDialog({
   }
 
   const requestedLevelInfo = PERMISSION_LEVELS.find((l) => l.value === request.requestedLevel);
-  const scriptFileName = request.scriptPath.split('/').pop() || request.scriptPath;
+  // Handle both Windows and Unix path separators
+  const scriptFileName = request.scriptPath.split(/[/\\]/).pop() || request.scriptPath;
 
   const handleGrant = () => {
     onDecide(true, selectedLevel, rememberDecision);

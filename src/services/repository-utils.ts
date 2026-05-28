@@ -76,6 +76,58 @@ export function getFileNameFromPath(path: string): string {
   return normalizedPath.split(PATH_SEPARATOR_REGEX).filter(Boolean).pop() || path;
 }
 
+/**
+ * Get the directory name from a file path (cross-platform).
+ * Works with both Unix (/) and Windows (\) path separators.
+ * Equivalent to POSIX dirname or Node.js path.dirname.
+ */
+export function getDirectoryNameFromPath(filePath: string): string {
+  const normalizedPath = normalizeSeparators(filePath).replace(/\/+$/, '');
+  if (!normalizedPath) return filePath;
+
+  const segments = normalizedPath.split(PATH_SEPARATOR_REGEX).filter(Boolean);
+  if (segments.length <= 1) {
+    // Root path or single segment (e.g., "C:" on Windows)
+    return normalizedPath;
+  }
+
+  return segments.slice(0, -1).join('/');
+}
+
+/**
+ * Check if a path is an absolute path (cross-platform).
+ * Handles Unix absolute paths (/...), Windows absolute paths (C:\...),
+ * and Windows UNC paths (\\server\share\...).
+ */
+export function isAbsolutePath(filePath: string): boolean {
+  if (!filePath) return false;
+  return (
+    filePath.startsWith('/') ||
+    WINDOWS_PATH_REGEX.test(filePath) ||
+    filePath.startsWith('\\\\') ||
+    filePath.startsWith('\\\\?\\')
+  );
+}
+
+/**
+ * Get the last segment of a directory path, useful for display names.
+ * Handles both Unix and Windows paths.
+ * Example: "C:\Users\dev\project" -> "project"
+ * Example: "/home/user/project" -> "project"
+ */
+export function getDirectoryNameDisplay(path: string): string {
+  const normalizedPath = normalizeSeparators(path).replace(/\/+$/, '');
+  if (!normalizedPath) return path;
+
+  const segments = normalizedPath.split(PATH_SEPARATOR_REGEX).filter(Boolean);
+  // On Windows, don't return just the drive letter (e.g., "C:")
+  if (segments.length <= 1 && /^[A-Za-z]:$/.test(segments[0] || '')) {
+    return normalizedPath;
+  }
+
+  return segments[segments.length - 1] || path;
+}
+
 export function getFileExtension(filename: string): string {
   return filename.split('.').pop()?.toLowerCase() || '';
 }

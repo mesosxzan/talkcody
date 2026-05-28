@@ -56,9 +56,16 @@ function sanitizePath(path: string): string {
     return path.replace(/^\/Users\/[^/]+/, '~');
   }
 
-  // Handle Windows local paths (C:\Users\username\...)
-  if (path.match(/^[A-Z]:\\Users\\/i)) {
-    return path.replace(/^[A-Z]:\\Users\\[^\\]+/i, '~').replace(/\\/g, '/');
+  // Handle Windows local paths with forward slashes (C:/Users/username/...)
+  // Normalized by Tauri path APIs or after replace(/\\/g, '/')
+  if (path.match(/^[A-Za-z]:\/Users\//i)) {
+    return path.replace(/^[A-Za-z]:\/Users\/[^/]+/i, '~');
+  }
+
+  // Handle Windows local paths with backslashes (C:\Users\username\...)
+  // Raw Windows paths that haven't been normalized
+  if (path.match(/^[A-Za-z]:\\Users\\/i)) {
+    return path.replace(/^[A-Za-z]:\\Users\\[^\\]+/i, '~').replace(/\\/g, '/');
   }
 
   // Handle Windows network paths (\\server\share\...)

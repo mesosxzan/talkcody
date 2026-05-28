@@ -139,9 +139,25 @@ export function shortcutMatches(event: KeyboardEvent, config: ShortcutConfig): b
     return false;
   }
 
+  // On Windows/Linux, metaKey corresponds to the Windows/Super key, not Ctrl.
+  // Since our convention maps meta -> Ctrl on non-macOS, we need to check
+  // ctrlKey when meta is configured on Windows/Linux.
+  const isMac = navigator.userAgent.includes('Macintosh');
+
+  if (isMac) {
+    // macOS: meta -> Cmd key (event.metaKey)
+    return (
+      Boolean(event.metaKey) === Boolean(config.modifiers.meta) &&
+      Boolean(event.ctrlKey) === Boolean(config.modifiers.ctrl) &&
+      Boolean(event.altKey) === Boolean(config.modifiers.alt) &&
+      Boolean(event.shiftKey) === Boolean(config.modifiers.shift)
+    );
+  }
+
+  // Windows/Linux: meta -> Ctrl key (event.ctrlKey)
   return (
-    Boolean(event.metaKey) === Boolean(config.modifiers.meta) &&
-    Boolean(event.ctrlKey) === Boolean(config.modifiers.ctrl) &&
+    Boolean(event.ctrlKey) === Boolean(config.modifiers.meta) &&
+    Boolean(event.metaKey) === Boolean(config.modifiers.ctrl) &&
     Boolean(event.altKey) === Boolean(config.modifiers.alt) &&
     Boolean(event.shiftKey) === Boolean(config.modifiers.shift)
   );

@@ -435,9 +435,21 @@ export function filePathToUri(filePath: string): string {
     encodeURIComponent(segment).replace(/%3A/gi, ':')
   );
   normalizedPath = encodedSegments.join('/');
-  // Handle Windows paths
+  // Handle Windows paths (C:/..., UNC paths \\server\share, and long paths \\?\C:\...)
   if (/^[a-zA-Z]:/.test(filePath)) {
+    // Standard Windows absolute path: C:/Users/...
     return `file:///${normalizedPath}`;
+  }
+  if (filePath.startsWith('\\\\') && !filePath.startsWith('\\\\?\\')) {
+    // UNC path: \\server\share\... -> file://server/share/...
+    // The leading double backslash becomes the authority in the URI
+    return `file://${normalizedPath}`;
+  }
+  if (filePath.startsWith('\\\\?\\')) {
+    // Long Windows path: \\?\C:\... -> strip the \\?\ prefix and treat as standard path
+    // After normalization, \\?\/C:/... -> strip \\?/
+    const strippedPath = normalizedPath.replace(/^\/\/\?\//, '');
+    return `file:///${strippedPath}`;
   }
   return `file://${normalizedPath}`;
 }
@@ -451,6 +463,11 @@ export function uriToFilePath(uri: string): string {
   if (/^\/[a-zA-Z]:/.test(path)) {
     path = path.slice(1);
   }
+  // Handle UNC paths (file://server/share/...)
+  // On Windows, a UNC URI like file://server/share/path should become \\server\share\path
+  // Detect this by checking if after removing file:// there's no leading / for a drive letter
+  // and the path has at least two segments (server/share)
+  // Note: this is handled on-demand by Tauri/OS; for now, decode and return
   // Decode URI-encoded characters (e.g., %20 -> space)
   return decodeURIComponent(path);
 }

@@ -9,7 +9,8 @@ interface FileChangeItemProps {
 }
 
 export function FileChangeItem({ filePath, onOpen, onViewDiff, showDiff }: FileChangeItemProps) {
-  const fileName = filePath.split('/').pop() || filePath;
+  // Handle both Windows and Unix path separators
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
 
   return (
     <div className="flex items-center justify-between py-2 px-3 hover:bg-gray-50 dark:hover:bg-gray-800 rounded border-b last:border-0">

@@ -91,7 +91,8 @@ function isBinaryFile(filePath: string): boolean {
 
 // Image preview component
 function ImagePreview({ filePath }: { filePath: string }) {
-  const fileName = filePath.split('/').pop() || filePath;
+  // Handle both Windows and Unix path separators
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 

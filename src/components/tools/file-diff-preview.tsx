@@ -246,7 +246,8 @@ export function FileDiffPreview({
   const locale = useTranslation();
   const [feedback, setFeedback] = useState('');
 
-  const fileName = filePath.split('/').pop() || filePath;
+  // Handle both Windows and Unix path separators
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
   const diff = generateDiff(originalContent, newContent);
 
   const addedLines = diff.filter((line) => line.type === 'added').length;

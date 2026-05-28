@@ -33,6 +33,29 @@ function getPlatformInfo(): string {
       return osArch === 'aarch64' ? 'mac_arm' : 'mac_x86';
     }
 
+    if (osPlatform === 'windows') {
+      // On Windows, distinguish between ARM64 and x86_64/x86
+      // aarch64 -> ARM64, x86_64 -> x64, i686/i386 -> x86
+      if (osArch === 'aarch64') {
+        return 'windows_arm64';
+      }
+      if (osArch === 'x86_64' || osArch === 'x64') {
+        return 'windows_x64';
+      }
+      if (osArch === 'i686' || osArch === 'i386' || osArch === 'x86') {
+        return 'windows_x86';
+      }
+      return 'windows';
+    }
+
+    if (osPlatform === 'linux') {
+      // On Linux, also provide arch info for better compatibility
+      if (osArch === 'aarch64') {
+        return 'linux_arm64';
+      }
+      return 'linux';
+    }
+
     // For other platforms, just return the platform name
     return osPlatform;
   } catch {

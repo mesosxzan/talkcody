@@ -266,7 +266,8 @@ function generateDiff(
 }
 
 export function EditFileResult({ filePath, originalContent, newContent }: EditFileResultProps) {
-  const fileName = filePath.split('/').pop() || filePath;
+  // Handle both Windows and Unix path separators
+  const fileName = filePath.split(/[/\\]/).pop() || filePath;
   const originalLineCount = originalContent.split('\n').length;
   const newLineCount = newContent.split('\n').length;
 

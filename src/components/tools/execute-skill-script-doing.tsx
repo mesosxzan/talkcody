@@ -9,7 +9,8 @@ export function ExecuteSkillScriptDoing({
   script_path,
   script_type,
 }: ExecuteSkillScriptDoingProps) {
-  const fileName = script_path.split('/').pop() || script_path;
+  // Handle both Windows and Unix path separators
+  const fileName = script_path.split(/[/\\]/).pop() || script_path;
   return (
     <GenericToolDoing
       type="script"

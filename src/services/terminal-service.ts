@@ -105,7 +105,7 @@ class TerminalService {
       const session: TerminalSession = {
         id: crypto.randomUUID(),
         ptyId: result.pty_id,
-        title: cwd ? `Terminal - ${cwd.split('/').pop()}` : 'Terminal',
+        title: cwd ? `Terminal - ${cwd.split(/[/\\]/).pop()}` : 'Terminal',
         cwd,
         buffer: '',
         isActive: true,
