@@ -66,6 +66,9 @@ export interface LocaleDefinition {
     copied: string;
     newChat: string;
     clearHistory: string;
+    userLabel: string;
+    agentLabel: string;
+    defaultUserName: string;
     reasoning: {
       title: string;
     };

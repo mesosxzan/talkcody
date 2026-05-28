@@ -65,6 +65,9 @@ const zh: LocaleDefinition = {
     copied: '已复制！',
     newChat: '新对话',
     clearHistory: '清除历史',
+    userLabel: '用户',
+    agentLabel: '智能体',
+    defaultUserName: 'user',
     reasoning: {
       title: '思考过程',
     },

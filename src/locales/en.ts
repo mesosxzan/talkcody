@@ -65,6 +65,9 @@ const en: LocaleDefinition = {
     copied: 'Copied!',
     newChat: 'New Chat',
     clearHistory: 'Clear History',
+    userLabel: 'User',
+    agentLabel: 'Agent',
+    defaultUserName: 'user',
     reasoning: {
       title: 'Reasoning',
     },

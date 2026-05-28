@@ -1,15 +1,26 @@
 // src/components/chat/message-item.tsx
 
-import { Check, ChevronDown, ChevronRight, CopyIcon, RefreshCcwIcon, Trash2 } from 'lucide-react';
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CopyIcon,
+  RefreshCcwIcon,
+  Trash2,
+  UserCircle,
+} from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FilePreview } from '@/components/chat/file-preview';
 import { ToolErrorBoundary } from '@/components/tools/tool-error-boundary';
 import { ToolErrorFallback } from '@/components/tools/tool-error-fallback';
 import { UnifiedToolResult } from '@/components/tools/unified-tool-result';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { getToolUIRenderers } from '@/lib/tool-adapter';
+import { useAuthStore } from '@/stores/auth-store';
 import type { StoredToolCall, StoredToolContent } from '@/types';
 import type { ToolMessageContent, UIMessage } from '@/types/agent';
 import type { OutputFormatType } from '@/types/output-format';
@@ -22,6 +33,14 @@ import { WebContentRenderer } from './web-content-renderer';
  */
 function isStoredToolCall(item: ToolMessageContent | StoredToolContent): item is StoredToolCall {
   return 'type' in item && item.type === 'tool-call' && !('output' in item) && !('input' in item);
+}
+
+/**
+ * Format a Date to the standard timestamp string: YYYY-MM-DD HH:mm:ss
+ */
+function formatMessageTimestamp(date: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export interface MessageItemProps {
@@ -39,6 +58,16 @@ function MessageItemComponent({
 }: MessageItemProps) {
   const { t } = useLocale();
   const [hasCopied, setHasCopied] = useState(false);
+
+  // Get user display name from auth store
+  const authUser = useAuthStore((state) => state.user);
+  const userDisplayName = authUser?.displayName || authUser?.name || t.Chat.defaultUserName;
+
+  // Compute timestamp for user/assistant messages
+  const messageTimestamp = formatMessageTimestamp(message.timestamp);
+
+  // Determine if this message needs an identity header (user or assistant, not tool)
+  const showIdentityHeader = message.role === 'user' || message.role === 'assistant';
   const reasoningText =
     typeof message.reasoningContent === 'string' ? message.reasoningContent : '';
   const hasReasoning = reasoningText.trim().length > 0;
@@ -358,9 +387,32 @@ function MessageItemComponent({
   return (
     <div className={'flex w-full min-w-0 gap-1'}>
       <div className={'w-full min-w-0 rounded-lg'}>
+        {/* Identity header for user/assistant messages */}
+        {showIdentityHeader && (
+          <div className="flex items-center gap-2 mb-1 mt-3 select-none">
+            {message.role === 'user' ? (
+              authUser?.avatarUrl ? (
+                <Avatar className="size-5">
+                  <AvatarImage alt={userDisplayName} src={authUser.avatarUrl} />
+                  <AvatarFallback className="text-xs">
+                    <UserCircle className="size-3" />
+                  </AvatarFallback>
+                </Avatar>
+              ) : (
+                <UserCircle className="size-5 text-muted-foreground" />
+              )
+            ) : (
+              <Bot className="size-5 text-primary" />
+            )}
+            <span className="text-xs font-semibold text-foreground">
+              {message.role === 'user' ? userDisplayName : t.Chat.agentLabel}
+            </span>
+            <span className="text-xs text-muted-foreground">{messageTimestamp}</span>
+          </div>
+        )}
         <div className="relative w-full min-w-0 break-words">
           {message.role === 'user' && typeof message.content === 'string' && (
-            <div className="relative my-2 flex w-full items-start rounded-xl border border-border bg-muted/50 p-4 transition-colors hover:bg-muted/80">
+            <div className="relative my-1 flex w-full items-start rounded-xl border border-border bg-muted/50 p-4 transition-colors hover:bg-muted/80">
               <h2
                 className={'whitespace-pre-wrap break-words font-normal text-foreground text-sm'}
                 dir="auto"
