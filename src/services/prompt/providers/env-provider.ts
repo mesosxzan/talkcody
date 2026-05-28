@@ -26,7 +26,9 @@ async function detectGitRepo(workspaceRoot: string): Promise<boolean> {
 function getPlatformInfo(): string {
   try {
     const osPlatform = platform();
-    const osArch = arch();
+    // Cast to string for defensive comparisons against possible runtime values
+    // (e.g., 'x64', 'i686', 'i386') not present in the arch() return type union
+    const osArch = arch() as string;
 
     if (osPlatform === 'macos') {
       // aarch64 is ARM (M1/M2/M3), x86_64 is Intel
