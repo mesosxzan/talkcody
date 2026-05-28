@@ -390,6 +390,8 @@ pub struct UpdateScheduledTaskRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<Option<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule: Option<ScheduledTaskSchedule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schedule_nl_text: Option<String>,

@@ -333,9 +333,12 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
         autoApproveEdits,
         autoApprovePlan,
       };
+      // When "no project" is selected, projectId should be null to clear the association;
+      // when a project is selected, projectId should be the project ID.
+      const projectId = selectedProjectId.trim() || null;
       const base = {
         name: name.trim(),
-        projectId: selectedProjectId.trim() || undefined,
+        projectId,
         schedule: buildSchedule(),
         scheduleNlText: nlScheduleText.trim() || undefined,
         payload,

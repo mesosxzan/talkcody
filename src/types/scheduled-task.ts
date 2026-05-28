@@ -173,6 +173,7 @@ export interface CreateScheduledTaskInput {
 export interface UpdateScheduledTaskInput {
   name?: string;
   description?: string;
+  projectId?: string | null;
   schedule?: ScheduledTaskSchedule;
   scheduleNlText?: string;
   payload?: ScheduledTaskPayload;

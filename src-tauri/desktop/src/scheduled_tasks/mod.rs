@@ -83,7 +83,11 @@ fn headless_app_data_dir() -> Option<PathBuf> {
     {
         dirs::data_dir().map(|d| d.join("com.talkcody"))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_dir().map(|d| d.join("com.talkcody"))
+    }
+    #[cfg(target_os = "linux")]
     {
         dirs::data_dir().map(|d| d.join("talkcody"))
     }

@@ -99,7 +99,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
       request: {
         name: data.name,
         description: data.description ?? null,
-        projectId: data.projectId ?? null,
+        projectId: data.projectId || null,
         schedule: data.schedule,
         scheduleNlText: data.scheduleNlText ?? null,
         payload: data.payload,
@@ -133,9 +133,15 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   },
 
   updateTask: async (id: string, patch: UpdateScheduledTaskInput) => {
+    const request: Record<string, unknown> = { ...patch };
+    // Ensure projectId is explicitly included so Rust can distinguish
+    // between "not provided" (undefined → skip) and "clear it" (null → set to null).
+    if (patch.projectId !== undefined) {
+      request.projectId = patch.projectId;
+    }
     const updated = await invoke<ScheduledTask>('update_scheduled_task', {
       id,
-      request: patch,
+      request,
     });
     set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? updated : t)) }));
     await get().syncOfflineRunner(get().tasks.some((task) => task.offlinePolicy?.enabled));

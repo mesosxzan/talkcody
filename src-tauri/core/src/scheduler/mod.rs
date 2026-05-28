@@ -342,7 +342,7 @@ pub async fn update_scheduled_task(
         id: existing.id.clone(),
         name: request.name.unwrap_or(existing.name),
         description: request.description.or(existing.description),
-        project_id: existing.project_id,
+        project_id: request.project_id.unwrap_or(existing.project_id),
         schedule: new_schedule,
         schedule_nl_text: request.schedule_nl_text.or(existing.schedule_nl_text),
         payload: request.payload.unwrap_or(existing.payload),
