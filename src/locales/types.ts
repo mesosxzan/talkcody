@@ -2608,6 +2608,15 @@ export interface LocaleDefinition {
       useGlobalDesc: string;
       customUrl: string;
     };
+    git: {
+      title: string;
+      description: string;
+      enable: string;
+      enableDesc: string;
+      useGlobal: string;
+      useGlobalDesc: string;
+      optional: string;
+    };
     types: {
       http: string;
       socks5: string;
@@ -2631,6 +2640,9 @@ export interface LocaleDefinition {
       manualPriority: string;
       webSearchSeparate: string;
       useGlobalHint: string;
+      gitProxySeparate: string;
+      gitProxyUseGlobalHint: string;
+      gitProxyDisabled: string;
     };
   };
 

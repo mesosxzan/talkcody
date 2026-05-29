@@ -2374,6 +2374,16 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
       useGlobalDesc: 'Inherit proxy settings from global configuration',
       customUrl: 'Custom Proxy URL',
     },
+    git: {
+      title: 'Git Proxy',
+      description:
+        'Configure proxy specifically for Git operations (fetch, push, pull, etc.). Other operations are not affected.',
+      enable: 'Enable Git Proxy',
+      enableDesc: 'Use proxy only for Git operations, other network requests are not affected',
+      useGlobal: 'Use Global Proxy Settings',
+      useGlobalDesc: 'Inherit proxy settings from global configuration',
+      optional: 'Optional',
+    },
     types: {
       http: 'HTTP',
       socks5: 'SOCKS5',
@@ -2398,6 +2408,11 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
         'Manual proxy settings take priority over auto-detection and environment variables',
       webSearchSeparate: 'Separate proxy configuration for web search only',
       useGlobalHint: 'Using global proxy settings for web search',
+      gitProxySeparate:
+        'This proxy is only used for Git operations, other network requests will not go through this proxy',
+      gitProxyUseGlobalHint: 'Using global proxy settings for Git operations',
+      gitProxyDisabled:
+        'Git operations will not use any proxy. Enable to configure a proxy for Git only.',
     },
   },
 

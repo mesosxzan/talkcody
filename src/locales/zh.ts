@@ -2312,6 +2312,15 @@ const zh: LocaleDefinition = {
       useGlobalDesc: '继承全局代理配置',
       customUrl: '自定义代理地址',
     },
+    git: {
+      title: 'Git 代理',
+      description: '为 Git 操作（fetch、push、pull 等）单独配置代理。其他操作不受影响。',
+      enable: '启用 Git 代理',
+      enableDesc: '仅为 Git 操作使用代理，其他网络请求不受影响',
+      useGlobal: '使用全局代理设置',
+      useGlobalDesc: '继承全局代理配置',
+      optional: '可选',
+    },
     types: {
       http: 'HTTP',
       socks5: 'SOCKS5',
@@ -2335,6 +2344,9 @@ const zh: LocaleDefinition = {
       manualPriority: '手动设置的代理地址优先级高于自动检测和环境变量代理',
       webSearchSeparate: '独立配置的代理仅用于网页搜索功能',
       useGlobalHint: '使用全局代理设置进行网页搜索',
+      gitProxySeparate: '此代理仅用于 Git 操作，其他网络请求不会通过此代理',
+      gitProxyUseGlobalHint: '使用全局代理设置进行 Git 操作',
+      gitProxyDisabled: 'Git 操作不使用任何代理。启用后可仅为 Git 配置代理。',
     },
   },
 

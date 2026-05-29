@@ -56,9 +56,23 @@ pub fn new_command(program: &str) -> std::process::Command {
 ///
 /// Uses the configured Git executable path if set, otherwise falls back to "git".
 /// This function is used for all Git operations in the application.
+/// Uses Git-specific proxy settings instead of global proxy.
 pub fn new_git_command() -> std::process::Command {
     let git_path = get_git_executable_path();
-    new_command(&git_path)
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = std::process::Command::new(&git_path);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        inject_git_proxy_env(&mut cmd);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = std::process::Command::new(&git_path);
+        inject_git_proxy_env(&mut cmd);
+        cmd
+    }
 }
 
 /// Create a new `tokio::process::Command` with console window hidden on Windows.
@@ -88,9 +102,22 @@ pub fn new_async_command(program: &str) -> tokio::process::Command {
 ///
 /// Uses the configured Git executable path if set, otherwise falls back to "git".
 /// This function is used for all async Git operations in the application.
+/// Uses Git-specific proxy settings instead of global proxy.
 pub fn new_git_async_command() -> tokio::process::Command {
     let git_path = get_git_executable_path();
-    new_async_command(&git_path)
+    #[cfg(windows)]
+    {
+        let mut cmd = tokio::process::Command::new(&git_path);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        inject_git_proxy_env_async(&mut cmd);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        let mut cmd = tokio::process::Command::new(&git_path);
+        inject_git_proxy_env_async(&mut cmd);
+        cmd
+    }
 }
 
 /// Inject proxy environment variables into a sync Command
@@ -134,6 +161,101 @@ fn inject_proxy_env_async(cmd: &mut tokio::process::Command) {
                 if !no_proxy.is_empty() {
                     cmd.env("NO_PROXY", no_proxy);
                     cmd.env("no_proxy", no_proxy);
+                }
+            }
+        }
+    }
+}
+
+/// Inject Git-specific proxy environment variables into a sync Command.
+/// Priority: Git-specific proxy > Global proxy > No proxy.
+/// When Git-specific proxy is enabled with its own URL, only that URL is used.
+/// When Git-specific proxy is set to use global, global proxy is used.
+/// When Git-specific proxy is disabled, no proxy is injected for git.
+fn inject_git_proxy_env(cmd: &mut std::process::Command) {
+    // Try to get git-specific proxy config first
+    let Ok(git_config) = crate::proxy_config::GIT_PROXY_CONFIG.try_read() else {
+        return;
+    };
+
+    if !git_config.enabled {
+        // Git proxy disabled: do not inject any proxy env vars for git
+        return;
+    }
+
+    if !git_config.use_global_proxy {
+        // Use git-specific proxy URL
+        if let Some(ref url) = git_config.url {
+            cmd.env("HTTP_PROXY", url);
+            cmd.env("HTTPS_PROXY", url);
+            cmd.env("ALL_PROXY", url);
+            cmd.env("http_proxy", url);
+            cmd.env("https_proxy", url);
+            cmd.env("all_proxy", url);
+        }
+    } else {
+        // Use global proxy for git
+        if let Ok(global_config) = crate::proxy_config::PROXY_CONFIG.try_read() {
+            if global_config.is_enabled() {
+                if let Some(ref url) = global_config.url {
+                    cmd.env("HTTP_PROXY", url);
+                    cmd.env("HTTPS_PROXY", url);
+                    cmd.env("ALL_PROXY", url);
+                    cmd.env("http_proxy", url);
+                    cmd.env("https_proxy", url);
+                    cmd.env("all_proxy", url);
+                }
+                if let Some(ref no_proxy) = global_config.no_proxy {
+                    if !no_proxy.is_empty() {
+                        cmd.env("NO_PROXY", no_proxy);
+                        cmd.env("no_proxy", no_proxy);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Inject Git-specific proxy environment variables into an async Command.
+/// Priority: Git-specific proxy > Global proxy > No proxy.
+fn inject_git_proxy_env_async(cmd: &mut tokio::process::Command) {
+    // Try to get git-specific proxy config first
+    let Ok(git_config) = crate::proxy_config::GIT_PROXY_CONFIG.try_read() else {
+        return;
+    };
+
+    if !git_config.enabled {
+        // Git proxy disabled: do not inject any proxy env vars for git
+        return;
+    }
+
+    if !git_config.use_global_proxy {
+        // Use git-specific proxy URL
+        if let Some(ref url) = git_config.url {
+            cmd.env("HTTP_PROXY", url);
+            cmd.env("HTTPS_PROXY", url);
+            cmd.env("ALL_PROXY", url);
+            cmd.env("http_proxy", url);
+            cmd.env("https_proxy", url);
+            cmd.env("all_proxy", url);
+        }
+    } else {
+        // Use global proxy for git
+        if let Ok(global_config) = crate::proxy_config::PROXY_CONFIG.try_read() {
+            if global_config.is_enabled() {
+                if let Some(ref url) = global_config.url {
+                    cmd.env("HTTP_PROXY", url);
+                    cmd.env("HTTPS_PROXY", url);
+                    cmd.env("ALL_PROXY", url);
+                    cmd.env("http_proxy", url);
+                    cmd.env("https_proxy", url);
+                    cmd.env("all_proxy", url);
+                }
+                if let Some(ref no_proxy) = global_config.no_proxy {
+                    if !no_proxy.is_empty() {
+                        cmd.env("NO_PROXY", no_proxy);
+                        cmd.env("no_proxy", no_proxy);
+                    }
                 }
             }
         }

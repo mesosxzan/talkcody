@@ -1090,6 +1090,8 @@ pub fn run() {
             http_proxy::test_proxy_connection,
             proxy_config::set_global_proxy,
             proxy_config::get_global_proxy,
+            proxy_config::set_git_proxy,
+            proxy_config::get_git_proxy,
             shell_utils::set_git_executable,
             shell_utils::get_git_executable,
             shell_utils::test_git_executable,

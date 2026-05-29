@@ -28,6 +28,14 @@ export interface WebSearchProxySettings {
   type: 'http' | 'socks5' | 'socks5h' | string;
 }
 
+// Git proxy settings type
+export interface GitProxySettings {
+  enabled: boolean;
+  useGlobalProxy: boolean;
+  url: string;
+  type: 'http' | 'socks5' | 'socks5h' | string;
+}
+
 // Generate default API key settings from provider configs
 function generateDefaultApiKeySettings(): Record<string, string> {
   const settings: Record<string, string> = {};
@@ -149,6 +157,12 @@ interface SettingsState {
   websearch_proxy_use_global: boolean; // Use global proxy settings
   websearch_proxy_url: string; // Web search specific proxy URL
   websearch_proxy_type: string; // Web search proxy type
+
+  // Git Proxy Settings (Separate from global - only for git operations)
+  git_proxy_enabled: boolean; // Enable proxy for git operations
+  git_proxy_use_global: boolean; // Use global proxy settings for git
+  git_proxy_url: string; // Git specific proxy URL
+  git_proxy_type: string; // Git proxy type
 
   // Git Settings
   git_executable_path: string; // Custom Git executable path (empty = use default 'git')
@@ -340,6 +354,18 @@ interface SettingsActions {
   getWebSearchProxySettings: () => WebSearchProxySettings;
   setWebSearchProxySettings: (settings: WebSearchProxySettings) => Promise<void>;
 
+  // Git Proxy Settings
+  setGitProxyEnabled: (enabled: boolean) => Promise<void>;
+  getGitProxyEnabled: () => boolean;
+  setGitProxyUseGlobal: (useGlobal: boolean) => Promise<void>;
+  getGitProxyUseGlobal: () => boolean;
+  setGitProxyUrl: (url: string) => Promise<void>;
+  getGitProxyUrl: () => string;
+  setGitProxyType: (type: string) => Promise<void>;
+  getGitProxyType: () => string;
+  getGitProxySettings: () => GitProxySettings;
+  setGitProxySettings: (settings: GitProxySettings) => Promise<void>;
+
   // Git Settings
   setGitExecutablePath: (path: string) => Promise<void>;
   getGitExecutablePath: () => string;
@@ -445,6 +471,11 @@ const DEFAULT_SETTINGS: Omit<SettingsState, 'loading' | 'error' | 'isInitialized
   websearch_proxy_use_global: true,
   websearch_proxy_url: '',
   websearch_proxy_type: 'http',
+  // Git Proxy Settings
+  git_proxy_enabled: false,
+  git_proxy_use_global: true,
+  git_proxy_url: '',
+  git_proxy_type: 'http',
   // Git Settings
   git_executable_path: '',
   git_auto_fetch_enabled: false,
@@ -562,6 +593,11 @@ class SettingsDatabase {
       websearch_proxy_use_global: 'true',
       websearch_proxy_url: '',
       websearch_proxy_type: 'http',
+      // Git Proxy Settings
+      git_proxy_enabled: 'false',
+      git_proxy_use_global: 'true',
+      git_proxy_url: '',
+      git_proxy_type: 'http',
       // Git Settings
       git_executable_path: '',
       git_auto_fetch_enabled: 'false',
@@ -752,7 +788,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         'websearch_proxy_enabled',
         'websearch_proxy_use_global',
         'websearch_proxy_url',
-        'websearch_proxy_type'
+        'websearch_proxy_type',
+        'git_proxy_enabled',
+        'git_proxy_use_global',
+        'git_proxy_url',
+        'git_proxy_type'
       );
 
       // Add Git settings keys
@@ -866,6 +906,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         websearch_proxy_use_global: rawSettings.websearch_proxy_use_global !== 'false',
         websearch_proxy_url: rawSettings.websearch_proxy_url || '',
         websearch_proxy_type: rawSettings.websearch_proxy_type || 'http',
+        // Git Proxy Settings
+        git_proxy_enabled: rawSettings.git_proxy_enabled === 'true',
+        git_proxy_use_global: rawSettings.git_proxy_use_global !== 'false',
+        git_proxy_url: rawSettings.git_proxy_url || '',
+        git_proxy_type: rawSettings.git_proxy_type || 'http',
         // Git Settings
         git_executable_path: rawSettings.git_executable_path || '',
         git_auto_fetch_enabled: rawSettings.git_auto_fetch_enabled === 'true',
@@ -903,6 +948,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       } catch (error) {
         logger.error(
           '[SettingsStore] Failed to sync git executable path to Rust backend on init:',
+          error
+        );
+      }
+
+      // Sync git proxy settings to Rust backend on initialization
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const state = get();
+        await invoke('set_git_proxy', {
+          enabled: state.git_proxy_enabled,
+          useGlobalProxy: state.git_proxy_use_global,
+          url: state.git_proxy_url || null,
+          proxyType: state.git_proxy_type || null,
+        });
+        logger.info('[SettingsStore] Git proxy settings synced to Rust backend on init');
+      } catch (error) {
+        logger.error(
+          '[SettingsStore] Failed to sync git proxy settings to Rust backend on init:',
           error
         );
       }
@@ -1716,6 +1779,82 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
   },
 
+  // Git Proxy Settings
+  setGitProxyEnabled: async (enabled: boolean) => {
+    await settingsDb.set('git_proxy_enabled', enabled.toString());
+    set({ git_proxy_enabled: enabled });
+  },
+
+  getGitProxyEnabled: () => {
+    return get().git_proxy_enabled;
+  },
+
+  setGitProxyUseGlobal: async (useGlobal: boolean) => {
+    await settingsDb.set('git_proxy_use_global', useGlobal.toString());
+    set({ git_proxy_use_global: useGlobal });
+  },
+
+  getGitProxyUseGlobal: () => {
+    return get().git_proxy_use_global;
+  },
+
+  setGitProxyUrl: async (url: string) => {
+    await settingsDb.set('git_proxy_url', url);
+    set({ git_proxy_url: url });
+  },
+
+  getGitProxyUrl: () => {
+    return get().git_proxy_url;
+  },
+
+  setGitProxyType: async (type: string) => {
+    await settingsDb.set('git_proxy_type', type);
+    set({ git_proxy_type: type });
+  },
+
+  getGitProxyType: () => {
+    return get().git_proxy_type;
+  },
+
+  getGitProxySettings: () => {
+    const state = get();
+    return {
+      enabled: state.git_proxy_enabled,
+      useGlobalProxy: state.git_proxy_use_global,
+      url: state.git_proxy_url,
+      type: state.git_proxy_type,
+    };
+  },
+
+  setGitProxySettings: async (settings: GitProxySettings) => {
+    await settingsDb.setBatch({
+      git_proxy_enabled: settings.enabled.toString(),
+      git_proxy_use_global: settings.useGlobalProxy.toString(),
+      git_proxy_url: settings.url,
+      git_proxy_type: settings.type,
+    });
+    set({
+      git_proxy_enabled: settings.enabled,
+      git_proxy_use_global: settings.useGlobalProxy,
+      git_proxy_url: settings.url,
+      git_proxy_type: settings.type,
+    });
+
+    // Sync to Rust backend for git commands
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('set_git_proxy', {
+        enabled: settings.enabled,
+        useGlobalProxy: settings.useGlobalProxy,
+        url: settings.url || null,
+        proxyType: settings.type || null,
+      });
+      logger.info('[SettingsStore] Git proxy settings synced to Rust backend');
+    } catch (error) {
+      logger.error('[SettingsStore] Failed to sync git proxy settings to Rust backend:', error);
+    }
+  },
+
   // Git Settings
   setGitExecutablePath: async (path: string) => {
     await settingsDb.set('git_executable_path', path);
@@ -2080,6 +2219,20 @@ export const settingsManager = {
   getWebSearchProxySettings: () => useSettingsStore.getState().getWebSearchProxySettings(),
   setWebSearchProxySettings: (settings: WebSearchProxySettings) =>
     useSettingsStore.getState().setWebSearchProxySettings(settings),
+
+  // Git Proxy Settings
+  setGitProxyEnabled: (enabled: boolean) => useSettingsStore.getState().setGitProxyEnabled(enabled),
+  getGitProxyEnabled: () => useSettingsStore.getState().getGitProxyEnabled(),
+  setGitProxyUseGlobal: (useGlobal: boolean) =>
+    useSettingsStore.getState().setGitProxyUseGlobal(useGlobal),
+  getGitProxyUseGlobal: () => useSettingsStore.getState().getGitProxyUseGlobal(),
+  setGitProxyUrl: (url: string) => useSettingsStore.getState().setGitProxyUrl(url),
+  getGitProxyUrl: () => useSettingsStore.getState().getGitProxyUrl(),
+  setGitProxyType: (type: string) => useSettingsStore.getState().setGitProxyType(type),
+  getGitProxyType: () => useSettingsStore.getState().getGitProxyType(),
+  getGitProxySettings: () => useSettingsStore.getState().getGitProxySettings(),
+  setGitProxySettings: (settings: GitProxySettings) =>
+    useSettingsStore.getState().setGitProxySettings(settings),
 
   // Git Settings
   setGitExecutablePath: (path: string) => useSettingsStore.getState().setGitExecutablePath(path),

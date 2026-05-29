@@ -34,6 +34,22 @@ export interface WebSearchProxyConfig {
 }
 
 /**
+ * Git-specific proxy configuration
+ * Only applied to git operations (fetch, push, pull, etc.)
+ * Other operations are NOT affected by this proxy
+ */
+export interface GitProxyConfig {
+  /** Enable proxy for git operations specifically */
+  enabled: boolean;
+  /** Use global proxy settings (inherit from global) */
+  useGlobalProxy: boolean;
+  /** Git-specific proxy URL (if not using global) */
+  url?: string;
+  /** Proxy type */
+  type?: 'http' | 'socks5' | 'socks5h' | string;
+}
+
+/**
  * Parsed proxy URL components
  */
 export interface ParsedProxyUrl {
@@ -441,4 +457,48 @@ export function validateProxyUrl(url: string): {
     valid: true,
     parsed,
   };
+}
+
+/**
+ * Get effective git proxy configuration.
+ * Priority: Git-specific proxy > Global proxy > No proxy.
+ *
+ * Key behavior:
+ * - If git proxy is enabled with its own URL, only that URL is used for git.
+ * - If git proxy is enabled and set to use global, global proxy is used for git.
+ * - If git proxy is disabled, no proxy is used for git (even if global proxy is enabled).
+ *
+ * @param gitProxySettings - Git-specific proxy settings
+ * @param globalSettings - Global proxy settings
+ */
+export async function getEffectiveGitProxy(
+  gitProxySettings?: GitProxyConfig,
+  globalSettings?: ProxyConfig
+): Promise<ProxyConfig> {
+  // Git proxy disabled → no proxy for git
+  if (!gitProxySettings?.enabled) {
+    return { enabled: false, autoDetect: false };
+  }
+
+  // Git proxy enabled with its own URL (not using global)
+  if (!gitProxySettings.useGlobalProxy && gitProxySettings.url) {
+    const parsed = parseProxyUrl(gitProxySettings.url);
+    if (parsed) {
+      logger.info('[ProxyDetector] Using git-specific proxy:', gitProxySettings.url);
+      return {
+        enabled: true,
+        url: gitProxySettings.url,
+        type: parsed.protocol,
+        autoDetect: false,
+      };
+    }
+  }
+
+  // Git proxy enabled, set to use global proxy
+  if (gitProxySettings.useGlobalProxy) {
+    return getEffectiveProxyConfig(globalSettings, globalSettings?.autoDetect ?? true);
+  }
+
+  // Git proxy enabled but no URL configured - auto detect
+  return getEffectiveProxyConfig(undefined, true);
 }

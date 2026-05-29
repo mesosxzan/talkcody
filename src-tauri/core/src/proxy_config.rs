@@ -13,6 +13,11 @@ use tokio::sync::RwLock;
 pub static PROXY_CONFIG: Lazy<Arc<RwLock<ProxyConfig>>> =
     Lazy::new(|| Arc::new(RwLock::new(ProxyConfig::default())));
 
+/// Git-specific proxy configuration storage
+/// This proxy is only applied to git operations, not to other network requests.
+pub static GIT_PROXY_CONFIG: Lazy<Arc<RwLock<GitProxyConfig>>> =
+    Lazy::new(|| Arc::new(RwLock::new(GitProxyConfig::default())));
+
 /// Proxy configuration
 #[derive(Debug, Clone, Default)]
 pub struct ProxyConfig {
@@ -24,6 +29,21 @@ pub struct ProxyConfig {
     pub proxy_type: Option<String>,
     /// Bypass list (domains/IPs that should not go through proxy)
     pub no_proxy: Option<String>,
+}
+
+/// Git-specific proxy configuration
+/// Only used for git operations (fetch, push, pull, etc.)
+/// When enabled, this takes priority over global proxy for git commands.
+#[derive(Debug, Clone, Default)]
+pub struct GitProxyConfig {
+    /// Whether git-specific proxy is enabled
+    pub enabled: bool,
+    /// Whether to use global proxy settings for git
+    pub use_global_proxy: bool,
+    /// Git-specific proxy URL
+    pub url: Option<String>,
+    /// Proxy type (http, socks5, socks5h)
+    pub proxy_type: Option<String>,
 }
 
 impl ProxyConfig {
@@ -156,6 +176,114 @@ pub struct ProxyConfigResponse {
     pub proxy_type: Option<String>,
     #[serde(rename = "noProxy")]
     pub no_proxy: Option<String>,
+}
+
+/// Set the Git-specific proxy configuration
+pub async fn set_git_proxy_config(
+    enabled: bool,
+    use_global_proxy: bool,
+    url: Option<String>,
+    proxy_type: Option<String>,
+) {
+    let mut config = GIT_PROXY_CONFIG.write().await;
+    *config = GitProxyConfig {
+        enabled,
+        use_global_proxy,
+        url,
+        proxy_type,
+    };
+    log::info!(
+        "Git proxy configuration updated: enabled={}, use_global={}, url={:?}",
+        config.enabled,
+        config.use_global_proxy,
+        config.url.as_ref().map(|u| {
+            // Hide credentials in logs
+            if u.contains('@') {
+                let parts: Vec<&str> = u.splitn(2, '@').collect();
+                if parts.len() == 2 {
+                    format!(
+                        "{}***@{}",
+                        parts[0].split(':').next().unwrap_or("***"),
+                        parts[1]
+                    )
+                } else {
+                    "***".to_string()
+                }
+            } else {
+                u.to_string()
+            }
+        })
+    );
+}
+
+/// Get the current Git-specific proxy configuration
+pub async fn get_git_proxy_config() -> GitProxyConfig {
+    GIT_PROXY_CONFIG.read().await.clone()
+}
+
+/// Get effective proxy environment variables for git operations.
+/// This resolves the priority: Git-specific proxy > Global proxy.
+pub async fn get_git_proxy_env_vars() -> HashMap<String, String> {
+    let git_config = GIT_PROXY_CONFIG.read().await;
+
+    // If git-specific proxy is enabled with its own URL (not using global)
+    if git_config.enabled && !git_config.use_global_proxy {
+        if let Some(ref url) = git_config.url {
+            let mut env_vars = HashMap::new();
+            env_vars.insert("HTTP_PROXY".to_string(), url.clone());
+            env_vars.insert("HTTPS_PROXY".to_string(), url.clone());
+            env_vars.insert("ALL_PROXY".to_string(), url.clone());
+            env_vars.insert("http_proxy".to_string(), url.clone());
+            env_vars.insert("https_proxy".to_string(), url.clone());
+            env_vars.insert("all_proxy".to_string(), url.clone());
+            return env_vars;
+        }
+    }
+
+    // If git proxy is enabled but set to use global, or if no git-specific URL
+    if git_config.enabled && git_config.use_global_proxy {
+        // Fall through to global proxy
+        let global_config = PROXY_CONFIG.read().await;
+        return global_config.to_env_vars();
+    }
+
+    // No git proxy configured
+    HashMap::new()
+}
+
+/// Tauri command to set Git-specific proxy configuration from frontend
+#[tauri::command]
+pub async fn set_git_proxy(
+    enabled: bool,
+    use_global_proxy: bool,
+    url: Option<String>,
+    proxy_type: Option<String>,
+) -> Result<(), String> {
+    set_git_proxy_config(enabled, use_global_proxy, url, proxy_type).await;
+    Ok(())
+}
+
+/// Tauri command to get current Git-specific proxy configuration
+#[tauri::command]
+pub async fn get_git_proxy() -> Result<GitProxyConfigResponse, String> {
+    let config = get_git_proxy_config().await;
+    Ok(GitProxyConfigResponse {
+        enabled: config.enabled,
+        use_global_proxy: config.use_global_proxy,
+        url: config.url,
+        proxy_type: config.proxy_type,
+    })
+}
+
+/// Response type for get_git_proxy command
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GitProxyConfigResponse {
+    pub enabled: bool,
+    #[serde(rename = "useGlobalProxy")]
+    pub use_global_proxy: bool,
+    pub url: Option<String>,
+    #[serde(rename = "proxyType")]
+    pub proxy_type: Option<String>,
 }
 
 #[cfg(test)]

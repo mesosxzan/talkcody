@@ -1548,6 +1548,7 @@ mod tests {
             body: None,
             request_id: Some(request_id),
             allow_private_ip: None,
+            proxy_url: None,
         };
 
         let window = target_window.as_ref().window();
