@@ -50,13 +50,25 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
   /**
    * Load agents from agent registry
-   * Only loads once unless explicitly refreshed
+   * Loads on first call; if already initialized but agents are empty,
+   * falls through to refreshAgents so the UI never gets stuck with zero agents.
    */
   loadAgents: async () => {
-    const { isInitialized, isLoading } = get();
+    const { isInitialized, isLoading, agents } = get();
 
-    // Prevent duplicate loading
-    if (isInitialized || isLoading) {
+    // Prevent duplicate loading while in progress
+    if (isLoading) {
+      return;
+    }
+
+    // If already initialized with agents, skip
+    if (isInitialized && agents.size > 0) {
+      return;
+    }
+
+    // If initialized but empty, delegate to refreshAgents
+    if (isInitialized && agents.size === 0) {
+      await get().refreshAgents();
       return;
     }
 

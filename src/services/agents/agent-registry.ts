@@ -478,7 +478,12 @@ class AgentRegistry {
             },
             renderToolDoing: () => null,
             renderToolResult: () => null,
-            canConcurrent: false,
+            isConcurrencySafe: false,
+            isReadOnly: false,
+            isDestructive: false,
+            checkPermissions: async () => ({ behavior: 'deny' as const }),
+            maxResultSizeChars: Infinity,
+            interruptBehavior: 'cancel' as const,
           } as ToolWithUI;
         }
       } else {

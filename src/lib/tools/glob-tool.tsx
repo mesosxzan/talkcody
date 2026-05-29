@@ -32,6 +32,8 @@ export const globTool = createTool({
   name: 'glob',
   description: DESCRIPTION,
   inputSchema,
+  isReadOnly: true,
+  isConcurrencySafe: true,
   canConcurrent: true,
   execute: async ({ pattern, path }, context) => {
     try {

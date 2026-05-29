@@ -440,7 +440,7 @@ export function getToolMetadata(toolName: string): ToolMetadata {
   if (customTool) {
     return {
       category: 'other',
-      canConcurrent: customTool.canConcurrent ?? false,
+      canConcurrent: customTool.isConcurrencySafe ?? false,
       fileOperation: false,
       renderDoingUI: true,
       showResultUIAlways: customTool.showResultUIAlways ?? false,

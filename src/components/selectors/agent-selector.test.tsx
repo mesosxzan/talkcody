@@ -59,13 +59,24 @@ vi.mock('@/services/agents/agent-registry', () => ({
 }));
 
 // Mock agent store
+const mockLoadAgents = vi.fn();
+const mockRefreshAgents = vi.fn();
 vi.mock('@/stores/agent-store', () => ({
-  useAgentStore: vi.fn((selector) => {
-    if (typeof selector === 'function') {
-      return selector(mockAgentStoreState);
+  useAgentStore: Object.assign(
+    vi.fn((selector) => {
+      if (typeof selector === 'function') {
+        return selector(mockAgentStoreState);
+      }
+      return mockAgentStoreState;
+    }),
+    {
+      getState: vi.fn(() => ({
+        ...mockAgentStoreState,
+        loadAgents: mockLoadAgents,
+        refreshAgents: mockRefreshAgents,
+      })),
     }
-    return mockAgentStoreState;
-  }),
+  ),
 }));
 
 // Mock app settings hook
@@ -90,6 +101,24 @@ vi.mock('@/contexts/ui-navigation', () => ({
   })),
 }));
 
+// Mock task store
+vi.mock('@/stores/task-store', () => ({
+  useTaskStore: vi.fn((selector) => {
+    if (typeof selector === 'function') {
+      return selector({
+        currentTaskId: null,
+        messages: new Map(),
+        getMessages: () => [],
+      });
+    }
+    return {
+      currentTaskId: null,
+      messages: new Map(),
+      getMessages: () => [],
+    };
+  }),
+}));
+
 // Mock BaseSelector
 vi.mock('./base-selector', () => ({
   BaseSelector: ({ items, placeholder, disabled, value }: any) => (
@@ -112,6 +141,8 @@ describe('AgentSelector Component', () => {
   beforeEach(() => {
     mockSetAssistantId.mockClear();
     mockSetActiveView.mockClear();
+    mockLoadAgents.mockClear();
+    mockRefreshAgents.mockClear();
 
     // Reset agent store state
     mockAgentStoreState.agents = new Map();
@@ -119,13 +150,14 @@ describe('AgentSelector Component', () => {
     mockAgentStoreState.isInitialized = false;
   });
 
-  it('should render empty selector when no agents are loaded', () => {
-    // No agents in store
+  it('should render selector with "Select agent" placeholder when no agents are loaded and no current agent', () => {
+    // No agents in store, no current agent match
     mockAgentStoreState.agents = new Map();
 
     render(<AgentSelector />);
 
     expect(screen.getByTestId('base-selector')).toBeInTheDocument();
+    // With empty agents, currentAgentName is undefined, so fallback is "Select agent"
     expect(screen.getByTestId('selector-placeholder')).toHaveTextContent('Select agent');
   });
 
@@ -139,8 +171,9 @@ describe('AgentSelector Component', () => {
     render(<AgentSelector />);
 
     await waitFor(() => {
-      expect(screen.getByText('Test Agent 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Agent 2')).toBeInTheDocument();
+      // Use testid-based queries since agent names may also appear in placeholder
+      expect(screen.getByTestId('item-agent-1')).toHaveTextContent('Test Agent 1');
+      expect(screen.getByTestId('item-agent-2')).toHaveTextContent('Test Agent 2');
     });
   });
 
@@ -154,10 +187,10 @@ describe('AgentSelector Component', () => {
     render(<AgentSelector />);
 
     await waitFor(() => {
-      expect(screen.getByText('Test Agent 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Agent 2')).toBeInTheDocument();
-      // Hidden agent should not appear
-      expect(screen.queryByText('Hidden Agent')).not.toBeInTheDocument();
+      expect(screen.getByTestId('item-agent-1')).toHaveTextContent('Test Agent 1');
+      expect(screen.getByTestId('item-agent-2')).toHaveTextContent('Test Agent 2');
+      // Hidden agent should not appear in items
+      expect(screen.queryByTestId('item-agent-3')).not.toBeInTheDocument();
     });
   });
 
@@ -174,14 +207,15 @@ describe('AgentSelector Component', () => {
     });
   });
 
-  it('should be disabled when agents are loading', async () => {
+  it('should not render when agents are loading', async () => {
     mockAgentStoreState.isLoading = true;
 
     await act(async () => {
       render(<AgentSelector />);
     });
 
-    expect(screen.getByTestId('selector-disabled')).toHaveTextContent('true');
+    // When loading, the component returns null
+    expect(screen.queryByTestId('base-selector')).not.toBeInTheDocument();
   });
 
   it('should not be disabled when agents are loaded', () => {
@@ -205,6 +239,17 @@ describe('AgentSelector Component', () => {
     expect(screen.getByTestId('selector-value')).toHaveTextContent('agent-1');
   });
 
+  it('should show agent name as placeholder when agent is selected', () => {
+    mockAgentStoreState.agents = new Map([
+      ['agent-1', { id: 'agent-1', name: 'Test Agent 1' } as AgentDefinition],
+    ]);
+
+    render(<AgentSelector />);
+
+    // Placeholder should show the agent name for the selected value
+    expect(screen.getByTestId('selector-placeholder')).toHaveTextContent('Test Agent 1');
+  });
+
   it('should handle disabled prop', async () => {
     mockAgentStoreState.isLoading = false;
 
@@ -215,14 +260,15 @@ describe('AgentSelector Component', () => {
     expect(screen.getByTestId('selector-disabled')).toHaveTextContent('true');
   });
 
-  it('should be disabled when both disabled prop and isLoading are true', async () => {
+  it('should not render when disabled prop and isLoading are both true', async () => {
     mockAgentStoreState.isLoading = true;
 
     await act(async () => {
       render(<AgentSelector disabled={true} />);
     });
 
-    expect(screen.getByTestId('selector-disabled')).toHaveTextContent('true');
+    // When loading, the component returns null
+    expect(screen.queryByTestId('base-selector')).not.toBeInTheDocument();
   });
 
   it('should re-render when agent store size changes', async () => {
@@ -236,8 +282,8 @@ describe('AgentSelector Component', () => {
 
     // Agents should be visible after render
     await waitFor(() => {
-      expect(screen.getByText('Test Agent 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Agent 2')).toBeInTheDocument();
+      expect(screen.getByTestId('item-agent-1')).toHaveTextContent('Test Agent 1');
+      expect(screen.getByTestId('item-agent-2')).toHaveTextContent('Test Agent 2');
     });
   });
 
@@ -256,8 +302,8 @@ describe('AgentSelector Component', () => {
     const { rerender } = render(<AgentSelector />);
 
     await waitFor(() => {
-      expect(screen.getByText('Test Agent 1')).toBeInTheDocument();
-      expect(screen.getByText('Test Agent 2')).toBeInTheDocument();
+      expect(screen.getByTestId('item-agent-1')).toHaveTextContent('Test Agent 1');
+      expect(screen.getByTestId('item-agent-2')).toHaveTextContent('Test Agent 2');
     });
 
     listAgentsMock.mockResolvedValue([
@@ -269,8 +315,37 @@ describe('AgentSelector Component', () => {
     rerender(<AgentSelector />);
 
     await waitFor(() => {
-      expect(screen.getByText('Test Agent 1')).toBeInTheDocument();
-      expect(screen.queryByText('Test Agent 2')).not.toBeInTheDocument();
+      expect(screen.getByTestId('item-agent-1')).toHaveTextContent('Test Agent 1');
+      expect(screen.queryByTestId('item-agent-2')).not.toBeInTheDocument();
     });
+  });
+
+  it('should trigger loadAgents on mount when not initialized', () => {
+    mockAgentStoreState.isInitialized = false;
+
+    render(<AgentSelector />);
+
+    expect(mockLoadAgents).toHaveBeenCalled();
+  });
+
+  it('should trigger refreshAgents on mount when initialized but agents are empty', () => {
+    mockAgentStoreState.isInitialized = true;
+    mockAgentStoreState.agents = new Map();
+
+    render(<AgentSelector />);
+
+    expect(mockRefreshAgents).toHaveBeenCalled();
+  });
+
+  it('should not trigger load or refresh when initialized with agents', () => {
+    mockAgentStoreState.isInitialized = true;
+    mockAgentStoreState.agents = new Map([
+      ['agent-1', { id: 'agent-1', name: 'Test Agent 1' } as AgentDefinition],
+    ]);
+
+    render(<AgentSelector />);
+
+    expect(mockLoadAgents).not.toHaveBeenCalled();
+    expect(mockRefreshAgents).not.toHaveBeenCalled();
   });
 });

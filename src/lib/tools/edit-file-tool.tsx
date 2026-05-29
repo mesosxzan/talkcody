@@ -1,568 +1,282 @@
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { z } from 'zod';
-import { EditFileToolDoing } from '@/components/tools/edit-file-tool-doing';
+import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
-import { createPathSecurityError, isPathWithinProjectDirectory } from '@/lib/utils/path-security';
-import { notificationService } from '@/services/notification-service';
-import { repositoryService } from '@/services/repository-service';
-import { normalizeFilePath } from '@/services/repository-utils';
-import { taskService } from '@/services/task-service';
-import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 import {
-  type FileEditReviewResult,
-  type PendingEdit,
-  useEditReviewStore,
-} from '@/stores/edit-review-store';
-import { useFileChangesStore } from '@/stores/file-changes-store';
-import { settingsManager } from '@/stores/settings-store';
-import type { TaskSettings } from '@/types';
-import {
-  findSimilarText,
-  fuzzyMatch,
-  normalizeString,
-  safeLiteralReplace,
-  smartMatch,
-} from '@/utils/text-replacement';
+  isFileTooLargeForEdit,
+  readFileForEdit,
+  restoreLineEndings,
+} from '@/lib/utils/file-encoding';
+import { fileReadStateTracker } from '@/lib/utils/file-read-state';
+import { findActualString, normalizeQuotes, preserveQuoteStyle } from '@/utils/text-replacement';
 
-interface EditBlock {
+/**
+ * Synchronous basename - extracts the filename from a path.
+ */
+function basename(filePath: string): string {
+  return filePath.split(/[/\\]/).pop() || filePath;
+}
+
+interface EditFileParams {
+  file_path: string;
   old_string: string;
   new_string: string;
-  description?: string;
-}
-
-interface EditResult {
-  editIndex: number;
-  success: boolean;
-  occurrences: number;
-  matchType: 'exact' | 'smart' | 'none';
-  error?: string;
+  replace_all?: boolean;
 }
 
 /**
- * Applies multiple edits sequentially to the content
+ * Find all occurrences of a string in content, with optional quote normalization
  */
-function applyEditsSequentially(
+function findOccurrences(
   content: string,
-  edits: EditBlock[],
-  replace_all: boolean
-): {
-  finalContent: string;
-  results: EditResult[];
-  success: boolean;
-} {
-  let workingContent = content;
-  const results: EditResult[] = [];
+  searchString: string,
+  useNormalization: boolean
+): { index: number; actualString: string }[] {
+  const occurrences: { index: number; actualString: string }[] = [];
 
-  for (let i = 0; i < edits.length; i++) {
-    const edit = edits[i];
-    if (!edit) continue;
-    const normalizedOldString = normalizeString(edit.old_string);
-    const normalizedNewString = normalizeString(edit.new_string);
-
-    // Try smart matching
-    const matchResult = smartMatch(workingContent, normalizedOldString);
-
-    if (matchResult.matchType === 'exact') {
-      // Use exact match
-      const replacement = safeLiteralReplace(
-        workingContent,
-        normalizedOldString,
-        normalizedNewString,
-        replace_all
-      );
-      workingContent = replacement.result;
-      results.push({
-        editIndex: i,
-        success: true,
-        occurrences: replacement.occurrences,
-        matchType: 'exact',
-      });
-    } else if (matchResult.matchType === 'smart' && matchResult.correctedOldString) {
-      // Use smart match with corrected old string
-      const actualOldString = matchResult.correctedOldString;
-      const replacement = safeLiteralReplace(
-        matchResult.result,
-        actualOldString,
-        normalizedNewString,
-        replace_all
-      );
-      workingContent = replacement.result;
-      results.push({
-        editIndex: i,
-        success: true,
-        occurrences: replacement.occurrences,
-        matchType: 'smart',
-      });
-      logger.info(`Edit ${i + 1}: Used smart matching - corrected old_string formatting`);
-    } else {
-      // No match found
-      results.push({
-        editIndex: i,
-        success: false,
-        occurrences: 0,
-        matchType: 'none',
-        error: `Could not find exact match for edit ${i + 1}`,
-      });
-      return {
-        finalContent: content, // Return original content on failure
-        results,
-        success: false,
-      };
+  if (content.includes(searchString)) {
+    let searchFrom = 0;
+    while (true) {
+      const index = content.indexOf(searchString, searchFrom);
+      if (index === -1) break;
+      occurrences.push({ index, actualString: searchString });
+      searchFrom = index + 1;
+    }
+  } else if (useNormalization) {
+    const normalizedContent = normalizeQuotes(content);
+    const normalizedSearch = normalizeQuotes(searchString);
+    let searchFrom = 0;
+    while (true) {
+      const index = normalizedContent.indexOf(normalizedSearch, searchFrom);
+      if (index === -1) break;
+      // Extract actual text from original content at same position
+      const actualString = content.substring(index, index + searchString.length);
+      occurrences.push({ index, actualString });
+      searchFrom = index + 1;
     }
   }
 
-  return {
-    finalContent: workingContent,
-    results,
-    success: true,
-  };
-}
-
-/**
- * Generates detailed error message when an edit fails to match
- */
-function generateEditErrorMessage(
-  content: string,
-  editIndex: number,
-  edit: EditBlock,
-  file_path: string
-): string {
-  const normalizedOldString = normalizeString(edit.old_string);
-  const fuzzy = fuzzyMatch(content, normalizedOldString);
-  const similarTexts = findSimilarText(content, normalizedOldString);
-
-  let errorMsg = `Edit ${editIndex + 1} failed: Could not find exact match in ${file_path}.\n\n`;
-  errorMsg += `❌ The old_string was not found exactly as provided.\n\n`;
-
-  if (edit.description) {
-    errorMsg += `📝 Edit description: ${edit.description}\n\n`;
-  }
-
-  // Check if the issue is with line ending format
-  if (edit.old_string.includes('\\n')) {
-    errorMsg += `🔍 Your old_string contains literal \\n characters. Try using actual line breaks instead.\n\n`;
-    errorMsg += `💡 Suggested fix: Replace \\n with actual newlines in your old_string.\n\n`;
-  }
-
-  if (fuzzy.suggestion) {
-    errorMsg += `💡 ${fuzzy.suggestion}\n\n`;
-  }
-
-  if (similarTexts.length > 0) {
-    errorMsg += `🔍 Found similar text at these locations:\n`;
-    for (const [i, text] of similarTexts.entries()) {
-      errorMsg += `\n${i + 1}. ${text}\n`;
-    }
-    errorMsg += `\n💡 Copy the exact text from the file (including proper indentation) and use it as old_string.\n`;
-  } else {
-    errorMsg += `🔍 No similar text found. The content might have changed.\n`;
-    errorMsg += `💡 Use readFile to verify the current file content and copy the exact text you want to replace.\n`;
-  }
-
-  // Try to provide a corrected suggestion if smart matching found something close
-  const smartAttempt = smartMatch(content, edit.old_string);
-  if (smartAttempt.matchType === 'smart' && smartAttempt.correctedOldString) {
-    errorMsg += `\n📝 Suggested corrected old_string:\n`;
-    errorMsg += `\`\`\`\n${smartAttempt.correctedOldString}\n\`\`\`\n`;
-  }
-
-  return errorMsg;
+  return occurrences;
 }
 
 export const editFile = createTool({
-  name: 'editFile',
-  description: `Edit an existing file with one or more text replacements.
+  name: 'edit_file',
+  description: `Performs exact string replacements in files.
 
-CRITICAL RULES:
-1. All old_string values must match EXACTLY - including spaces, tabs, and newlines
-2. Use readFile tool FIRST to see the exact content
-3. Include 3-5 lines of context before and after each change
-4. For file creation, use write-file tool instead
-
-HOW TO CHOOSE THE NUMBER OF EDITS:
-
-Single Edit (edits.length = 1):
-✅ One isolated change
-✅ Simple fix or update in one location
-✅ Experimental/uncertain replacement
-✅ When you need to verify the result before continuing
-
-Example: "Add an import statement" → 1 edit
-
-Multiple Edits (edits.length = 2-10):
-✅ Related changes to the same file
-✅ Batch updates with similar patterns (e.g., rename all occurrences)
-✅ Refactoring that touches multiple parts (imports + function + types)
-✅ You're confident all replacements will work
-
-Example: "Add import + update function + update type" → 3 edits
-
-IMPORTANT: Maximum 10 edits per call. For larger refactorings, make multiple calls.
-
-Best practice workflow:
-1. Use readFile to see current content
-2. Identify all changes you want to make to this file
-3. For each change, copy EXACT text with context
-4. Create edit block(s) with old_string and new_string
-5. Call edit-file with your edit(s)`,
-
+Usage:
+- You must use your Read tool at least once in the conversation before editing. This tool will error if you attempt to edit without reading the file first.
+- When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix.
+- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.
+- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
+- The edit will FAIL if old_string is not unique in the file. Either provide a larger string with more surrounding context to make it unique or use replace_all to change every instance of old_string.
+- Use replace_all for replacing and renaming strings across the file. This parameter is useful if you want to rename a variable for instance.`,
   inputSchema: z.object({
-    file_path: z.string().describe('The absolute path of file you want to edit'),
-    edits: z
-      .array(
-        z.object({
-          old_string: z
-            .string()
-            .min(1)
-            .describe(
-              'EXACT text to replace. Must match perfectly including whitespace. Include 3-5 lines of context.'
-            ),
-          new_string: z
-            .string()
-            .describe('Replacement text. Can be empty to delete. Must have correct indentation.'),
-        })
-      )
-      .min(1)
-      .describe(
-        'Array of edit blocks. Use 1 edit for simple changes. Use multi edits for related changes to the same file.'
-      ),
+    file_path: z.string().describe('The absolute path to the file to modify'),
+    old_string: z.string().describe('The text to replace'),
+    new_string: z
+      .string()
+      .describe('The text to replace it with (must be different from old_string)'),
+    replace_all: z
+      .boolean()
+      .optional()
+      .describe('Replace all occurrences of old_string (default false)'),
   }),
-  canConcurrent: false,
-  execute: async ({ file_path, edits, review_mode = true }, context) => {
+  isDestructive: true,
+  canConcurrent: false, // File edits are never concurrency-safe
+  renderToolDoing: ({ file_path }) => <GenericToolDoing operation="edit" filePath={file_path} />,
+  renderToolResult: (result) => {
+    if (result && typeof result === 'object' && 'error' in result) {
+      return <GenericToolResult success={false} error={(result as { error: string }).error} />;
+    }
+    const output =
+      result && typeof result === 'object' && 'output' in result
+        ? (result as { output: string }).output
+        : String(result);
+    return <GenericToolResult success={true} message={output} />;
+  },
+  execute: async (params: EditFileParams, context) => {
+    const { file_path, old_string, new_string, replace_all = false } = params;
+
+    // Validation
+    if (!file_path) {
+      return { error: 'file_path is required' };
+    }
+    if (old_string === new_string) {
+      return { error: 'old_string and new_string must be different' };
+    }
+    if (!old_string && !replace_all) {
+      return { error: 'old_string cannot be empty (use write_file to create new files)' };
+    }
+
+    const fileName = basename(file_path);
+
     try {
-      const rootPath = context.rootPath ?? (await getEffectiveWorkspaceRoot(context?.taskId));
-      if (!rootPath) {
-        return {
-          success: false,
-          file_path,
-          message: 'Project root path is not set.',
-        };
-      }
-      logger.info(
-        `editFile: rootPath=${rootPath}, file_path=${file_path}, taskId=${context?.taskId}`
-      );
-      const fullPath = await normalizeFilePath(rootPath, file_path);
-
-      // Security check: Ensure file path is within the current project directory
-      const isPathSecure = await isPathWithinProjectDirectory(fullPath, rootPath);
-      if (!isPathSecure) {
-        const securityError = createPathSecurityError(fullPath, rootPath);
-        logger.error(`editFile: Security violation - ${securityError}`);
-        return {
-          success: false,
-          file_path,
-          message: securityError,
-        };
+      // Check file size before attempting edit
+      const tooLarge = await isFileTooLargeForEdit(file_path);
+      if (tooLarge) {
+        return { error: `File ${fileName} is too large to edit safely (>1GiB)` };
       }
 
-      logger.info('Editing file:', fullPath);
-      logger.info('Number of edits:', edits.length);
-
-      // Validate edits
-      if (edits.length === 0) {
-        throw new Error('At least one edit block is required.');
-      }
-
-      // Check for empty old_strings
-      for (let i = 0; i < edits.length; i++) {
-        if (!edits[i].old_string || edits[i].old_string.trim().length === 0) {
-          throw new Error(
-            `Edit ${i + 1}: old_string cannot be empty. Use write-file or create-file for new content.`
-          );
-        }
-      }
-
-      // Check for duplicate edits
-      const uniqueEdits = new Set(edits.map((e: EditBlock) => `${e.old_string}::${e.new_string}`));
-      if (uniqueEdits.size !== edits.length) {
-        throw new Error(
-          'Duplicate edit blocks detected. Each edit should be unique. Remove duplicate edits.'
+      // === Staleness Detection ===
+      // Check if the file was modified externally since the AI last read it
+      if (context?.taskId) {
+        const stalenessResult = await fileReadStateTracker.checkStaleness(
+          context.taskId,
+          file_path
         );
-      }
-
-      let currentContent: string;
-      try {
-        currentContent = await repositoryService.readFileWithCache(fullPath);
-        currentContent = normalizeString(currentContent);
-      } catch (error) {
-        logger.error('Error reading file:', error);
-        throw new Error(
-          `File not found: ${file_path}. This tool only edits existing files. Use create-file or write-file for new files.`
-        );
-      }
-
-      // Validate that old_string and new_string are different for each edit
-      // Compare original strings directly, not normalized versions
-      // This ensures we don't falsely treat strings with subtle differences as identical
-      for (let i = 0; i < edits.length; i++) {
-        if (edits[i].old_string === edits[i].new_string) {
-          throw new Error(
-            `Edit ${i + 1}: No changes needed. The old_string and new_string are identical.`
-          );
-        }
-      }
-
-      // Apply edits sequentially
-      const applyResult = applyEditsSequentially(currentContent, edits, false);
-
-      if (!applyResult.success) {
-        // Find the failed edit
-        const failedResult = applyResult.results.find((r) => !r.success);
-        if (failedResult) {
-          const failedEdit = edits[failedResult.editIndex];
-          const errorMsg = generateEditErrorMessage(
-            currentContent,
-            failedResult.editIndex,
-            failedEdit,
-            file_path
-          );
-          throw new Error(errorMsg);
-        }
-        throw new Error('Failed to apply edits. Please check your edit blocks and try again.');
-      }
-
-      const finalContent = applyResult.finalContent;
-
-      if (currentContent === finalContent) {
-        throw new Error(
-          'No changes applied. The content is identical after all replacements. This should not happen - please report this issue.'
-        );
-      }
-
-      // Calculate total occurrences
-      const totalOccurrences = applyResult.results.reduce(
-        (sum, result) => sum + result.occurrences,
-        0
-      );
-
-      // Check if auto-approve is enabled for this task
-      const taskId = context?.taskId;
-      if (!taskId) {
-        throw new Error('taskId is required for editFile tool');
-      }
-
-      const toolId = context?.toolId;
-      if (!toolId) {
-        throw new Error('toolId is required for editFile tool');
-      }
-
-      const settingsJson = await taskService.getTaskSettings(taskId);
-      let shouldAutoApprove = settingsManager.getAutoApproveEditsGlobal();
-
-      if (settingsJson) {
-        try {
-          const settings: TaskSettings = JSON.parse(settingsJson);
-          if (typeof settings.autoApproveEdits === 'boolean') {
-            shouldAutoApprove = settings.autoApproveEdits;
-          }
-        } catch (error) {
-          logger.error('Failed to parse conversation settings:', error);
-        }
-      }
-
-      if (shouldAutoApprove) {
-        // Auto-approve is enabled, directly write the file
-        await repositoryService.writeFile(fullPath, finalContent);
-        const successMessage = `Successfully applied ${edits.length} edit${edits.length > 1 ? 's' : ''} to ${file_path} (${totalOccurrences} total replacement${totalOccurrences > 1 ? 's' : ''}) [Auto-approved]`;
-        logger.info(successMessage);
-
-        // Track the file change
-        useFileChangesStore
-          .getState()
-          .addChange(taskId, toolId, file_path, 'edit', currentContent, finalContent);
-
-        return {
-          success: true,
-          message: successMessage,
-          type: 'success',
-          editsApplied: edits.length,
-          totalReplacements: totalOccurrences,
-        };
-      }
-
-      // Handle review mode internally
-      if (review_mode) {
-        const editId = `edit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-        const pendingEdit: PendingEdit = {
-          id: editId,
-          filePath: file_path,
-          originalContent: currentContent,
-          newContent: finalContent,
-          operation: 'edit',
-          timestamp: Date.now(),
-          metadata:
-            edits.length > 1
-              ? {
-                  editCount: edits.length,
-                  edits: edits.map((edit: EditBlock, i: number) => ({
-                    index: i + 1,
-                    description: edit.description || `Edit ${i + 1}`,
-                    occurrences: applyResult.results[i]?.occurrences || 0,
-                    matchType: applyResult.results[i]?.matchType || 'none',
-                  })),
-                }
-              : undefined,
-        };
-
-        // Create callbacks for approval/rejection/allowAll
-        const callbacks = {
-          onApprove: async () => {
-            await repositoryService.writeFile(fullPath, finalContent);
-            const message = `Successfully applied ${edits.length} edit${edits.length > 1 ? 's' : ''} to ${file_path} (${totalOccurrences} total replacement${totalOccurrences > 1 ? 's' : ''})`;
-            logger.info(message);
-
-            // Track the file change
-            useFileChangesStore
-              .getState()
-              .addChange(taskId, toolId, file_path, 'edit', currentContent, finalContent);
-
-            return { success: true, message };
-          },
-          onReject: async (feedback: string) => {
-            logger.info(`Edit rejected for ${file_path}: ${feedback}`);
-            return {
-              success: true,
-              message: `Edit rejected. Feedback: ${feedback}`,
-              feedback,
-            };
-          },
-          onAllowAll: async () => {
-            // 1. Update conversation settings to enable auto-approve
-            const newSettings: TaskSettings = { autoApproveEdits: true };
-            await taskService.updateTaskSettings(taskId, newSettings);
-            logger.info(`Auto-approve enabled for conversation ${taskId}`);
-
-            // 2. Approve current edit
-            await repositoryService.writeFile(fullPath, finalContent);
-            const message = `Successfully applied ${edits.length} edit${edits.length > 1 ? 's' : ''} to ${file_path} (${totalOccurrences} total replacement${totalOccurrences > 1 ? 's' : ''}). All future edits in this conversation will be auto-approved.`;
-            logger.info(message);
-
-            // Track the file change
-            useFileChangesStore
-              .getState()
-              .addChange(taskId, toolId, file_path, 'edit', currentContent, finalContent);
-
-            return { success: true, message };
-          },
-        };
-
-        // Handle review inline using the store
-        try {
-          // Send notification if window is not focused
-          await notificationService.notifyHooked(
-            taskId,
-            'Review Required',
-            'File edit needs your approval',
-            'review_required'
-          );
-
-          // Create a Promise that will be resolved when user reviews the edit
-          const reviewResult = await new Promise<FileEditReviewResult>((resolve) => {
-            logger.info('[EditFileTool] Creating Promise and setting pending edit in store');
-
-            // Store the pending edit, callbacks, and resolver in the store
-            // The UI component (FileEditReviewCard) will call the store methods which will resolve this Promise
-            // Pass taskId to support concurrent pending edits for multiple tasks
-            useEditReviewStore
-              .getState()
-              .setPendingEdit(taskId, editId, pendingEdit, callbacks, resolve);
-          });
-
-          // Type guard to ensure reviewResult has the expected structure
-          if (
-            typeof reviewResult === 'object' &&
-            reviewResult !== null &&
-            'success' in reviewResult
-          ) {
-            // Check the result format from FileEditReviewCard
-            if (reviewResult.success && reviewResult.approved) {
-              // User approved - return success
-              return {
-                success: true,
-                message:
-                  reviewResult.message ||
-                  `Successfully applied ${edits.length} edit${edits.length > 1 ? 's' : ''} to ${file_path}`,
-                type: 'success',
-                editsApplied: edits.length,
-                totalReplacements: totalOccurrences,
-              };
-            }
-            // User rejected with feedback
-            const feedback = reviewResult.feedback || 'Edit rejected by user';
-            logger.info(`Edit rejected for ${file_path}: ${feedback}`);
-
-            return {
-              success: true,
-              message: `Edit rejected. Feedback: ${feedback}`,
-              feedback,
-              type: 'user_feedback',
-            };
-          }
-          // Handle unexpected review result format
-          logger.error('Unexpected review result format:', reviewResult);
+        if (stalenessResult?.stale) {
           return {
-            success: false,
-            message: 'Unexpected review result format',
-            type: 'error',
-          };
-        } catch (error) {
-          logger.error('Error in review process:', error);
-          return {
-            success: false,
-            message: `Review process failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-            type: 'error',
+            error: `File ${fileName} has been modified externally since it was last read. Please re-read the file before editing. Reason: ${stalenessResult.reason}`,
           };
         }
       }
 
-      // Direct mode (no review)
-      try {
-        await repositoryService.writeFile(fullPath, finalContent);
-        const successMessage = `Successfully applied ${edits.length} edit${edits.length > 1 ? 's' : ''} to ${file_path} (${totalOccurrences} total replacement${totalOccurrences > 1 ? 's' : ''})`;
-        logger.info(successMessage);
+      // === Atomic Read ===
+      // Read the file with encoding detection for preservation
+      const { content, encodingInfo, fileExists } = await readFileForEdit(file_path);
 
-        // Track the file change (taskId was validated earlier)
-        useFileChangesStore
-          .getState()
-          .addChange(taskId, toolId, file_path, 'edit', currentContent, finalContent);
-
+      if (!fileExists) {
         return {
-          success: true,
-          message: successMessage,
-          type: 'success',
-          editsApplied: edits.length,
-          totalReplacements: totalOccurrences,
-        };
-      } catch (error) {
-        const errorMessage = `Failed to write file: ${error instanceof Error ? error.message : 'Unknown error'}`;
-        logger.error(errorMessage);
-
-        return {
-          success: false,
-          message: errorMessage,
-          type: 'error',
+          error: `File ${file_path} does not exist. Use write_file to create new files.`,
         };
       }
-    } catch (error) {
-      logger.error('Error editing file:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+      // === Multiple Match Protection ===
+      // Find all occurrences with quote normalization fallback
+      const occurrences = findOccurrences(content, old_string, true);
+
+      if (occurrences.length === 0) {
+        // No match found - provide helpful error with context
+        const lines = content.split('\n');
+        return {
+          error: `No match found for old_string in ${fileName}.\n\nThe file has ${lines.length} lines. The old_string you provided was not found. Common causes:\n1. The text was already edited in a previous tool call\n2. Whitespace/indentation doesn't match exactly (use Read tool output, not what you remember)\n3. Quote style mismatch (curly vs straight quotes)\n\nPlease use the Read tool to verify the current file content.`,
+        };
+      }
+
+      // Strict uniqueness check: reject ambiguous edits
+      if (occurrences.length > 1 && !replace_all) {
+        const locations = occurrences
+          .slice(0, 3)
+          .map((o) => {
+            const lineNum = content.substring(0, o.index).split('\n').length;
+            return `line ${lineNum}`;
+          })
+          .join(', ');
+
+        return {
+          error: `Found ${occurrences.length} matches for old_string in ${fileName} (at ${locations}${occurrences.length > 3 ? '...' : ''}). The old_string must be unique unless you set replace_all to true. Provide more surrounding context to make the match unique, or use replace_all.`,
+        };
+      }
+
+      // === Apply Replacement ===
+      let newContent: string;
+      let wasNormalized = false;
+
+      if (replace_all) {
+        // Replace all occurrences
+        const firstOccurrence = occurrences[0];
+        if (firstOccurrence && firstOccurrence.actualString !== old_string) {
+          // Quote normalization was used
+          wasNormalized = true;
+        }
+
+        // For replace_all, use the original content and replace each occurrence
+        let result = content;
+        // Replace from end to start to preserve indices
+        for (let i = occurrences.length - 1; i >= 0; i--) {
+          const occ = occurrences[i];
+          if (!occ) continue;
+          const before = result.substring(0, occ.index);
+          const after = result.substring(occ.index + occ.actualString.length);
+          let replacement = new_string;
+          if (wasNormalized) {
+            replacement = preserveQuoteStyle(occ.actualString, new_string);
+          }
+          result = before + replacement + after;
+        }
+        newContent = result;
+      } else {
+        // Single replacement
+        const occurrence = occurrences[0];
+        if (!occurrence) {
+          return { error: 'No occurrence found for replacement' };
+        }
+        const before = content.substring(0, occurrence.index);
+        const after = content.substring(occurrence.index + occurrence.actualString.length);
+
+        let replacement = new_string;
+        if (occurrence.actualString !== old_string) {
+          // Quote normalization was used - preserve original quote style
+          replacement = preserveQuoteStyle(occurrence.actualString, new_string);
+          wasNormalized = true;
+        }
+
+        newContent = before + replacement + after;
+      }
+
+      // Verify the replacement actually changed something
+      if (newContent === content) {
+        return {
+          error: 'Edit produced no changes. old_string and new_string result in the same content.',
+        };
+      }
+
+      // === Restore Encoding ===
+      // Restore line endings to match original file
+      const contentToWrite = restoreLineEndings(newContent, encodingInfo.lineEnding);
+
+      // === Atomic Write ===
+      // Write the file, preserving encoding
+      await writeTextFile(file_path, contentToWrite);
+
+      // Update file read state to reflect our own modification
+      if (context?.taskId) {
+        try {
+          const newStats = await import('@tauri-apps/plugin-fs').then((m) => m.stat(file_path));
+          fileReadStateTracker.recordRead(
+            context.taskId,
+            file_path,
+            newStats.mtime?.getTime() || Date.now(),
+            true
+          );
+        } catch {
+          // Non-critical: just update with current time
+          fileReadStateTracker.recordRead(context.taskId, file_path, Date.now(), true);
+        }
+      }
+
+      // Compute diff summary for the response
+      const oldLines = content.split('\n').length;
+      const newLines = newContent.split('\n').length;
+      const lineDiff = newLines - oldLines;
+
+      const editSummary = replace_all
+        ? `Replaced ${occurrences.length} occurrences`
+        : `Replaced 1 occurrence`;
+
+      const encodingNote =
+        encodingInfo.lineEnding !== 'lf'
+          ? ` (preserved ${encodingInfo.lineEnding.toUpperCase()} line endings)`
+          : '';
+
+      const normalizationNote = wasNormalized ? ' (quote style normalized)' : '';
 
       return {
-        success: false,
-        message: `Failed to edit file:\n\n${errorMessage}`,
-        type: 'error',
+        output: `${editSummary} in ${fileName}${encodingNote}${normalizationNote}`,
+        metadata: {
+          fileName,
+          occurrences: occurrences.length,
+          lineDiff,
+          encodingPreserved: encodingInfo.lineEnding !== 'lf' || encodingInfo.hasBOM,
+        },
+      };
+    } catch (error) {
+      logger.error(`Edit file error: ${file_path}`, error);
+      return {
+        error: `Failed to edit ${fileName}: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
-  },
-
-  renderToolDoing: ({ file_path, edits }, context) => {
-    // Use the responsive wrapper component that subscribes to the store
-    return <EditFileToolDoing file_path={file_path} edits={edits} taskId={context?.taskId || ''} />;
-  },
-
-  renderToolResult: (result) => {
-    return <GenericToolResult success={result?.success ?? false} message={result?.message} />;
   },
 });

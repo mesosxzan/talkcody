@@ -18,6 +18,8 @@ The directory path must be absolute.`,
     directory_path: z.string().describe('The absolute path to the directory you want to list'),
     max_depth: z.number().optional().describe('Maximum depth for recursive listing (default: 3)'),
   }),
+  isReadOnly: true,
+  isConcurrencySafe: true,
   canConcurrent: true,
   execute: async ({ directory_path, max_depth = 3 }, context) => {
     try {

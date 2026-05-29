@@ -10,6 +10,9 @@ export const webFetchTool = createTool({
   inputSchema: z.object({
     url: z.string().describe('The URL of the web page to fetch'),
   }),
+  isReadOnly: true,
+  isConcurrencySafe: true,
+  maxResultSizeChars: 20000,
   canConcurrent: true,
   execute: async ({ url }, context) => {
     return await fetchWebContent(url, context);

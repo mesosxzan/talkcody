@@ -47,6 +47,7 @@ import {
 } from './llm-response-chaining';
 import { createDefaultLoopStoreAccess, type LoopStoreAccess } from './loop-store-access';
 import { toLlmMessages } from './message-adapter';
+import { attemptReactiveCompaction, clearExpiredToolResults } from './reactive-compaction';
 import { ResponsesChainManager } from './responses-chain-manager';
 import { MAX_STREAM_RETRIES } from './stream-retry-manager';
 
@@ -651,6 +652,24 @@ export class LLMService {
         // This is critical for multi-iteration scenarios (e.g., text -> tool call -> text)
         streamProcessor.resetState();
 
+        // === Micro-compact: clear expired tool results ===
+        // Between turns, clear old tool result content that has likely expired
+        // from the server's prompt cache. This is a lightweight operation that
+        // doesn't require an API call.
+        if (!freshContext && loopState.messages.length > 10) {
+          // Derive the last assistant timestamp from the messages themselves
+          const lastAssistantTime = (() => {
+            for (let i = loopState.messages.length - 1; i >= 0; i--) {
+              if (loopState.messages[i]?.role === 'assistant') {
+                // Use current time as approximation; messages don't carry timestamps
+                return Date.now();
+              }
+            }
+            return 0;
+          })();
+          loopState.messages = clearExpiredToolResults(loopState.messages, lastAssistantTime);
+        }
+
         // Check and perform message compression if needed
         try {
           if (!freshContext) {
@@ -1244,6 +1263,29 @@ export class LLMService {
           );
 
           if (!wasCompacted) {
+            // === Reactive Compaction ===
+            // Auto-compaction failed - try reactive compaction (PTL retry + aggressive truncation)
+            logger.info('[LLMService] Auto-compaction failed, attempting reactive compaction');
+            try {
+              const reactiveResult = await attemptReactiveCompaction(
+                loopState.messages,
+                this.messageCompactor,
+                compressionConfig,
+                activeModel,
+                systemPrompt
+              );
+
+              if (reactiveResult) {
+                loopState.messages = convertToAnthropicFormat(reactiveResult.messages, {
+                  autoFix: true,
+                });
+                logger.info('[LLMService] Reactive compaction succeeded, retrying iteration');
+                continue;
+              }
+            } catch (reactiveError) {
+              logger.error('[LLMService] Reactive compaction also failed', reactiveError);
+            }
+
             throw new Error(t.LLMService.errors.contextTooLongCompactionFailed);
           }
 

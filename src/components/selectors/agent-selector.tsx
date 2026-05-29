@@ -24,7 +24,18 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
   const isLoadingAgents = useAgentStore((state) => state.isLoading);
   const refreshToken = useAgentStore((state) => state.refreshToken);
 
-  // Get current task and messages
+  // Ensure agents are loaded when the selector mounts
+  useEffect(() => {
+    const { isInitialized, loadAgents, refreshAgents } = useAgentStore.getState();
+    if (!isInitialized) {
+      loadAgents();
+    } else if (agentsMap.size === 0) {
+      // If initialized but empty, force refresh to pick up agents
+      refreshAgents();
+    }
+  }, [agentsMap.size]); // Re-run when agents map size changes
+
+  // Get current task and messages - subscribe to messages map for reactivity
   const currentTaskId = useTaskStore((state) => state.currentTaskId);
   const getMessages = useTaskStore((state) => state.getMessages);
 
@@ -53,7 +64,7 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
     if (!currentTaskId) return null;
     const messages = getMessages(currentTaskId);
     if (!messages || messages.length === 0) return null;
-    // Find the last user message
+    // Find the last user message with an assistantId
     for (let i = messages.length - 1; i >= 0; i--) {
       const msg = messages[i];
       if (msg && msg.role === 'user' && msg.assistantId) {
@@ -116,14 +127,19 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
     }
   };
 
-  if (settingsLoading) return null;
+  // Wait for both settings and agents to load before rendering
+  if (settingsLoading || isLoadingAgents) return null;
+
+  // Find the agent name for display when value doesn't match items (e.g. during loading)
+  // This ensures the selector always shows the correct agent name
+  const currentAgentName = agents.find((a) => a.id === currentAgentId)?.name;
 
   return (
     <BaseSelector
       disabled={disabled || isLoadingAgents}
       items={agentItems}
       onValueChange={handleChange}
-      placeholder="Select agent"
+      placeholder={currentAgentName || 'Select agent'}
       value={currentAgentId}
     />
   );

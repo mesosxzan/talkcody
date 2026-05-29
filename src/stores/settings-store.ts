@@ -486,7 +486,7 @@ class SettingsDatabase {
 
     const defaultSettings: Record<string, string> = {
       language: 'en',
-      agentId: 'planner',
+      assistantId: 'planner',
       is_think: 'false',
       project: DEFAULT_PROJECT,
       current_root_path: '',

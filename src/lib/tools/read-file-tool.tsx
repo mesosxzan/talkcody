@@ -1,9 +1,10 @@
-import { exists, readTextFile } from '@tauri-apps/plugin-fs';
+import { exists, readTextFile, stat } from '@tauri-apps/plugin-fs';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { fileReadStateTracker } from '@/lib/utils/file-read-state';
 
 import { repositoryService } from '@/services/repository-service';
 import { normalizeFilePath } from '@/services/repository-utils';
@@ -128,6 +129,9 @@ You can optionally specify a starting line and number of lines to read a specifi
       .optional()
       .describe('Number of lines to read from start_line. If not specified, reads to end of file'),
   }),
+  isReadOnly: true,
+  isConcurrencySafe: true,
+  maxResultSizeChars: 100000,
   canConcurrent: true,
   execute: async ({ file_path, start_line, line_count, filePath, path }, context) => {
     try {
@@ -168,6 +172,18 @@ You can optionally specify a starting line and number of lines to read a specifi
       }
 
       const fullContent = await repositoryService.readFileWithCache(file_path);
+
+      // Record file read state for staleness detection in edit operations
+      if (context?.taskId) {
+        try {
+          const fileStats = await stat(file_path);
+          const modifiedTime = fileStats.mtime?.getTime() || 0;
+          fileReadStateTracker.recordRead(context.taskId, file_path, modifiedTime, true);
+        } catch {
+          // Non-critical: recording read state is optional
+        }
+      }
+
       const result = extractLines(fullContent, file_path, start_line, line_count);
       // logger.info(`readFile: Reading file at path: ${file_path}`);
       return {

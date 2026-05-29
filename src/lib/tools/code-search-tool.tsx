@@ -27,6 +27,8 @@ Use this to find code patterns, function definitions, variable usage, or any tex
       .optional()
       .describe('File extensions to search (e.g., ["ts", "tsx", "js"])'),
   }),
+  isReadOnly: true,
+  isConcurrencySafe: true,
   canConcurrent: true,
   execute: async ({ pattern, path, file_types }, context): Promise<CodeSearchResult> => {
     try {

@@ -6,6 +6,7 @@ import type { Tracer } from '@/lib/tracer';
 import { decodeObjectHtmlEntities, generateId } from '@/lib/utils';
 import { databaseService } from '@/services/database-service';
 import { hookService } from '@/services/hooks/hook-service';
+import { permissionRuleEngine } from '@/services/permissions/permission-rule-engine';
 import { useSettingsStore } from '@/stores/settings-store';
 import type { AgentLoopState, AgentToolSet, MessageAttachment, UIMessage } from '@/types/agent';
 import type { ToolExecuteContext, ToolInput, ToolOutput, ToolWithUI } from '@/types/tool';
@@ -409,6 +410,40 @@ export class ToolExecutor {
             hookBlocked: true,
           };
         }
+
+        // === Permission rule engine check ===
+        // Layered deny/allow/ask rules evaluated BEFORE tool execution
+        const toolContext: ToolExecuteContext = {
+          taskId: options.taskId,
+          toolId: toolCall.toolCallId,
+          rootPath: options.rootPath,
+          subagentId: options.subagentId,
+        };
+        const toolPermissionCheck = this.isToolWithUI(tool) ? tool.checkPermissions : undefined;
+        const permissionResult = await permissionRuleEngine.checkPermission(
+          normalizedToolName,
+          toolArgs as ToolInput,
+          toolPermissionCheck,
+          toolContext
+        );
+        if (permissionResult.behavior === 'deny') {
+          logger.info(`[ToolExecutor] Permission denied for ${normalizedToolName}`, {
+            reason: permissionResult.reason,
+            taskId: options.taskId,
+          });
+          return {
+            success: false,
+            error:
+              permissionResult.reason || `Tool ${normalizedToolName} denied by permission rules`,
+            permissionDenied: true,
+          };
+        }
+        if (permissionResult.updatedInput) {
+          toolArgs = permissionResult.updatedInput;
+        }
+        // 'ask' behavior is handled by the edit review store for file-editing tools,
+        // and by the general UI permission prompt for other tools.
+        // 'allow' behavior proceeds to execution.
 
         const isCallAgentTool = toolCall.toolName === 'callAgent';
 

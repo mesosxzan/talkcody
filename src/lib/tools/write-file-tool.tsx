@@ -30,6 +30,7 @@ The file path should be an absolute path.`,
     file_path: z.string().describe('The absolute path of file you want to write'),
     content: z.string().describe('The content to write to the file'),
   }),
+  isDestructive: true,
   canConcurrent: false,
   execute: async ({ file_path, content, review_mode = true }, context) => {
     try {

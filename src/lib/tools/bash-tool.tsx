@@ -51,6 +51,8 @@ Output can be read using \`cat\` or \`tail -f\` on the output file path returned
       .default(false)
       .describe('Run command in background and return task ID'),
   }),
+  isDestructive: true,
+  interruptBehavior: 'cancel',
   canConcurrent: false,
   execute: async ({ command, runInBackground }, context): Promise<BashResult> => {
     logger.info('Executing bash command', {
