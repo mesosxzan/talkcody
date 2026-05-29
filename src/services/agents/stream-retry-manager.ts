@@ -133,7 +133,7 @@ export class StreamRetryManager {
   extractHttpStatusFromMessage(error: unknown): number | null {
     const message = error instanceof Error ? error.message : String(error);
     const match = message.match(/\b(\d{3})\b/);
-    return match ? parseInt(match[1], 10) : null;
+    return match?.[1] ? parseInt(match[1], 10) : null;
   }
 
   /**
@@ -211,7 +211,7 @@ export class StreamRetryManager {
     // For rate limits, try fallback model first if available
     if (category === 'retryable_rate_limit' || category === 'retryable_overloaded') {
       if (!preferSameModel && fallbackModels.length > 0) {
-        const nextModel = fallbackModels[0];
+        const nextModel = fallbackModels[0]!;
         return {
           type: 'model_fallback',
           fromModel: activeModel,

@@ -51,6 +51,12 @@ export function createDefaultLoopStoreAccess(): LoopStoreAccess {
     isModelAvailable: (model) => useProviderStore.getState().isModelAvailable(model),
     getProviderModel: (model) => useProviderStore.getState().getProviderModel(model),
     getAvailableModels: () => useProviderStore.getState().availableModels || [],
-    getOauthConfig: () => useProviderStore.getState().oauthConfig,
+    getOauthConfig: () => {
+      const config = useProviderStore.getState().oauthConfig;
+      if (!config) return undefined;
+      return {
+        openaiIsConnected: config.openaiIsConnected ?? undefined,
+      };
+    },
   };
 }
