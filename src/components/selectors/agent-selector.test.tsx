@@ -287,7 +287,7 @@ describe('AgentSelector Component', () => {
     });
   });
 
-  it('should remove disabled local agents after refresh token update', async () => {
+  it('should remove disabled local agents when agents map updates', async () => {
     mockAgentStoreState.agents = new Map([
       ['agent-1', { id: 'agent-1', name: 'Test Agent 1' } as AgentDefinition],
       ['agent-2', { id: 'agent-2', name: 'Test Agent 2' } as AgentDefinition],
@@ -311,7 +311,11 @@ describe('AgentSelector Component', () => {
       { id: 'agent-2', is_enabled: false },
     ] as any);
 
-    mockAgentStoreState.refreshToken += 1;
+    // Simulate agents map update (new Map instance triggers useEffect re-run)
+    mockAgentStoreState.agents = new Map([
+      ['agent-1', { id: 'agent-1', name: 'Test Agent 1' } as AgentDefinition],
+      ['agent-2', { id: 'agent-2', name: 'Test Agent 2' } as AgentDefinition],
+    ]);
     rerender(<AgentSelector />);
 
     await waitFor(() => {

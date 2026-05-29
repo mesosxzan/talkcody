@@ -7,7 +7,6 @@ import { logger } from '@/lib/logger';
 import { agentRegistry } from '@/services/agents/agent-registry';
 import { agentService } from '@/services/database/agent-service';
 import { useAgentStore } from '@/stores/agent-store';
-import { useTaskStore } from '@/stores/task-store';
 import { NavigationView } from '@/types/navigation';
 import { BaseSelector } from './base-selector';
 
@@ -22,7 +21,6 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
   // Subscribe to agent store to trigger re-renders when agents are loaded
   const agentsMap = useAgentStore((state) => state.agents);
   const isLoadingAgents = useAgentStore((state) => state.isLoading);
-  const refreshToken = useAgentStore((state) => state.refreshToken);
 
   // Ensure agents are loaded when the selector mounts
   useEffect(() => {
@@ -35,16 +33,15 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
     }
   }, [agentsMap.size]); // Re-run when agents map size changes
 
-  // Get current task and messages - subscribe to messages map for reactivity
-  const currentTaskId = useTaskStore((state) => state.currentTaskId);
-  const getMessages = useTaskStore((state) => state.getMessages);
-
   // Track enabled state for database agents
   const [dbAgentEnabledMap, setDbAgentEnabledMap] = useState<Map<string, boolean>>(new Map());
 
-  // Load enabled state for database agents
+  // Load enabled state for database agents; re-load when agents map changes (e.g. after refresh)
   useEffect(() => {
-    const loadEnabledState = async (refreshKey: number) => {
+    // Guard: skip loading if no agents are available yet
+    if (agentsMap.size === 0) return;
+
+    const loadEnabledState = async () => {
       try {
         const dbAgents = await agentService.listAgents({ includeHidden: false });
         const enabledMap = new Map<string, boolean>();
@@ -56,26 +53,12 @@ export function AgentSelector({ disabled = false }: AgentSelectorProps) {
         logger.error('Failed to load agent enabled state:', error);
       }
     };
-    loadEnabledState(refreshToken);
-  }, [refreshToken]);
+    loadEnabledState();
+  }, [agentsMap]);
 
-  // Get the agent ID from the last user message in the current task
-  const lastUserMessageAgentId = useMemo(() => {
-    if (!currentTaskId) return null;
-    const messages = getMessages(currentTaskId);
-    if (!messages || messages.length === 0) return null;
-    // Find the last user message with an assistantId
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const msg = messages[i];
-      if (msg && msg.role === 'user' && msg.assistantId) {
-        return msg.assistantId;
-      }
-    }
-    return null;
-  }, [currentTaskId, getMessages]);
-
-  // Use the last user message's agent ID if available, otherwise use global setting
-  const currentAgentId = lastUserMessageAgentId || settings.assistantId;
+  // Always use the global setting as the current agent ID.
+  // When user selects a new agent, settings.assistantId is updated and should be respected.
+  const currentAgentId = settings.assistantId;
 
   const agents = useMemo(() => {
     const allAgents = Array.from(agentsMap.values());
