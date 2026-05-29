@@ -10,13 +10,16 @@ import type { Message as ModelMessage } from '@/services/llm/types';
 import type {
   CompressionConfig,
   CompressionResult,
-  CompressionSection,
+  CompressionStrategyType,
   MessageCompactionOptions,
 } from '@/types/agent';
 import { aiContextCompactionService } from '../ai/ai-context-compaction';
 import { estimateTokens } from '../code-navigation-service';
+import { ContextAnalyzer } from './context-analyzer';
 import { ContextFilter } from './context-filter';
 import { ContextRewriter } from './context-rewriter';
+import { StrategySelector } from './strategy-selector';
+import { createCompressedMessages, messagesToText, parseSections } from './utils';
 
 export interface ValidationResult {
   valid: boolean;
@@ -34,8 +37,9 @@ export interface SelectMessagesToCompressResult {
 }
 
 export class ContextCompactor {
-  private readonly MAX_SUMMARY_LENGTH = 8000; // Max chars for condensed summary
   private readonly PRESERVE_TOOL_NAMES = ['exitPlanMode', 'todoWrite'];
+  private readonly contextAnalyzer: ContextAnalyzer;
+  private readonly strategySelector: StrategySelector;
   private messageFilter: ContextFilter;
   private messageRewriter: ContextRewriter;
   private compressionStats = {
@@ -47,6 +51,8 @@ export class ContextCompactor {
   constructor() {
     this.messageFilter = new ContextFilter();
     this.messageRewriter = new ContextRewriter();
+    this.contextAnalyzer = new ContextAnalyzer();
+    this.strategySelector = new StrategySelector(this.contextAnalyzer);
   }
 
   /**
@@ -296,22 +302,14 @@ export class ContextCompactor {
     logger.info('Starting message compaction', {
       originalMessageCount: messages.length,
       preserveRecentMessages: config.preserveRecentMessages,
+      strategyMode: config.strategyMode ?? 'auto',
     });
 
     // Use selectMessagesToCompress to determine which messages to compress and preserve
-    let { messagesToCompress, preservedMessages } = this.selectMessagesToCompress(
+    const { messagesToCompress, preservedMessages } = this.selectMessagesToCompress(
       messages,
       config.preserveRecentMessages
     );
-
-    // Apply tree-sitter based code summarization to reduce token usage
-    // This rewrites large file contents (>100 lines) to only include signatures and key definitions
-    try {
-      messagesToCompress = await this.messageRewriter.rewriteMessages(messagesToCompress);
-      logger.info('Applied message rewriting for code summarization');
-    } catch (error) {
-      logger.error('Failed to apply message rewriting, continuing with original messages:', error);
-    }
 
     if (messagesToCompress.length === 0) {
       logger.info('No messages to compress, returning original/preserved messages');
@@ -327,15 +325,138 @@ export class ContextCompactor {
       };
     }
 
-    // Convert messages to text for compression
-    const conversationHistory = this.messagesToText(messagesToCompress);
+    // If strategyMode is configured, use the multi-strategy pipeline
+    if (config.strategyMode && config.strategyMode !== 'ai_only') {
+      return this.compactWithStrategies(
+        messages,
+        messagesToCompress,
+        preservedMessages,
+        config,
+        lastTokenCount
+      );
+    }
 
-    // Estimate tokens if needed (used for early-exit optimization and compression ratio calculation)
+    // Legacy pipeline: tree-sitter → early-exit → AI compression
+    // (Also used for 'ai_only' mode which matches the original behavior)
+    return this.compactWithLegacyPipeline(
+      messages,
+      messagesToCompress,
+      preservedMessages,
+      config,
+      lastTokenCount
+    );
+  }
+
+  /**
+   * Multi-strategy compression pipeline: analyze → select strategy → execute → assemble result.
+   */
+  private async compactWithStrategies(
+    messages: ModelMessage[],
+    messagesToCompress: ModelMessage[],
+    preservedMessages: ModelMessage[],
+    config: CompressionConfig,
+    lastTokenCount: number
+  ): Promise<CompressionResult> {
+    // Analyze context
+    const analysis = await this.contextAnalyzer.analyze(messagesToCompress);
+
+    // Select strategy
+    const strategy = this.strategySelector.select(config);
+
+    // Build strategy context
+    const maxContextTokens = config.compressionModel
+      ? getContextLength(config.compressionModel)
+      : 200000;
+    const targetTokenBudget = Math.floor(maxContextTokens * (1 - config.compressionThreshold));
+    const strategyContext = this.strategySelector.buildContext(
+      messagesToCompress,
+      config,
+      analysis,
+      targetTokenBudget,
+      config.preserveRecentMessages
+    );
+
+    // Execute strategy
+    const strategyResult = await strategy.execute(strategyContext);
+
+    // Assemble final CompressionResult
+    const hasSummary = strategyResult.messages.length < messagesToCompress.length;
+    const compressedSummary = hasSummary
+      ? strategyResult.messages
+          .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+          .join('\n')
+      : '';
+
+    const sections = hasSummary ? parseSections(compressedSummary) : [];
+
+    const result: CompressionResult = {
+      compressedSummary,
+      sections,
+      preservedMessages: [...strategyResult.messages, ...preservedMessages],
+      originalMessageCount: messages.length,
+      compressedMessageCount: strategyResult.messages.length + preservedMessages.length,
+      compressionRatio: strategyResult.compressionRatio,
+      strategyChain: (strategyResult.metadata.strategyChain as
+        | CompressionStrategyType[]
+        | undefined) ?? [strategyResult.strategyType],
+      strategyResults: [strategyResult],
+      analysis,
+    };
+
+    this.updateStats(result);
+
+    logger.info('Multi-strategy compaction completed', {
+      strategyType: strategyResult.strategyType,
+      originalCount: result.originalMessageCount,
+      compressedCount: result.compressedMessageCount,
+      ratio: result.compressionRatio,
+    });
+
+    return result;
+  }
+
+  /**
+   * Legacy compression pipeline: tree-sitter → early-exit → AI.
+   * Used when strategyMode is undefined or 'ai_only' for backward compatibility.
+   */
+  private async compactWithLegacyPipeline(
+    messages: ModelMessage[],
+    messagesToCompress: ModelMessage[],
+    preservedMessages: ModelMessage[],
+    config: CompressionConfig,
+    lastTokenCount: number
+  ): Promise<CompressionResult> {
+    let currentMessagesToCompress = messagesToCompress;
+
+    // Apply tree-sitter based code summarization to reduce token usage
+    try {
+      currentMessagesToCompress =
+        await this.messageRewriter.rewriteMessages(currentMessagesToCompress);
+      logger.info('Applied message rewriting for code summarization');
+    } catch (error) {
+      logger.error('Failed to apply message rewriting, continuing with original messages:', error);
+    }
+
+    if (currentMessagesToCompress.length === 0) {
+      logger.info('No messages to compress after rewriting, returning preserved messages');
+      return {
+        compressedSummary: '',
+        sections: [],
+        preservedMessages: preservedMessages.length > 0 ? preservedMessages : messages,
+        originalMessageCount: messages.length,
+        compressedMessageCount:
+          preservedMessages.length > 0 ? preservedMessages.length : messages.length,
+        compressionRatio:
+          preservedMessages.length > 0 ? preservedMessages.length / messages.length : 1.0,
+      };
+    }
+
+    // Convert messages to text for compression
+    const conversationHistory = messagesToText(currentMessagesToCompress);
+
+    // Estimate tokens for early-exit optimization
     let estimatedTokens: number | undefined;
 
-    // Check if tree-sitter rewriting has reduced tokens enough to skip AI compression
-    // If reduction >= 75%, we can skip the expensive AI compression step
-    // Only estimate tokens if we have a lastTokenCount to compare against
     if (lastTokenCount && lastTokenCount > 0) {
       try {
         estimatedTokens = await estimateTokens(conversationHistory);
@@ -349,36 +470,27 @@ export class ContextCompactor {
         if (reductionRatio >= 0.75) {
           logger.info(
             `Token reduction ${(reductionRatio * 100).toFixed(1)}% >= 75%, skipping AI compression`,
-            {
-              originalTokens: lastTokenCount,
-              estimatedTokens,
-              reductionRatio,
-            }
+            { originalTokens: lastTokenCount, estimatedTokens, reductionRatio }
           );
 
-          // Return early without AI compression
           return {
             compressedSummary: '',
             sections: [],
-            preservedMessages: [...messagesToCompress, ...preservedMessages],
+            preservedMessages: [...currentMessagesToCompress, ...preservedMessages],
             originalMessageCount: messages.length,
-            compressedMessageCount: messagesToCompress.length + preservedMessages.length,
+            compressedMessageCount: currentMessagesToCompress.length + preservedMessages.length,
             compressionRatio: estimatedTokens / lastTokenCount,
           };
         }
 
         logger.info(
           `Token reduction ${(reductionRatio * 100).toFixed(1)}% < 75%, proceeding with AI compression`,
-          {
-            originalTokens: lastTokenCount,
-            estimatedTokens,
-            reductionRatio,
-          }
+          { originalTokens: lastTokenCount, estimatedTokens, reductionRatio }
         );
       }
     }
 
-    // Perform compression using the configured model
+    // Perform AI compression
     let compressedSummary = '';
     try {
       compressedSummary = await aiContextCompactionService.compactContext(
@@ -391,16 +503,16 @@ export class ContextCompactor {
       return {
         compressedSummary: '',
         sections: [],
-        preservedMessages: [...messagesToCompress, ...preservedMessages],
+        preservedMessages: [...currentMessagesToCompress, ...preservedMessages],
         originalMessageCount: messages.length,
-        compressedMessageCount: messagesToCompress.length + preservedMessages.length,
+        compressedMessageCount: currentMessagesToCompress.length + preservedMessages.length,
         compressionRatio:
           estimatedTokens && lastTokenCount ? estimatedTokens / lastTokenCount : 1.0,
       };
     }
 
     // Parse sections from the compressed summary
-    const sections = this.parseSections(compressedSummary);
+    const sections = parseSections(compressedSummary);
 
     // Create the final result
     const result: CompressionResult = {
@@ -408,11 +520,10 @@ export class ContextCompactor {
       sections,
       preservedMessages,
       originalMessageCount: messages.length,
-      compressedMessageCount: 1 + preservedMessages.length, // 1 for summary + preserved
+      compressedMessageCount: 1 + preservedMessages.length,
       compressionRatio: (1 + preservedMessages.length) / messages.length,
     };
 
-    // Update statistics
     this.updateStats(result);
 
     logger.info('Message compaction completed', {
@@ -422,107 +533,6 @@ export class ContextCompactor {
     });
 
     return result;
-  }
-
-  private messagesToText(messages: ModelMessage[]): string {
-    return messages
-      .map((msg) => {
-        const role = msg.role.toUpperCase();
-        let content = '';
-
-        if (typeof msg.content === 'string') {
-          content = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          content = msg.content
-            .map(
-              (part: {
-                type: string;
-                text?: string;
-                value?: string;
-                toolName?: string;
-                input?: unknown;
-                output?: unknown;
-              }) => {
-                if (part.type === 'text') {
-                  return part.text || part.value || '';
-                } else if (part.type === 'tool-call') {
-                  return `[TOOL CALL: ${part.toolName}(${JSON.stringify(part.input)})]`;
-                } else if (part.type === 'tool-result') {
-                  return `[TOOL RESULT: ${part.toolName} -> ${JSON.stringify(part.output)}]`;
-                }
-                return '';
-              }
-            )
-            .join('\n');
-        }
-
-        return `${role}: ${content}`;
-      })
-      .join('\n\n');
-  }
-
-  private parseSections(compressedSummary: string): CompressionSection[] {
-    const sections: CompressionSection[] = [];
-
-    try {
-      // Try to extract analysis section first
-      const analysisMatch = compressedSummary.match(/<analysis>([\s\S]*?)<\/analysis>/);
-      if (analysisMatch?.[1]) {
-        sections.push({
-          title: 'Analysis',
-          content: analysisMatch[1].trim(),
-        });
-      }
-
-      // Extract numbered sections with more robust pattern matching
-      // Support various formats: "1. Title:", "1) Title:", "1 - Title:", etc.
-      const sectionPatterns = [
-        /(\d+)\.\s+([^:\n]+):([\s\S]*?)(?=\n\d+\.|$)/g, // "1. Title: content"
-        /(\d+)\)\s+([^:\n]+):([\s\S]*?)(?=\n\d+\)|$)/g, // "1) Title: content"
-        /(\d+)\s+-\s+([^:\n]+):([\s\S]*?)(?=\n\d+\s+-|$)/g, // "1 - Title: content"
-        /(\d+)\.\s+([^\n]+)\n([\s\S]*?)(?=\n\d+\.|$)/g, // "1. Title\ncontent"
-      ];
-
-      let matched = false;
-      for (const pattern of sectionPatterns) {
-        pattern.lastIndex = 0; // Reset regex state
-        const matches = [...compressedSummary.matchAll(pattern)];
-
-        if (matches.length > 0) {
-          for (const match of matches) {
-            const sectionNumber = match[1];
-            const title = match[2];
-            const content = match[3];
-            if (!sectionNumber || !title) continue;
-
-            sections.push({
-              title: `${sectionNumber}. ${title.trim()}`,
-              content: (content || '').trim() || 'No content provided',
-            });
-          }
-          matched = true;
-          break; // Use first pattern that matches
-        }
-      }
-
-      // Fallback: if no structured sections found, treat entire summary as one section
-      if (!matched && compressedSummary.trim()) {
-        logger.warn('Could not parse structured sections, using full summary');
-        sections.push({
-          title: 'Summary',
-          content: compressedSummary.replace(/<analysis>[\s\S]*?<\/analysis>/, '').trim(),
-        });
-      }
-    } catch (error) {
-      logger.error('Error parsing compression sections', error);
-      // Return the full summary as a fallback
-      sections.push({
-        title: 'Summary',
-        content: compressedSummary,
-      });
-    }
-
-    return sections;
   }
 
   public shouldCompress(
@@ -598,115 +608,8 @@ export class ContextCompactor {
     return result;
   }
 
-  /**
-   * Condenses a previous summary to avoid unbounded growth.
-   * Extracts key sections and limits total length.
-   */
-  private condensePreviousSummary(summary: string): string {
-    if (summary.length <= this.MAX_SUMMARY_LENGTH) {
-      return summary;
-    }
-
-    // Try to extract key sections
-    const importantSections = ['Pending Tasks', 'Current Work', 'Errors and fixes'];
-    let condensed = '';
-
-    for (const section of importantSections) {
-      const pattern = new RegExp(`\\d+\\.\\s*${section}[:\\s]([\\s\\S]*?)(?=\\n\\d+\\.|$)`, 'i');
-      const match = summary.match(pattern);
-      if (match?.[1]) {
-        const sectionContent = match[1].trim().slice(0, 500);
-        condensed += `${section}: ${sectionContent}\n\n`;
-      }
-    }
-
-    if (condensed.length > 0) {
-      logger.info('Condensed previous summary', {
-        originalLength: summary.length,
-        condensedLength: condensed.length,
-      });
-      return condensed;
-    }
-
-    // Fallback: truncate with ellipsis
-    return `${summary.slice(0, this.MAX_SUMMARY_LENGTH)}...`;
-  }
-
   public createCompressedMessages(result: CompressionResult): ModelMessage[] {
-    const compressedMessages: ModelMessage[] = [];
-    let startIndex = 0;
-
-    // Step 1: Preserve the original system message (systemPrompt) if it exists
-    const firstPreserved = result.preservedMessages[0];
-    if (firstPreserved?.role === 'system') {
-      // Check if this is the original systemPrompt (not a previous summary)
-      const isOriginalSystemPrompt =
-        typeof firstPreserved.content === 'string' &&
-        !firstPreserved.content.includes('[Previous conversation summary]');
-
-      if (isOriginalSystemPrompt) {
-        compressedMessages.push(firstPreserved);
-        startIndex = 1;
-      }
-    }
-
-    // Step 2: If we have a compressed summary, add it as a user message
-    if (result.compressedSummary) {
-      // Check if there's an old summary (from previous compression) that needs condensing
-      let summaryContent = result.compressedSummary;
-
-      // Look for any old system summary messages that should be condensed
-      for (let i = startIndex; i < result.preservedMessages.length; i++) {
-        const msg = result.preservedMessages[i];
-        if (
-          msg?.role === 'system' &&
-          typeof msg.content === 'string' &&
-          msg.content.includes('[Previous conversation summary]')
-        ) {
-          // Condense the old summary and include it
-          const condensedPrevious = this.condensePreviousSummary(msg.content);
-          summaryContent = `${result.compressedSummary}\n\n---\nEarlier context (condensed):\n${condensedPrevious}`;
-          break;
-        }
-      }
-
-      // Add summary as user message (critical for LLM APIs that require user messages)
-      compressedMessages.push({
-        role: 'user',
-        content: `[Previous conversation summary]\n\n${summaryContent}\n\nPlease continue from where we left off.`,
-      });
-
-      // Add assistant acknowledgment to maintain message alternation
-      compressedMessages.push({
-        role: 'assistant',
-        content: 'I understand the previous context. Continuing with the task.',
-      });
-    }
-
-    // Step 3: Add remaining preserved messages (skip system messages that are summaries)
-    for (let i = startIndex; i < result.preservedMessages.length; i++) {
-      const msg = result.preservedMessages[i];
-      if (!msg) continue;
-
-      // Skip old system summaries (they've been condensed above)
-      if (
-        msg.role === 'system' &&
-        typeof msg.content === 'string' &&
-        msg.content.includes('[Previous conversation summary]')
-      ) {
-        continue;
-      }
-
-      compressedMessages.push(msg);
-    }
-
-    logger.info('Created compressed messages', {
-      totalMessages: compressedMessages.length,
-      hasSystemPrompt: startIndex === 1,
-      hasSummary: !!result.compressedSummary,
-    });
-
-    return compressedMessages;
+    return createCompressedMessages(result);
   }
 
   public getCompressionStats() {
@@ -749,7 +652,7 @@ export class ContextCompactor {
     );
 
     // Create compressed messages
-    const compressedMessages = this.createCompressedMessages(compressionResult);
+    const compressedMessages = createCompressedMessages(compressionResult);
 
     // Validate compressed messages to catch orphaned tool-calls/results
     const validation = this.validateCompressedMessages(compressedMessages);

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { condensePreviousSummary } from './utils';
 
 // Mock dependencies FIRST
 const mockCompactContext = vi.hoisted(() => vi.fn());
@@ -530,18 +531,9 @@ describe('MessageCompactor Validation', () => {
   });
 
   describe('condensePreviousSummary', () => {
-    // Access private method for testing
-    const callCondensePreviousSummary = (
-      compactor: MessageCompactor,
-      summary: string
-    ): string => {
-      return (compactor as unknown as { condensePreviousSummary: (s: string) => string })
-        .condensePreviousSummary(summary);
-    };
-
     it('should return short summaries unchanged', () => {
       const shortSummary = 'This is a short summary.';
-      const result = callCondensePreviousSummary(messageCompactor, shortSummary);
+      const result = condensePreviousSummary(shortSummary);
       expect(result).toBe(shortSummary);
     });
 
@@ -565,7 +557,7 @@ describe('MessageCompactor Validation', () => {
 8. Current Work: Working on the authentication flow for the application.
 ${'Extra content to make it long. '.repeat(300)}`;
 
-      const result = callCondensePreviousSummary(messageCompactor, longSummary);
+      const result = condensePreviousSummary(longSummary);
 
       // Result should be shorter than original
       expect(result.length).toBeLessThan(longSummary.length);
@@ -577,7 +569,7 @@ ${'Extra content to make it long. '.repeat(300)}`;
 
     it('should truncate with ellipsis if no structured sections found', () => {
       const unstructuredLongSummary = 'A'.repeat(10000);
-      const result = callCondensePreviousSummary(messageCompactor, unstructuredLongSummary);
+      const result = condensePreviousSummary(unstructuredLongSummary);
 
       expect(result.endsWith('...')).toBe(true);
       expect(result.length).toBeLessThanOrEqual(8003); // MAX_SUMMARY_LENGTH + '...'

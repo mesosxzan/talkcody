@@ -121,6 +121,18 @@ export interface CompressionConfig {
   compressionModel: string;
   compressionFallbackModels?: string[];
   compressionThreshold: number; // 0.0 to 1.0, percentage of context window
+  /** Strategy selection mode. Default 'auto' uses progressive hybrid. */
+  strategyMode?:
+    | 'auto'
+    | 'progressive'
+    | 'filter_only'
+    | 'code_summarization'
+    | 'selective_removal'
+    | 'ai_only';
+  /** Max strategy escalation steps in progressive mode. Default 3. */
+  maxStrategyEscalations?: number;
+  /** Target compression ratio (0-1). Stop escalating when reached. Default 0.4. */
+  targetCompressionRatio?: number;
 }
 
 export interface CompressionSection {
@@ -135,12 +147,97 @@ export interface CompressionResult {
   originalMessageCount: number;
   compressedMessageCount: number;
   compressionRatio: number;
+  /** Strategy chain executed (in order) when multi-strategy compression is used */
+  strategyChain?: CompressionStrategyType[];
+  /** Per-strategy metrics when multi-strategy compression is used */
+  strategyResults?: CompressionStrategyResult[];
+  /** Context analysis that drove strategy selection */
+  analysis?: ContextAnalysis;
 }
 
 export interface MessageCompactionOptions {
   messages: ModelMessage[];
   config: CompressionConfig;
   systemPrompt?: string;
+}
+
+// ── Multi-strategy compression types ────────────────────────
+
+/** Compression strategy identifiers */
+export enum CompressionStrategyType {
+  FILTER_ONLY = 'filter_only',
+  CODE_SUMMARIZATION = 'code_summarization',
+  SELECTIVE_REMOVAL = 'selective_removal',
+  AI_SUMMARIZATION = 'ai_summarization',
+  PROGRESSIVE_HYBRID = 'progressive_hybrid',
+}
+
+/** Strategy cost tier (used for escalation ordering) */
+export type StrategyCost = 'low' | 'medium' | 'high';
+
+/** Strategy quality tier */
+export type StrategyQuality = 'low' | 'medium' | 'high';
+
+/** Distribution of message types in a conversation */
+export interface MessageTypeDistribution {
+  /** Fraction of messages that are tool calls (0-1) */
+  toolCalls: number;
+  /** Fraction of messages that are pure user/assistant text (0-1) */
+  conversation: number;
+  /** Fraction of messages containing large code blocks (0-1) */
+  codeBlocks: number;
+}
+
+/** A detected exploration chain (e.g. glob→read→glob→read) */
+export interface ExplorationChain {
+  startIndex: number;
+  endIndex: number;
+  messageCount: number;
+  /** Human-readable summary, e.g. "Explored src/services/context/ directory" */
+  summary: string;
+}
+
+/** Context analysis result used for strategy selection */
+export interface ContextAnalysis {
+  totalMessages: number;
+  totalTokens: number;
+  toolCallCount: number;
+  conversationCount: number;
+  codeBlockCount: number;
+  duplicateToolCallCount: number;
+  messageTypes: MessageTypeDistribution;
+  explorationChains: ExplorationChain[];
+}
+
+/** Result from executing a single compression strategy */
+export interface CompressionStrategyResult {
+  messages: ModelMessage[];
+  tokensBefore: number;
+  tokensAfter: number;
+  compressionRatio: number;
+  strategyType: CompressionStrategyType;
+  /** Strategy-specific metrics */
+  metadata: Record<string, unknown>;
+}
+
+/** Shared input context for all compression strategies */
+export interface StrategyContext {
+  messages: ModelMessage[];
+  targetTokenBudget: number;
+  preserveRecentCount: number;
+  compressionModel: string;
+  compressionFallbackModels?: string[];
+  analysis: ContextAnalysis;
+}
+
+/** Compression strategy interface */
+export interface CompressionStrategy {
+  readonly type: CompressionStrategyType;
+  readonly cost: StrategyCost;
+  readonly quality: StrategyQuality;
+  isApplicable(context: StrategyContext): boolean;
+  estimateCompressionRatio(context: StrategyContext): number;
+  execute(context: StrategyContext): Promise<CompressionStrategyResult>;
 }
 
 export type DynamicPromptConfig = {

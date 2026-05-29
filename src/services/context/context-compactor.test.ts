@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { parseSections } from './utils';
+
 // Use vi.hoisted to create mock functions that can be referenced in vi.mock
 const mockEstimateTokens = vi.hoisted(() => vi.fn());
 const mockCompactContext = vi.hoisted(() => vi.fn());
@@ -401,14 +403,14 @@ This is a test compression analysis.
       ];
 
       for (const testCase of testCases) {
-        const sections = (messageCompactor as any).parseSections(testCase.summary);
+        const sections = parseSections(testCase.summary);
         expect(sections.length).toBeGreaterThanOrEqual(testCase.expectedCount);
       }
     });
 
     it('should handle malformed section formats gracefully', () => {
       const malformedSummary = 'This is just plain text without sections';
-      const sections = (messageCompactor as any).parseSections(malformedSummary);
+      const sections = parseSections(malformedSummary);
 
       expect(sections.length).toBeGreaterThan(0);
       expect(sections[0].title).toBe('Summary');
@@ -417,7 +419,7 @@ This is a test compression analysis.
 
     it('should extract analysis tags correctly', () => {
       const summaryWithAnalysis = '<analysis>Test analysis</analysis>\n1. Section: content';
-      const sections = (messageCompactor as any).parseSections(summaryWithAnalysis);
+      const sections = parseSections(summaryWithAnalysis);
 
       const analysisSection = sections.find((s: any) => s.title === 'Analysis');
       expect(analysisSection).toBeDefined();

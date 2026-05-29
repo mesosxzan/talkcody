@@ -284,7 +284,7 @@ describe('MessageCompactor Integration Tests with MockLanguageModelV2', () => {
       })
     );
 
-    llmService = new LLMService();
+    llmService = new LLMService('test-task-id');
   });
 
   afterEach(() => {
@@ -592,7 +592,7 @@ describe('MessageCompactor Integration Tests with MockLanguageModelV2', () => {
     it('should handle model unavailable error', async () => {
       // Make provider store throw error for unavailable model
       const { useProviderStore } = await import('@/providers/stores/provider-store');
-      vi.mocked(useProviderStore.getState).mockReturnValueOnce({
+      vi.mocked(useProviderStore.getState).mockReturnValue({
         getProviderModel: vi.fn(() => {
           throw new Error('No available provider for model: unavailable-model');
         }),
