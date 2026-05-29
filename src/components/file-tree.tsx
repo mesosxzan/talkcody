@@ -176,6 +176,8 @@ function FileTreeNode({
   const [_contextMenuOpen, setContextMenuOpen] = useState(false);
   const contextMenuJustClosed = useRef(false);
   const nodeRef = useRef<HTMLButtonElement>(null);
+  // Track when rename mode was activated to ignore blur from context-menu dismiss
+  const renameActivatedAt = useRef<number>(0);
 
   // Focus input when creating new item
   useEffect(() => {
@@ -275,6 +277,7 @@ function FileTreeNode({
   const handleRename = () => {
     setIsRenaming(true);
     setRenameName(node.name);
+    renameActivatedAt.current = Date.now();
 
     // Focus input after state update
     setTimeout(() => {
@@ -284,6 +287,17 @@ function FileTreeNode({
   };
 
   const handleRenameSubmit = () => {
+    // Ignore blur events that fire immediately after rename activation.
+    // On Windows, Radix ContextMenu dismisses by firing a pointerdown on the
+    // document which can blur the input before the user has a chance to type.
+    if (Date.now() - renameActivatedAt.current < 200) {
+      // Re-focus the input to keep it alive
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+      return;
+    }
+
     if (renameName.trim() && renameName !== node.name) {
       onFileRename?.(node.path, renameName.trim());
       toast.success(t.FileTree.success.renamed(renameName));
