@@ -2754,6 +2754,8 @@ export interface LocaleDefinition {
     branchNameEmpty: string;
     deleteBranch: string;
     deleteBranchConfirm: string;
+    deleteBranchDescription: string;
+    deleting: string;
     deletedBranch: string;
     failedToDeleteBranch: string;
     cannotDeleteCurrentBranch: string;
@@ -2803,6 +2805,7 @@ export interface LocaleDefinition {
     nextChange: string;
     changeNavigation: string;
     noChangesToNavigate: string;
+    cancel: string;
     fileStatus: {
       added: string;
       deleted: string;

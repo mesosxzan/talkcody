@@ -2851,7 +2851,9 @@ const zh: LocaleDefinition = {
     failedToCreateBranch: '创建分支失败',
     branchNameEmpty: '分支名称不能为空',
     deleteBranch: '删除分支',
-    deleteBranchConfirm: '确定要删除此分支吗？',
+    deleteBranchConfirm: '确定要删除分支',
+    deleteBranchDescription: '吗？此操作无法撤销。',
+    deleting: '删除中...',
     deletedBranch: '已删除分支',
     failedToDeleteBranch: '删除分支失败',
     cannotDeleteCurrentBranch: '无法删除当前分支',
@@ -2901,6 +2903,7 @@ const zh: LocaleDefinition = {
     nextChange: '下一个变更',
     changeNavigation: '变更导航',
     noChangesToNavigate: '没有可导航的变更',
+    cancel: '取消',
     fileStatus: {
       added: '新增',
       deleted: '删除',
