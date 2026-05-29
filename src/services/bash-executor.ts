@@ -566,8 +566,8 @@ export class BashExecutor {
 
     // Check if workspace is a git repository by checking for .git directory
     try {
-      const result = await invoke<TauriShellResult>('execute_user_shell', {
-        command: 'git rev-parse --is-inside-work-tree',
+      const result = await invoke<TauriShellResult>('execute_git', {
+        args: ['rev-parse', '--is-inside-work-tree'],
         cwd: workspaceRoot,
         timeoutMs: 5000,
       });

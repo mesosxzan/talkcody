@@ -15,7 +15,7 @@ import {
   writeFile,
   writeTextFile,
 } from '@tauri-apps/plugin-fs';
-import { Command } from '@tauri-apps/plugin-shell';
+import { runGitCommand } from '@/lib/git-shell';
 import { logger } from '@/lib/logger';
 import { getAgentSkillService } from './agent-skill-service';
 import { AgentSkillValidator } from './agent-skill-validator';
@@ -147,7 +147,7 @@ export class GitHubImporter {
     blockedByShellScope: boolean;
   }> {
     try {
-      const result = await Command.create('git', ['--version']).execute();
+      const result = await runGitCommand(['--version']);
       return { available: result.code === 0, blockedByShellScope: false };
     } catch (error) {
       if (isGitBlockedByShellScope(error)) {
@@ -251,18 +251,18 @@ export class GitHubImporter {
         throw new Error(`Invalid branch name: ${repoInfo.branch}`);
       }
 
-      // Initialize git repository (use direct git commands, no shell)
-      await Command.create('git', ['init'], { cwd: targetPath }).execute();
+      // Initialize git repository
+      await runGitCommand(['init'], { cwd: targetPath });
 
       // Add remote
-      await Command.create('git', ['remote', 'add', 'origin', repoUrl], {
+      await runGitCommand(['remote', 'add', 'origin', repoUrl], {
         cwd: targetPath,
-      }).execute();
+      });
 
       // Enable sparse checkout
-      await Command.create('git', ['config', 'core.sparseCheckout', 'true'], {
+      await runGitCommand(['config', 'core.sparseCheckout', 'true'], {
         cwd: targetPath,
-      }).execute();
+      });
 
       // Set sparse checkout path (write to file directly)
       const sparseCheckoutPath = repoInfo.path ? `${repoInfo.path}/*` : '*';
@@ -270,11 +270,9 @@ export class GitHubImporter {
       await writeTextFile(sparseCheckoutFile, `${sparseCheckoutPath}\n`);
 
       // Pull the specified branch
-      const pullResult = await Command.create(
-        'git',
-        ['pull', '--depth=1', 'origin', repoInfo.branch],
-        { cwd: targetPath }
-      ).execute();
+      const pullResult = await runGitCommand(['pull', '--depth=1', 'origin', repoInfo.branch], {
+        cwd: targetPath,
+      });
 
       if (pullResult.code !== 0) {
         throw new Error(`Git pull failed: ${pullResult.stderr}`);

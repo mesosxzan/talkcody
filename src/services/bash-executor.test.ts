@@ -101,7 +101,7 @@ describe('BashExecutor', () => {
 
     mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
       // Mock git check for rm validation
-      if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+      if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
         return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
       }
       // Default shell execution
@@ -655,7 +655,7 @@ echo "done"`);
 
       it('should allow uppercase RM with wildcards within workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1109,7 +1109,7 @@ echo "done"`);
       beforeEach(() => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
           // Mock git check returns false (not a git repo)
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 128, stdout: '', stderr: 'fatal: not a git repository' }));
           }
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'ok' }));
@@ -1170,7 +1170,7 @@ echo "done"`);
 
       it('should allow cat when not in git repo', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 128, stderr: 'not a git repo' }));
           }
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'file content' }));
@@ -1215,7 +1215,7 @@ rm /outside/path`);
     beforeEach(() => {
       mockInvoke.mockClear();
       mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-        if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+        if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
         }
         return Promise.resolve(createMockShellResult({ code: 0 }));
@@ -1441,7 +1441,7 @@ rm /outside/path`);
 
       // Setup mock for git check and glob expansion
       mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-        if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+        if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
         }
         if (cmd === 'search_files_by_glob') {
@@ -1477,7 +1477,7 @@ rm /outside/path`);
 
       it('should allow rm src/*.ts within workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1495,7 +1495,7 @@ rm /outside/path`);
 
       it('should allow rm **/*.js recursive pattern', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1513,7 +1513,7 @@ rm /outside/path`);
 
       it('should allow rm dist/**/*.test.* nested pattern', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1536,7 +1536,7 @@ rm /outside/path`);
 
       it('should allow rm -rf with wildcards for directories', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1554,7 +1554,7 @@ rm /outside/path`);
 
       it('should allow rm with character class wildcards', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1572,7 +1572,7 @@ rm /outside/path`);
 
       it('should allow rm with question mark wildcard', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1589,7 +1589,7 @@ rm /outside/path`);
 
       it('should allow rm with brace expansion', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1612,7 +1612,7 @@ rm /outside/path`);
 
       it('should allow rm with multiple wildcard patterns', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1629,7 +1629,7 @@ rm /outside/path`);
 
       it('should allow rm with mixed explicit and wildcard paths', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1646,7 +1646,7 @@ rm /outside/path`);
 
       it('should allow rm with wildcard when pattern matches nothing', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1700,7 +1700,7 @@ rm /outside/path`);
 
       it('should block rm with wildcard when expanded canonical_path is outside workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1721,7 +1721,7 @@ rm /outside/path`);
       it('should block rm with wildcard when ALL expanded paths must be validated', async () => {
         // 99 files inside, 1 file outside should still block
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1754,7 +1754,7 @@ rm /outside/path`);
 
       it('should block rm with wildcard when not in git repo', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 128, stderr: 'not a git repo' }));
           }
           return Promise.resolve(createMockShellResult({ code: 0 }));
@@ -1817,7 +1817,7 @@ rm ../*.txt`);
     describe('glob expansion error handling', () => {
       it('should block rm when glob expansion fails (fail closed)', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1836,7 +1836,7 @@ rm ../*.txt`);
     describe('edge cases', () => {
       it('should handle empty wildcard result', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1861,7 +1861,7 @@ rm ../*.txt`);
 
       it('should validate explicit path mixed with wildcard', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1880,7 +1880,7 @@ rm ../*.txt`);
 
       it('should handle nested directory wildcard patterns', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1900,7 +1900,7 @@ rm ../*.txt`);
       it('should block rm when symlink points to directory outside workspace', async () => {
         // Simulates: ln -s /etc /workspace/link && rm link/*.conf
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1921,7 +1921,7 @@ rm ../*.txt`);
       it('should block rm when symlink file points outside workspace', async () => {
         // Simulates: ln -s /etc/passwd /workspace/safe_looking.txt && rm *.txt
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1940,7 +1940,7 @@ rm ../*.txt`);
 
       it('should allow rm when all symlinks point within workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -1960,7 +1960,7 @@ rm ../*.txt`);
       it('should block rm when symlink chain leads outside workspace', async () => {
         // link1 -> link2 -> /etc/passwd
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -2000,7 +2000,7 @@ rm ../*.txt`);
     describe('large file count handling', () => {
       it('should handle large number of matched files', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -2025,7 +2025,7 @@ rm ../*.txt`);
 
       it('should still block if any of 1000 files is outside workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -2059,7 +2059,7 @@ rm ../*.txt`);
     describe('absolute path within workspace', () => {
       it('should allow rm with absolute path pattern within workspace', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           if (cmd === 'search_files_by_glob') {
@@ -2087,7 +2087,7 @@ rm ../*.txt`);
     beforeEach(() => {
       mockInvoke.mockClear();
       mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-        if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+        if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
         }
         // Simulate ripgrep returning exit code 1 when no matches found
@@ -2117,7 +2117,7 @@ rm ../*.txt`);
 
       it('should still treat rg exit code 2+ as failure (actual error)', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           // Exit code 2 = actual error (e.g., file not found, permission denied)
@@ -2146,7 +2146,7 @@ rm ../*.txt`);
 
       it('should still treat grep exit code 2 as failure', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 2, stderr: 'grep: file.txt: No such file' }));
@@ -2194,7 +2194,7 @@ rm ../*.txt`);
 
       it('should treat find exit code 0 as success', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 0, stdout: './file.txt' }));
@@ -2207,7 +2207,7 @@ rm ../*.txt`);
 
       it('should treat find exit code 2+ as failure', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 2, stderr: 'find: invalid expression' }));
@@ -2222,7 +2222,7 @@ rm ../*.txt`);
     describe('non-search commands should not have exit code 1 special handling', () => {
       it('should treat non-search command exit code 1 as failure', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 1, stderr: 'npm error' }));
@@ -2235,7 +2235,7 @@ rm ../*.txt`);
 
       it('should treat curl exit code 1 as failure', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 1, stderr: 'curl: (1) Protocol not supported' }));
@@ -2248,7 +2248,7 @@ rm ../*.txt`);
 
       it('should treat python exit code 1 as failure', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 1, stderr: 'Traceback (most recent call last)' }));
@@ -2263,7 +2263,7 @@ rm ../*.txt`);
     describe('rg with matches found (exit code 0)', () => {
       it('should treat rg exit code 0 as success when matches found', async () => {
         mockInvoke.mockImplementation((cmd: string, args: Record<string, unknown>) => {
-          if (cmd === 'execute_user_shell' && args.command === 'git rev-parse --is-inside-work-tree') {
+          if (cmd === 'execute_git' && Array.isArray(args.args) && args.args[0] === 'rev-parse') {
             return Promise.resolve(createMockShellResult({ code: 0, stdout: 'true\n' }));
           }
           return Promise.resolve(createMockShellResult({ code: 0, stdout: 'file.txt:10:match found' }));

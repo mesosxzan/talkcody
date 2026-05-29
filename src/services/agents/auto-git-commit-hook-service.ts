@@ -115,8 +115,8 @@ export class AutoGitCommitHookService implements CompletionHook {
         return { action: 'skip' };
       }
 
-      // Execute git add + commit
-      const result = await gitAddAndCommit(commitResult.message, workspaceRoot);
+      // Execute git add + commit (gitAddAndCommit signature: cwd, message)
+      const result = await gitAddAndCommit(workspaceRoot, commitResult.message);
 
       if (result.success) {
         logger.info('[AutoGitCommit] Successfully committed changes', {

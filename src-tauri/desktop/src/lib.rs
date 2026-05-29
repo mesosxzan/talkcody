@@ -462,6 +462,54 @@ struct ShellResult {
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
 const DEFAULT_IDLE_TIMEOUT_MS: u64 = 5_000;
 
+/// Execute a git command directly (without shell wrapper).
+///
+/// Unlike `execute_user_shell` which wraps commands in `bash -c` or `cmd /C`,
+/// this function invokes the git binary directly using `new_git_async_command()`.
+/// This avoids:
+/// - Shell dependency issues on Windows (bash not available)
+/// - Shell injection risks (arguments passed directly, not through shell string)
+/// - Quote escaping problems in cmd.exe
+#[tauri::command]
+async fn execute_git(
+    args: Vec<String>,
+    cwd: Option<String>,
+    timeout_ms: Option<u64>,
+    idle_timeout_ms: Option<u64>,
+) -> Result<ShellResult, String> {
+    let args_display = args.join(" ");
+    log::info!("Executing git command: {}", args_display);
+    let max_timeout = TokioDuration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS));
+    let idle_timeout =
+        TokioDuration::from_millis(idle_timeout_ms.unwrap_or(DEFAULT_IDLE_TIMEOUT_MS));
+
+    let mut cmd = shell_utils::new_git_async_command();
+    for arg in &args {
+        cmd.arg(arg);
+    }
+    if let Some(ref dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to spawn git: {}", e))?;
+    let child_pid = child.id();
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    execute_with_idle_timeout(
+        &mut child,
+        stdout,
+        stderr,
+        max_timeout,
+        idle_timeout,
+        child_pid,
+    )
+    .await
+}
+
 #[tauri::command]
 async fn execute_user_shell(
     command: String,
@@ -1097,6 +1145,7 @@ pub fn run() {
             websocket::ws_send,
             websocket::ws_disconnect,
             execute_user_shell,
+            execute_git,
             execute_skill_script,
             terminal::pty_spawn,
             terminal::pty_write,

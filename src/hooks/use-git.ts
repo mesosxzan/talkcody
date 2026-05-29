@@ -3,12 +3,19 @@ import { toast } from 'sonner';
 import { aiGitMessagesService } from '@/services/ai/ai-git-messages-service';
 import { gitService } from '@/services/git-service';
 import { useGitStore } from '@/stores/git-store';
-import { type GitResult, gitAddAndCommit } from '@/utils/git-utils';
+import { gitAddAndCommit } from '@/utils/git-utils';
+
+interface CommitResult {
+  success: boolean;
+  message: string;
+  output?: string;
+  error?: string;
+}
 
 export function useGit() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGeneratingMessage, setIsGeneratingMessage] = useState(false);
-  const [lastResult, setLastResult] = useState<GitResult | null>(null);
+  const [lastResult, setLastResult] = useState<CommitResult | null>(null);
 
   /**
    * Commit with AI-generated message - full flow:
@@ -54,8 +61,8 @@ export function useGit() {
         return { success: false, message: 'Failed to generate commit message' };
       }
 
-      // Execute git commit
-      const result = await gitAddAndCommit(commitResult.message, basePath);
+      // Execute git commit (gitAddAndCommit signature: cwd, message)
+      const result = await gitAddAndCommit(basePath, commitResult.message);
       setLastResult(result);
 
       if (result.success) {
