@@ -83,7 +83,7 @@ interface MarkdownPreviewProps {
 function MarkdownPreview({ content, className }: MarkdownPreviewProps) {
   return (
     <ScrollArea className={className}>
-      <div className="prose prose-sm dark:prose-invert max-w-none p-6">
+      <div className="prose dark:prose-invert max-w-none p-6">
         <ReactMarkdown
           components={{
             // Open external links in default browser
