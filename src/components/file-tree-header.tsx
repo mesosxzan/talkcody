@@ -1,4 +1,4 @@
-import { FileSearch, Search, SquareTerminal } from 'lucide-react';
+import { FileSearch, MessageSquare, Search, SquareTerminal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/use-locale';
@@ -13,6 +13,8 @@ interface FileTreeHeaderProps {
   onToggleTerminal?: () => void;
   onOpenFileSearch?: () => void;
   onOpenContentSearch?: () => void;
+  chatPanelVisible?: boolean;
+  onOpenChatPanel?: () => void;
 }
 
 export function FileTreeHeader({
@@ -24,6 +26,8 @@ export function FileTreeHeader({
   onToggleTerminal,
   onOpenFileSearch,
   onOpenContentSearch,
+  chatPanelVisible,
+  onOpenChatPanel,
 }: FileTreeHeaderProps) {
   const t = useTranslation();
 
@@ -98,6 +102,25 @@ export function FileTreeHeader({
             </TooltipTrigger>
             <TooltipContent>
               <p>{t.Chat.toolbar.toggleTerminal}</p>
+            </TooltipContent>
+          </Tooltip>
+        )}
+
+        {/* Open Chat Panel */}
+        {chatPanelVisible === false && onOpenChatPanel && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                className="h-6 w-6 p-0 hover:bg-gray-200 dark:hover:bg-gray-700"
+                onClick={onOpenChatPanel}
+                size="sm"
+                variant="ghost"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{t.RepositoryLayout.showChat}</p>
             </TooltipContent>
           </Tooltip>
         )}

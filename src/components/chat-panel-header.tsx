@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2, Plus, Share2 } from 'lucide-react';
+import { Maximize2, Minimize2, PanelRightClose, Plus, Share2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -16,6 +16,7 @@ interface ChatPanelHeaderProps {
   onNewChat: () => void;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  onCloseChatPanel?: () => void;
 }
 
 export function ChatPanelHeader({
@@ -24,6 +25,7 @@ export function ChatPanelHeader({
   onNewChat,
   isFullscreen,
   onToggleFullscreen,
+  onCloseChatPanel,
 }: ChatPanelHeaderProps) {
   const t = useTranslation();
   const isMaxReached = useExecutionStore((state) => state.isMaxReached());
@@ -72,6 +74,23 @@ export function ChatPanelHeader({
               </Button>
             }
           />
+        )}
+
+        {/* Close Chat Panel */}
+        {onCloseChatPanel && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 p-0 hover:bg-gray-200 dark:hover:bg-gray-700"
+                onClick={onCloseChatPanel}
+              >
+                <PanelRightClose className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t.RepositoryLayout.hideChat}</TooltipContent>
+          </Tooltip>
         )}
 
         {/* Fullscreen Toggle */}

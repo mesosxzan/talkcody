@@ -16,11 +16,22 @@ export function useRepositoryLayoutUI() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isContentSearchVisible, setIsContentSearchVisible] = useState(false);
   const [fullscreenPanel, setFullscreenPanel] = useState<FullscreenPanel>(DEFAULT_FULLSCREEN_PANEL);
+  const [chatPanelVisible, setChatPanelVisible] = useState(true);
   const [failedPaths] = useState(() => new Set<string>());
 
   // Fullscreen panel toggle
   const toggleFullscreen = useCallback((panel: 'editor' | 'terminal' | 'chat') => {
     setFullscreenPanel((prev) => (prev === panel ? 'none' : panel));
+  }, []);
+
+  const toggleChatPanel = useCallback(() => {
+    setChatPanelVisible((prev) => {
+      if (prev) {
+        // Closing chat panel — exit fullscreen if chat is fullscreen
+        setFullscreenPanel((fp) => (fp === 'chat' ? 'none' : fp));
+      }
+      return !prev;
+    });
   }, []);
 
   return {
@@ -34,6 +45,9 @@ export function useRepositoryLayoutUI() {
     fullscreenPanel,
     setFullscreenPanel,
     toggleFullscreen,
+    chatPanelVisible,
+    setChatPanelVisible,
+    toggleChatPanel,
     failedPaths,
   };
 }
@@ -45,6 +59,7 @@ export function useRepositoryLayoutDerived(state: {
   fullscreenPanel: FullscreenPanel;
   isTerminalVisible: boolean;
   lintSettings: { enabled: boolean; showInProblemsPanel: boolean };
+  chatPanelVisible: boolean;
 }) {
   // Derived state calculation
   const derivedState = useMemo(
@@ -56,7 +71,9 @@ export function useRepositoryLayoutDerived(state: {
         state.fullscreenPanel === 'none' ||
         state.fullscreenPanel === 'editor' ||
         state.fullscreenPanel === 'terminal',
-      showChatPanel: state.fullscreenPanel === 'none' || state.fullscreenPanel === 'chat',
+      showChatPanel:
+        state.chatPanelVisible &&
+        (state.fullscreenPanel === 'none' || state.fullscreenPanel === 'chat'),
       showEditor: state.fullscreenPanel !== 'terminal' && state.fullscreenPanel !== 'chat',
       showTerminal:
         state.isTerminalVisible &&
@@ -79,6 +96,7 @@ export function useRepositoryLayoutDerived(state: {
       state.isTerminalVisible,
       state.lintSettings.enabled,
       state.lintSettings.showInProblemsPanel,
+      state.chatPanelVisible,
     ]
   );
 

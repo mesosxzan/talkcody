@@ -19,6 +19,7 @@ interface RepositoryChatPanelProps {
   messages?: UIMessage[];
   onNewChat: () => void;
   onToggleFullscreen: () => void;
+  onCloseChatPanel?: () => void;
   chatBoxRef: React.RefObject<ChatBoxRef | null>;
   rootPath: string | null;
   currentFile: OpenFile | null | undefined;
@@ -41,6 +42,7 @@ export const RepositoryChatPanel = memo(function RepositoryChatPanel({
   messages,
   onNewChat,
   onToggleFullscreen,
+  onCloseChatPanel,
   chatBoxRef,
   rootPath,
   currentFile,
@@ -78,6 +80,7 @@ export const RepositoryChatPanel = memo(function RepositoryChatPanel({
           onNewChat={onNewChat}
           isFullscreen={isChatFullscreen}
           onToggleFullscreen={onToggleFullscreen}
+          onCloseChatPanel={onCloseChatPanel}
         />
         <div className="flex-1 overflow-hidden">
           <ChatBox

@@ -1,4 +1,4 @@
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { Maximize2, MessageSquare, Minimize2 } from 'lucide-react';
 import { memo } from 'react';
 import { DiagnosticsPanel } from '@/components/diagnostics/diagnostics-panel';
 import { FileEditor } from '@/components/file-editor';
@@ -40,6 +40,8 @@ interface RepositoryEditorAreaProps {
   onCopyTerminalToChat: (content: string) => void;
   onCloseTerminal: () => void;
   onToggleTerminalFullscreen: () => void;
+  chatPanelVisible: boolean;
+  onToggleChatPanel: () => void;
 }
 
 export const RepositoryEditorArea = memo(function RepositoryEditorArea({
@@ -71,6 +73,8 @@ export const RepositoryEditorArea = memo(function RepositoryEditorArea({
   onCopyTerminalToChat,
   onCloseTerminal,
   onToggleTerminalFullscreen,
+  chatPanelVisible,
+  onToggleChatPanel,
 }: RepositoryEditorAreaProps) {
   const t = useTranslation();
 
@@ -109,27 +113,46 @@ export const RepositoryEditorArea = memo(function RepositoryEditorArea({
                         rootPath={rootPath ?? undefined}
                       />
                     </div>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 mr-1"
-                          onClick={onToggleEditorFullscreen}
-                        >
-                          {isEditorFullscreen ? (
-                            <Minimize2 className="h-3.5 w-3.5" />
-                          ) : (
-                            <Maximize2 className="h-3.5 w-3.5" />
-                          )}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom">
-                        {isEditorFullscreen
-                          ? t.RepositoryLayout.exitFullscreen
-                          : t.RepositoryLayout.fullscreen}
-                      </TooltipContent>
-                    </Tooltip>
+                    <div className="flex items-center gap-0.5 mr-1">
+                      {!chatPanelVisible && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              onClick={onToggleChatPanel}
+                            >
+                              <MessageSquare className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            {t.RepositoryLayout.showChat}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={onToggleEditorFullscreen}
+                          >
+                            {isEditorFullscreen ? (
+                              <Minimize2 className="h-3.5 w-3.5" />
+                            ) : (
+                              <Maximize2 className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom">
+                          {isEditorFullscreen
+                            ? t.RepositoryLayout.exitFullscreen
+                            : t.RepositoryLayout.fullscreen}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
                   </div>
 
                   <div className="flex-1 overflow-auto">

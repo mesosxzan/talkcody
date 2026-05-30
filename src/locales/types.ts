@@ -1051,6 +1051,8 @@ export interface LocaleDefinition {
     maxConcurrentTasksReached: string;
     fullscreen: string;
     exitFullscreen: string;
+    hideChat: string;
+    showChat: string;
     deleteTaskWithChangesTitle: string;
     deleteAnyway: string;
   };

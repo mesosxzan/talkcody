@@ -1062,6 +1062,8 @@ const zh: LocaleDefinition = {
     maxConcurrentTasksReached: '已达到最大并发任务数',
     fullscreen: '全屏',
     exitFullscreen: '退出全屏',
+    hideChat: '隐藏聊天面板',
+    showChat: '显示聊天面板',
     deleteTaskWithChangesTitle: '删除包含未提交更改的任务？',
     deleteAnyway: '仍然删除',
   },

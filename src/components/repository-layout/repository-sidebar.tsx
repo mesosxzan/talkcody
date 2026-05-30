@@ -51,6 +51,8 @@ interface RepositorySidebarProps {
   onLoadChildren: (node: FileNode) => Promise<FileNode[]>;
   onToggleExpansion: (path: string) => void;
   taskSearchInputRef: React.RefObject<HTMLInputElement | null>;
+  chatPanelVisible?: boolean;
+  onOpenChatPanel?: () => void;
 }
 
 export const RepositorySidebar = memo(function RepositorySidebar({
@@ -82,6 +84,8 @@ export const RepositorySidebar = memo(function RepositorySidebar({
   onLoadChildren,
   onToggleExpansion,
   taskSearchInputRef,
+  chatPanelVisible,
+  onOpenChatPanel,
 }: RepositorySidebarProps) {
   const t = useTranslation();
   const panelId = shouldShowSidebar ? fileTreePanelId : emptyRepoPanelId;
@@ -169,6 +173,8 @@ export const RepositorySidebar = memo(function RepositorySidebar({
               onToggleTerminal={hasRepository ? onToggleTerminal : undefined}
               onOpenFileSearch={hasRepository ? onOpenFileSearch : undefined}
               onOpenContentSearch={hasRepository ? onOpenContentSearch : undefined}
+              chatPanelVisible={chatPanelVisible}
+              onOpenChatPanel={onOpenChatPanel}
             />
 
             {hasRepository && (

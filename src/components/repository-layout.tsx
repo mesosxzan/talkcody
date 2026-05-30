@@ -52,6 +52,7 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
     fullscreenPanel: uiState.fullscreenPanel,
     isTerminalVisible: state.isTerminalVisible,
     lintSettings: state.lintSettings,
+    chatPanelVisible: uiState.chatPanelVisible,
   });
 
   const worktree = useRepositoryWorktree();
@@ -124,6 +125,8 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
     isContentSearchVisible,
     setIsContentSearchVisible,
     toggleFullscreen,
+    chatPanelVisible,
+    toggleChatPanel,
     failedPaths,
   } = uiState;
 
@@ -397,6 +400,8 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
                 onLoadChildren={loadDirectoryChildren}
                 onToggleExpansion={toggleExpansion}
                 taskSearchInputRef={taskSearchInputRef}
+                chatPanelVisible={chatPanelVisible}
+                onOpenChatPanel={toggleChatPanel}
               />
             )}
 
@@ -438,6 +443,8 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
                 }}
                 onCloseTerminal={() => setTerminalVisible(false)}
                 onToggleTerminalFullscreen={() => toggleFullscreen('terminal')}
+                chatPanelVisible={chatPanelVisible}
+                onToggleChatPanel={toggleChatPanel}
               />
             )}
 
@@ -454,6 +461,7 @@ export const RepositoryLayout = memo(function RepositoryLayout() {
                 messages={currentMessages}
                 onNewChat={handleNewTask}
                 onToggleFullscreen={() => toggleFullscreen('chat')}
+                onCloseChatPanel={toggleChatPanel}
                 chatBoxRef={chatBoxRef}
                 rootPath={rootPath}
                 currentFile={currentFile}

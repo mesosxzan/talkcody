@@ -1103,6 +1103,8 @@ const en: LocaleDefinition = {
     maxConcurrentTasksReached: 'Maximum concurrent tasks reached',
     fullscreen: 'Fullscreen',
     exitFullscreen: 'Exit fullscreen',
+    hideChat: 'Hide chat panel',
+    showChat: 'Show chat panel',
     deleteTaskWithChangesTitle: 'Delete Task with Uncommitted Changes?',
     deleteAnyway: 'Delete Anyway',
   },
