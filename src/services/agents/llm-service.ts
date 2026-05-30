@@ -51,7 +51,10 @@ import { attemptReactiveCompaction, clearExpiredToolResults } from './reactive-c
 import { ResponsesChainManager } from './responses-chain-manager';
 import { MAX_STREAM_RETRIES } from './stream-retry-manager';
 import {
+  isNormalFinishReason,
+  isTruncationFinishReason,
   MAX_AUTO_COMPACTIONS,
+  MAX_AUTO_CONTINUE_ATTEMPTS,
   MAX_ERROR_CAUSE_CHAIN_DEPTH,
   ModelFallbackSwitchError,
   PROVIDER_BACKOFF_MULTIPLIERS,
@@ -106,7 +109,8 @@ function getTranslations() {
 async function* withStallTimeout(
   events: AsyncGenerator<import('@/services/llm/types').StreamEvent, void, unknown>,
   timeoutMs: number,
-  abortSignal?: AbortSignal
+  abortSignal?: AbortSignal,
+  getHasVisibleOutput?: () => boolean
 ): AsyncGenerator<import('@/services/llm/types').StreamEvent, void, unknown> {
   let lastEventTime = Date.now();
 
@@ -150,7 +154,7 @@ async function* withStallTimeout(
         retryable: true,
         category: 'network',
         reason: `Stream stalled: no event received for ${timeoutMs}ms`,
-        hasVisibleOutput: false,
+        hasVisibleOutput: getHasVisibleOutput?.() ?? false,
         preferRetryBeforeModelFallback: true,
       });
     }
@@ -666,7 +670,8 @@ export class LLMService {
             const stallProtectedEvents = withStallTimeout(
               streamResult.events,
               STREAM_STALL_TIMEOUT_MS,
-              abortController?.signal
+              abortController?.signal,
+              () => retryOrchestrator.hasVisibleStreamOutput(streamProcessor.getState())
             );
 
             for await (const delta of stallProtectedEvents) {
@@ -1139,8 +1144,84 @@ export class LLMService {
         if (!loopState.lastFinishReason) {
           loopState.lastFinishReason = 'stop';
         }
-        // Handle "unknown" finish reason by retrying without modifying messages
-        if (loopState.lastFinishReason === 'other' && toolCalls.length === 0) {
+
+        // Handle truncation finish reasons (length/max_tokens) by auto-continuing.
+        // When the model hits the output token limit, it returns a truncation finish
+        // reason. Instead of treating this as a normal stop, we continue the conversation
+        // by appending the partial assistant message and a "continue" user message,
+        // so the model picks up where it left off.
+        if (isTruncationFinishReason(loopState.lastFinishReason) && toolCalls.length === 0) {
+          loopState.autoContinueCount = (loopState.autoContinueCount || 0) + 1;
+
+          if (loopState.autoContinueCount <= MAX_AUTO_CONTINUE_ATTEMPTS) {
+            logger.info('Output truncated, auto-continuing', {
+              finishReason: loopState.lastFinishReason,
+              autoContinueCount: loopState.autoContinueCount,
+              maxAutoContinue: MAX_AUTO_CONTINUE_ATTEMPTS,
+              iteration: loopState.currentIteration,
+            });
+
+            // Add assistant message with current (truncated) content
+            const assistantContent = streamProcessor.getAssistantContent();
+            if (assistantContent.length > 0) {
+              const { messages: transformedMessages, transformedContent } =
+                MessageTransform.transform(
+                  loopState.messages,
+                  activeModel,
+                  activeProviderId,
+                  assistantContent
+                );
+              loopState.messages = transformedMessages;
+
+              const assistantMessage: ModelMessage = {
+                role: 'assistant',
+                content: transformedContent?.content ?? assistantContent,
+                ...(transformedContent?.providerOptions && {
+                  providerOptions: transformedContent.providerOptions,
+                }),
+              };
+              loopState.messages.push(assistantMessage);
+            }
+
+            // Finalize responses chain turn before continuing
+            this.responsesChainManager.finalizeResponsesChainTurn(
+              loopState,
+              responseMetadataEvent,
+              transportFallbackEvent,
+              didFallbackToStateless,
+              loopState.messages.length
+            );
+
+            // Add continuation user message to prompt the model to resume
+            const continueMessage: ModelMessage = {
+              role: 'user',
+              content: 'Continue from where you left off.',
+            };
+            loopState.messages.push(continueMessage);
+
+            // Reset for next iteration but do NOT set isComplete
+            streamProcessor.resetState();
+            loopState.toolSummaries = [];
+            loopState.unknownFinishReasonCount = 0;
+            continue;
+          }
+
+          // Max auto-continue attempts reached — fall through to normal completion
+          logger.warn('Max auto-continue attempts reached after truncation', {
+            autoContinueCount: loopState.autoContinueCount,
+            iteration: loopState.currentIteration,
+          });
+        }
+
+        // Handle "unknown" finish reason by retrying without modifying messages.
+        // Also treat finish reasons that are neither normal, truncation, nor 'other'
+        // as unknown (e.g., unrecognized provider-specific values).
+        const isUnknownReason =
+          loopState.lastFinishReason !== 'other' &&
+          !isNormalFinishReason(loopState.lastFinishReason) &&
+          !isTruncationFinishReason(loopState.lastFinishReason);
+
+        if ((loopState.lastFinishReason === 'other' || isUnknownReason) && toolCalls.length === 0) {
           const maxUnknownRetries = 3;
           loopState.unknownFinishReasonCount = (loopState.unknownFinishReasonCount || 0) + 1;
 
@@ -1349,6 +1430,7 @@ export class LLMService {
               // Reset loop state for next iteration
               loopState.lastRequestTokens = 0;
               loopState.unknownFinishReasonCount = 0;
+              loopState.autoContinueCount = 0;
               loopState.lastFinishReason = undefined;
               loopState.isComplete = false;
 

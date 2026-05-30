@@ -35,6 +35,34 @@ export const MAX_AUTO_COMPACTIONS = 1;
 export const MAX_ERROR_CAUSE_CHAIN_DEPTH = 5;
 
 /**
+ * Truncation-indicating finish reasons — the model hit a token limit
+ * and the output was cut short. These should trigger auto-continuation.
+ */
+export const TRUNCATION_FINISH_REASONS = new Set(['length', 'max_tokens']);
+
+/**
+ * Normal completion finish reasons — the model voluntarily finished
+ * its response. These should go through the completion hook pipeline.
+ */
+export const NORMAL_FINISH_REASONS = new Set(['stop', 'end_turn', 'stop_sequence']);
+
+/**
+ * Maximum number of auto-continue attempts when output is truncated
+ * (finish_reason is "length" or "max_tokens"). Prevents infinite loops.
+ */
+export const MAX_AUTO_CONTINUE_ATTEMPTS = 10;
+
+/** Check if a finish reason indicates output truncation. */
+export function isTruncationFinishReason(reason: string | undefined): boolean {
+  return !!reason && TRUNCATION_FINISH_REASONS.has(reason);
+}
+
+/** Check if a finish reason indicates normal voluntary completion. */
+export function isNormalFinishReason(reason: string | undefined): boolean {
+  return !!reason && NORMAL_FINISH_REASONS.has(reason);
+}
+
+/**
  * Provider-specific backoff multipliers for unknown finish reason retries.
  * Some providers need longer waits before retrying.
  */
