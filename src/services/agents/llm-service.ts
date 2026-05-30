@@ -9,7 +9,6 @@ import { convertMessages } from '@/lib/llm-utils';
 import { logger } from '@/lib/logger';
 import { convertToAnthropicFormat } from '@/lib/message-convert';
 import { MessageTransform } from '@/lib/message-transform';
-import { validateAnthropicMessages } from '@/lib/message-validate';
 import { toOpenAIToolDefinition } from '@/lib/tool-schema';
 import { createLlmTraceContext } from '@/lib/trace-utils';
 import { UsageTokenUtils } from '@/lib/usage-token-utils';
@@ -36,6 +35,7 @@ import type {
   UIMessage,
 } from '../../types/agent';
 import { aiPricingService } from '../ai/ai-pricing-service';
+import { resolveCachedMessages } from './compaction-cache-resolver';
 import { CompactionManager } from './compaction-manager';
 import { completionHookPipeline } from './llm-completion-hooks';
 import {
@@ -50,6 +50,16 @@ import { toLlmMessages } from './message-adapter';
 import { attemptReactiveCompaction, clearExpiredToolResults } from './reactive-compaction';
 import { ResponsesChainManager } from './responses-chain-manager';
 import { MAX_STREAM_RETRIES } from './stream-retry-manager';
+import {
+  MAX_AUTO_COMPACTIONS,
+  MAX_ERROR_CAUSE_CHAIN_DEPTH,
+  ModelFallbackSwitchError,
+  PROVIDER_BACKOFF_MULTIPLIERS,
+  RetryableStreamError,
+  STREAM_RETRY_BACKOFF_MS,
+  STREAM_STALL_TIMEOUT_MS,
+  StreamRetryOrchestrator,
+} from './stream-retry-orchestrator';
 
 /**
  * Callbacks for agent loop
@@ -77,68 +87,85 @@ export interface AgentLoopCallbacks {
 }
 
 import { ErrorHandler } from './error-handler';
-import { StreamProcessor, type StreamProcessorState } from './stream-processor';
+import { StreamProcessor } from './stream-processor';
 import { ToolExecutor } from './tool-executor';
-
-const STREAM_RETRY_BACKOFF_MS = [1000, 2000, 3000] as const;
-const _RETRYABLE_NETWORK_HINTS = [
-  'load failed',
-  'network',
-  'timeout',
-  'timed out',
-  'connection reset',
-  'connection refused',
-  'upstream connect error',
-  'disconnect/reset',
-  'reset before headers',
-  'fetch failed',
-  'econnreset',
-  'econnrefused',
-  'enotfound',
-  'eai_again',
-] as const;
-const _RETRYABLE_PROVIDER_PROCESSING_HINTS = [
-  'an error occurred while processing your request',
-  'retry your request',
-] as const;
-const _RETRYABLE_PROVIDER_OVERLOAD_HINT = 'our servers are currently overloaded';
-
-type StreamRetryCategory = 'openrouter-stream' | 'network' | 'server';
-
-type StreamRetryDecision = {
-  retryable: boolean;
-  category?: StreamRetryCategory;
-  reason: string;
-  status?: number;
-  hasVisibleOutput: boolean;
-  preferRetryBeforeModelFallback?: boolean;
-};
-
-class RetryableStreamError extends Error {
-  readonly decision: StreamRetryDecision;
-
-  constructor(decision: StreamRetryDecision) {
-    super(decision.reason);
-    this.name = 'RetryableStreamError';
-    this.decision = decision;
-  }
-}
-
-class ModelFallbackSwitchError extends Error {
-  readonly nextModel: string;
-  readonly reason: string;
-
-  constructor(nextModel: string, reason: string) {
-    super(reason);
-    this.name = 'ModelFallbackSwitchError';
-    this.nextModel = nextModel;
-    this.reason = reason;
-  }
-}
 
 function getTranslations() {
   const language = (useSettingsStore.getState().language || 'en') as SupportedLocale;
   return getLocale(language);
+}
+
+/**
+ * Wrap an async event stream with a stall timeout.
+ * If no event is received within `timeoutMs` milliseconds, the iterator
+ * throws a RetryableStreamError so the outer retry pipeline can recover.
+ *
+ * This prevents the agent loop from hanging indefinitely when a provider
+ * silently drops the connection without sending a terminal event.
+ */
+async function* withStallTimeout(
+  events: AsyncGenerator<import('@/services/llm/types').StreamEvent, void, unknown>,
+  timeoutMs: number,
+  abortSignal?: AbortSignal
+): AsyncGenerator<import('@/services/llm/types').StreamEvent, void, unknown> {
+  let lastEventTime = Date.now();
+
+  for (;;) {
+    // Race between the next event, the stall timer, and the abort signal
+    const nextPromise = events.next();
+
+    let stallTimerId: ReturnType<typeof setTimeout> | undefined;
+    const stallPromise = new Promise<'stall'>((resolve) => {
+      const remaining = timeoutMs - (Date.now() - lastEventTime);
+      stallTimerId = setTimeout(() => resolve('stall'), Math.max(remaining, 0));
+    });
+
+    const abortPromise = abortSignal
+      ? new Promise<'aborted'>((resolve) => {
+          if (abortSignal.aborted) {
+            resolve('aborted');
+            return;
+          }
+          const handler = () => resolve('aborted');
+          abortSignal.addEventListener('abort', handler, { once: true });
+          // Clean up the listener if another promise wins the race
+          stallPromise.finally(() => abortSignal.removeEventListener('abort', handler));
+        })
+      : new Promise<'aborted'>(() => {}); // never resolves if no signal
+
+    const result = await Promise.race([nextPromise, stallPromise, abortPromise]);
+
+    // Clear the stall timer to prevent leaks
+    if (stallTimerId !== undefined) {
+      clearTimeout(stallTimerId);
+    }
+
+    if (result === 'aborted') {
+      return;
+    }
+
+    if (result === 'stall') {
+      // Stream stalled — throw a retryable error so the retry pipeline can recover
+      throw new RetryableStreamError({
+        retryable: true,
+        category: 'network',
+        reason: `Stream stalled: no event received for ${timeoutMs}ms`,
+        hasVisibleOutput: false,
+        preferRetryBeforeModelFallback: true,
+      });
+    }
+
+    const { value, done } = result as IteratorResult<
+      import('@/services/llm/types').StreamEvent,
+      void
+    >;
+    if (done) {
+      return;
+    }
+
+    lastEventTime = Date.now();
+    yield value;
+  }
 }
 
 export class LLMService {
@@ -150,36 +177,23 @@ export class LLMService {
   private readonly messageCompactor: ContextCompactor;
   /** Task ID for this LLM service instance (used for parallel task execution) */
   private readonly taskId: string;
-  /** Tool summaries collected during iteration for completion hooks */
-  private toolSummaries: ToolSummary[] = [];
 
-  private getContinuationMessageSignature(message: UIMessage): string {
-    const normalizedContent =
-      typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
-
-    return JSON.stringify({
-      role: message.role,
-      content: normalizedContent,
-      assistantId: message.assistantId ?? null,
-      toolCallId: message.toolCallId ?? null,
-      toolName: message.toolName ?? null,
-      parentToolCallId: message.parentToolCallId ?? null,
-    });
-  }
-
+  /**
+   * Merge continuation messages using message ID-based deduplication.
+   * Uses UIMessage.id for identity comparison instead of content signatures,
+   * which avoids false positives when different messages have identical content
+   * (e.g., two separate "yes" responses at different points in the conversation).
+   */
   private mergeAppendContinuationMessages(
     taskMessages: UIMessage[],
     nextMessages: UIMessage[]
   ): { messages: UIMessage[]; appendedCount: number } {
-    const existingSignatures = new Set(
-      taskMessages.map((message) => this.getContinuationMessageSignature(message))
-    );
+    const existingIds = new Set(taskMessages.map((message) => message.id));
     const missingMessages = nextMessages.filter((message) => {
-      const signature = this.getContinuationMessageSignature(message);
-      if (existingSignatures.has(signature)) {
+      if (existingIds.has(message.id)) {
         return false;
       }
-      existingSignatures.add(signature);
+      existingIds.add(message.id);
       return true;
     });
 
@@ -210,9 +224,16 @@ export class LLMService {
   }
 
   /**
-   * Capture tool result for completion hook evaluation
+   * Capture tool result for completion hook evaluation.
+   * Appends to loopState.toolSummaries instead of an instance field,
+   * ensuring per-iteration isolation and thread safety in parallel execution.
    */
-  private captureToolResult(toolName: string, result: unknown, toolCallId: string): void {
+  private captureToolResult(
+    toolName: string,
+    result: unknown,
+    toolCallId: string,
+    loopState: AgentLoopState
+  ): void {
     const summary: ToolSummary = {
       toolName,
       toolCallId,
@@ -234,7 +255,7 @@ export class LLMService {
       summary.error = String((result as { error?: string }).error);
     }
 
-    this.toolSummaries.push(summary);
+    loopState.toolSummaries.push(summary);
   }
 
   /**
@@ -242,161 +263,7 @@ export class LLMService {
    * @param options Agent loop configuration
    * @param callbacks Event callbacks for streaming, completion, errors, etc.
    * @param abortController Optional controller to abort the loop
-   * @param taskId Task ID for this execution. Priority: this parameter > constructor taskId.
-   *               Use 'nested' for nested agent calls to skip task-level operations.
    */
-  private hasVisibleStreamOutput(state: StreamProcessorState): boolean {
-    return (
-      state.hasReceivedText || state.reasoningBlocks.some((block) => block.text.trim().length > 0)
-    );
-  }
-
-  private isAbortError(error: unknown): boolean {
-    if (
-      typeof DOMException !== 'undefined' &&
-      error instanceof DOMException &&
-      error.name === 'AbortError'
-    ) {
-      return true;
-    }
-
-    if (error instanceof Error && error.name === 'AbortError') {
-      return true;
-    }
-
-    return false;
-  }
-
-  private extractHttpStatusFromMessage(message: string): number | undefined {
-    const match = message.match(/http(?:\s+error)?\s+(\d{3})/i);
-    if (!match) {
-      return undefined;
-    }
-
-    const parsed = Number.parseInt(match[1] ?? '', 10);
-    return Number.isNaN(parsed) ? undefined : parsed;
-  }
-
-  private isRetryableProviderTransientError(message: string): boolean {
-    const normalizedMessage = message.toLowerCase();
-    const isProcessingRequestError =
-      normalizedMessage.includes('an error occurred while processing your request') &&
-      (normalizedMessage.includes('retry your request') ||
-        normalizedMessage.includes('help.openai.com') ||
-        normalizedMessage.includes('request id'));
-    const isOverloaded = normalizedMessage.includes('our servers are currently overloaded');
-
-    return isProcessingRequestError || isOverloaded;
-  }
-
-  private classifyStreamRetry(
-    error: unknown,
-    model: string,
-    iteration: number,
-    hasVisibleOutput: boolean
-  ): StreamRetryDecision {
-    const errorContext = createErrorContext(model, {
-      iteration,
-      phase: 'stream-retry',
-    });
-    const { errorDetails } = extractAndFormatError(error, errorContext);
-    const message = errorDetails.message.toLowerCase();
-
-    if (this.isAbortError(error)) {
-      return {
-        retryable: false,
-        reason: errorDetails.message,
-        hasVisibleOutput,
-      };
-    }
-
-    if (
-      errorDetails.name === 'AI_InvalidResponseDataError' &&
-      errorDetails.message.includes("Expected 'id' to be a string")
-    ) {
-      return {
-        retryable: !hasVisibleOutput,
-        category: 'openrouter-stream',
-        reason: errorDetails.message,
-        hasVisibleOutput,
-      };
-    }
-
-    if (this.isRetryableProviderTransientError(errorDetails.message)) {
-      return {
-        retryable: true,
-        category: 'server',
-        reason: errorDetails.message,
-        hasVisibleOutput,
-        preferRetryBeforeModelFallback: true,
-      };
-    }
-
-    const status =
-      typeof errorDetails.status === 'number'
-        ? errorDetails.status
-        : this.extractHttpStatusFromMessage(errorDetails.message);
-
-    if (typeof status === 'number') {
-      if (status >= 500) {
-        return {
-          retryable: true,
-          category: 'server',
-          reason: `HTTP ${status}: ${errorDetails.message}`,
-          status,
-          hasVisibleOutput,
-        };
-      }
-
-      return {
-        retryable: false,
-        reason: `HTTP ${status}: ${errorDetails.message}`,
-        status,
-        hasVisibleOutput,
-      };
-    }
-
-    const isNetworkError = [
-      'timeout',
-      'connection',
-      'network',
-      'econnreset',
-      'econnrefused',
-      'socket hang up',
-      'fetchfailed',
-      'fetch error',
-      'aborted',
-    ].some((hint) => message.includes(hint));
-    if (isNetworkError) {
-      return {
-        retryable: true,
-        category: 'network',
-        reason: errorDetails.message,
-        hasVisibleOutput,
-      };
-    }
-
-    return {
-      retryable: false,
-      reason: errorDetails.message,
-      hasVisibleOutput,
-    };
-  }
-
-  private buildRetryExhaustedError(
-    decision: StreamRetryDecision,
-    t: ReturnType<typeof getTranslations>
-  ): Error {
-    const category =
-      decision.category === 'server'
-        ? t.LLMService.errors.retryCategoryServer
-        : t.LLMService.errors.retryCategoryNetwork;
-
-    return new Error(
-      t.LLMService.errors.streamRetryExhausted(MAX_STREAM_RETRIES, category, decision.reason)
-    );
-  }
-
   async runAgentLoop(
     options: AgentLoopOptions,
     callbacks: AgentLoopCallbacks,
@@ -506,108 +373,37 @@ export class LLMService {
         isComplete: false,
         lastFinishReason: undefined,
         lastRequestTokens: 0,
+        toolSummaries: [],
       };
 
-      // Lazy load: only try to load compacted messages if we have enough messages
-      // to potentially benefit from caching
-      let compacted = null;
-      if (!freshContext && inputMessages.length > compressionConfig.preserveRecentMessages) {
-        compacted = await this.compactionManager.loadCompactedMessages();
-      }
-
-      if (compacted) {
-        // Check inputMessages count vs sourceUIMessageCount
-        if (inputMessages.length > compacted.sourceUIMessageCount) {
-          // Have new UI messages (more than when compacted)
-          logger.info('Found new input messages after compaction', {
-            sourceUIMessageCount: compacted.sourceUIMessageCount,
-            currentInputCount: inputMessages.length,
-            newMessageCount: inputMessages.length - compacted.sourceUIMessageCount,
-          });
-
-          // Process only new messages starting from sourceUIMessageCount
-          const newMessages = inputMessages.slice(compacted.sourceUIMessageCount);
-          const newModelMessages = await convertMessages(newMessages, {
-            rootPath,
-            systemPrompt: undefined, // Don't add system message again, compacted.messages already has it
-            model: activeModel,
-            providerId: activeProviderId,
-          });
-
-          const validationResult = validateAnthropicMessages(newModelMessages);
-          if (!validationResult.valid) {
-            logger.warn('[LLMService] New message validation issues:', {
-              issues: validationResult.issues,
-            });
-          }
-
-          loopState.messages = [
-            ...compacted.messages,
-            ...convertToAnthropicFormat(newModelMessages, {
-              autoFix: true,
-              trimAssistantWhitespace: true,
-            }),
-          ];
-          loopState.lastRequestTokens = compacted.lastRequestTokens;
-        } else if (inputMessages.length === compacted.sourceUIMessageCount) {
-          // UI message count same, use compacted directly
-          logger.info('No new input messages, using compacted directly', {
-            sourceUIMessageCount: compacted.sourceUIMessageCount,
-            currentInputCount: inputMessages.length,
-          });
-          loopState.messages = compacted.messages;
-          loopState.lastRequestTokens = compacted.lastRequestTokens;
-        } else {
-          // inputMessages count decreased (user may have deleted messages), reprocess all
-          logger.warn('Input message count decreased, reprocessing all', {
-            sourceUIMessageCount: compacted.sourceUIMessageCount,
-            currentInputCount: inputMessages.length,
-          });
-          const modelMessages = await convertMessages(inputMessages, {
-            rootPath,
-            systemPrompt,
-            model: activeModel,
-            providerId: activeProviderId,
-          });
-
-          const validationResult = validateAnthropicMessages(modelMessages);
-          if (!validationResult.valid) {
-            logger.warn('[LLMService] Message validation issues:', {
-              issues: validationResult.issues,
-            });
-          }
-
-          loopState.messages = convertToAnthropicFormat(modelMessages, {
-            autoFix: true,
-            trimAssistantWhitespace: true,
-          });
-        }
-      } else {
-        // No compacted messages - convert all input messages
-        const modelMessages = await convertMessages(inputMessages, {
-          rootPath,
-          systemPrompt,
-          model: activeModel,
-          providerId: activeProviderId,
-        });
-
-        // Validate and convert to Anthropic-compliant format
-        const validationResult = validateAnthropicMessages(modelMessages);
-        if (!validationResult.valid) {
-          logger.warn('[LLMService] Initial message validation issues:', {
-            issues: validationResult.issues,
-          });
-        }
-        loopState.messages = convertToAnthropicFormat(modelMessages, {
-          autoFix: true,
-          trimAssistantWhitespace: true,
-        });
-      }
+      // Resolve initial messages using CompactionCacheResolver
+      // (handles incremental merge, cache hit, and full-rebuild branches)
+      const resolvedCache = await resolveCachedMessages({
+        compacted:
+          freshContext || inputMessages.length <= compressionConfig.preserveRecentMessages
+            ? null
+            : await this.compactionManager.loadCompactedMessages(),
+        inputMessages,
+        rootPath,
+        systemPrompt,
+        activeModel,
+        activeProviderId,
+      });
+      loopState.messages = resolvedCache.messages;
+      loopState.lastRequestTokens = resolvedCache.lastRequestTokens;
 
       // Create a new StreamProcessor instance for each agent loop
       // This ensures nested agent calls (e.g., callAgent) don't interfere with parent agent's state
       // Previously, using a shared instance caused tool call ID mismatches when nested agents reset the processor
       const streamProcessor = new StreamProcessor();
+
+      const retryOrchestrator = new StreamRetryOrchestrator({
+        taskId: this.taskId,
+        isSubagent,
+        storeAccess: this.storeAccess,
+        responsesChainManager: this.responsesChainManager,
+        streamProcessor,
+      });
 
       let didRunSessionStart = false;
       let autoCompactionAttempts = 0;
@@ -642,7 +438,7 @@ export class LLMService {
 
         // Reset tool summaries at the start of each iteration to ensure
         // completion hooks only see results from the current iteration
-        this.toolSummaries = [];
+        loopState.toolSummaries = [];
 
         const filteredTools = { ...tools };
         onStatus?.(t.LLMService.status.step(loopState.currentIteration));
@@ -864,8 +660,16 @@ export class LLMService {
             };
             const streamContext = { suppressReasoning };
 
-            // Process current step stream
-            for await (const delta of streamResult.events) {
+            // Process current step stream with stall timeout protection.
+            // If the provider silently drops the connection, the stall timer
+            // will fire and throw a RetryableStreamError for automatic recovery.
+            const stallProtectedEvents = withStallTimeout(
+              streamResult.events,
+              STREAM_STALL_TIMEOUT_MS,
+              abortController?.signal
+            );
+
+            for await (const delta of stallProtectedEvents) {
               if (abortController?.signal.aborted) {
                 rejectOnAbort('Agent loop aborted during streaming');
                 return;
@@ -1066,7 +870,6 @@ export class LLMService {
                   }
 
                   if (isContextLengthExceededError(errorObj)) {
-                    const MAX_AUTO_COMPACTIONS = 1;
                     if (autoCompactionAttempts < MAX_AUTO_COMPACTIONS) {
                       autoCompactionAttempts++;
                       shouldAutoCompact = true;
@@ -1079,8 +882,10 @@ export class LLMService {
                     throw error;
                   }
 
-                  const visibleOutput = this.hasVisibleStreamOutput(streamProcessor.getState());
-                  const retryDecision = this.classifyStreamRetry(
+                  const visibleOutput = retryOrchestrator.hasVisibleStreamOutput(
+                    streamProcessor.getState()
+                  );
+                  const retryDecision = retryOrchestrator.classifyStreamRetry(
                     errorObj,
                     activeModel,
                     loopState.currentIteration,
@@ -1147,7 +952,6 @@ export class LLMService {
             }
 
             if (isContextLengthExceededError(streamError)) {
-              const MAX_AUTO_COMPACTIONS = 1;
               if (autoCompactionAttempts < MAX_AUTO_COMPACTIONS) {
                 autoCompactionAttempts++;
                 shouldAutoCompact = true;
@@ -1157,11 +961,13 @@ export class LLMService {
               throw new Error(t.LLMService.errors.contextTooLongCompactionFailed);
             }
 
-            const visibleOutput = this.hasVisibleStreamOutput(streamProcessor.getState());
+            const visibleOutput = retryOrchestrator.hasVisibleStreamOutput(
+              streamProcessor.getState()
+            );
             const retryDecision =
               streamError instanceof RetryableStreamError
                 ? streamError.decision
-                : this.classifyStreamRetry(
+                : retryOrchestrator.classifyStreamRetry(
                     streamError,
                     activeModel,
                     loopState.currentIteration,
@@ -1194,7 +1000,11 @@ export class LLMService {
               continue;
             }
 
-            if (!visibleOutput && activeFallbackModels[0] && !this.isAbortError(streamError)) {
+            if (
+              !visibleOutput &&
+              activeFallbackModels[0] &&
+              !retryOrchestrator.isAbortError(streamError)
+            ) {
               await promoteFallbackModel(activeFallbackModels[0], retryDecision.reason);
               streamRetryCount = 0;
               streamProcessor.resetState();
@@ -1226,7 +1036,7 @@ export class LLMService {
             }
 
             if (retryDecision.retryable) {
-              throw this.buildRetryExhaustedError(retryDecision, t);
+              throw retryOrchestrator.buildRetryExhaustedError(retryDecision);
             }
 
             throw streamError;
@@ -1343,9 +1153,16 @@ export class LLMService {
           });
 
           if (loopState.unknownFinishReasonCount <= maxUnknownRetries) {
-            const sleepSeconds = loopState.unknownFinishReasonCount; // 1s, 2s, 3s
+            // Apply provider-specific backoff multiplier — some providers
+            // (e.g., OpenRouter, Zhipu) need longer waits before retrying.
+            const baseSleepSeconds = loopState.unknownFinishReasonCount; // 1s, 2s, 3s
+            const providerMultiplier = PROVIDER_BACKOFF_MULTIPLIERS[activeProviderId ?? ''] ?? 1.0;
+            const sleepSeconds = Math.ceil(baseSleepSeconds * providerMultiplier);
             logger.info(
-              `Retrying for unknown finish reason (${loopState.unknownFinishReasonCount}/${maxUnknownRetries}), sleeping ${sleepSeconds}s`
+              `Retrying for unknown finish reason (${loopState.unknownFinishReasonCount}/${maxUnknownRetries}), sleeping ${sleepSeconds}s` +
+                (providerMultiplier > 1
+                  ? ` (provider=${activeProviderId}, multiplier=${providerMultiplier})`
+                  : '')
             );
             await new Promise((resolve) => setTimeout(resolve, sleepSeconds * 1000));
             // Retry without modifying loopState.messages
@@ -1392,7 +1209,7 @@ export class LLMService {
           const completionContext = {
             taskId: this.taskId,
             fullText,
-            toolSummaries: this.toolSummaries,
+            toolSummaries: loopState.toolSummaries,
             loopState,
             iteration: ralphIteration,
             startTime: totalStartTime,
@@ -1536,7 +1353,7 @@ export class LLMService {
               loopState.isComplete = false;
 
               // Reset tool summaries for next iteration
-              this.toolSummaries = [];
+              loopState.toolSummaries = [];
 
               // Reset stream processor for fresh iteration
               streamProcessor.fullReset();
@@ -1630,7 +1447,9 @@ export class LLMService {
             onStatus,
             // Capture tool results for completion hooks
             (toolName, result, toolCallId) => {
-              this.captureToolResult(toolName, result, toolCallId);
+              if (loopState) {
+                this.captureToolResult(toolName, result, toolCallId, loopState);
+              }
             }
           );
 
@@ -1721,7 +1540,9 @@ export class LLMService {
       }
       return;
     } catch (error) {
-      await this.responsesChainManager.closeResponsesChainSession(loopState);
+      if (loopState) {
+        await this.responsesChainManager.closeResponsesChainSession(loopState);
+      }
       // Log the raw error object before processing
       logger.error('Raw error caught in main loop:', error);
 
@@ -1743,7 +1564,7 @@ export class LLMService {
           const causeChain: Array<Record<string, unknown>> = [];
           let currentCause: unknown = errorObj.cause;
           let depth = 0;
-          const maxDepth = 5;
+          const maxDepth = MAX_ERROR_CAUSE_CHAIN_DEPTH;
 
           while (currentCause && depth < maxDepth) {
             const causeObj = currentCause as {

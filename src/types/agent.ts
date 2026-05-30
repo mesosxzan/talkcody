@@ -1,4 +1,5 @@
 import type { Message as ModelMessage, ProviderOptions } from '@/services/llm/types';
+import type { ToolSummary } from './completion-hooks';
 import type { ModelType } from './model-types';
 import type { OutputFormatType } from './output-format';
 import type { ToolInput, ToolOutput, ToolWithUI } from './tool';
@@ -97,6 +98,10 @@ export interface AgentLoopState {
   rawChunks?: unknown[]; // Raw chunks from provider for debugging
   hasSkillScripts?: boolean; // Flag to track if skills with scripts have been loaded
   responsesChain?: ResponsesChainState;
+  /** Tool summaries collected during the current iteration for completion hooks.
+   *  Moved here from LLMService instance field to ensure per-iteration isolation
+   *  and avoid race conditions in parallel task execution. */
+  toolSummaries: ToolSummary[];
 }
 
 export interface AgentLoopCallbacks {
