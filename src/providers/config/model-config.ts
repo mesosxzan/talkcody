@@ -105,6 +105,36 @@ export function getProvidersForModel(model: string): ProviderConfig[] {
     .filter((p) => p !== undefined) as ProviderConfig[];
 }
 
+/** Maximum output tokens reserved during compaction (p99 of summaries). */
+const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000;
+
+/** Default max output tokens for most models. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
+
+/** Buffer tokens reserved below effective context window for auto-compact trigger. */
+const AUTOCOMPACT_BUFFER_TOKENS = 13_000;
+
+/**
+ * Get the effective context window size minus reserved output tokens.
+ * This represents the actual usable context space for input messages.
+ * Inspired by cc-haha's getEffectiveContextWindowSize.
+ */
+export function getEffectiveContextWindowSize(model: string): number {
+  const contextLength = getContextLength(model);
+  // Reserve space for model output. Use conservative estimate.
+  const reservedForOutput = Math.min(DEFAULT_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_FOR_SUMMARY);
+  return contextLength - reservedForOutput;
+}
+
+/**
+ * Get the auto-compact threshold: the token count at which auto-compact
+ * should trigger. This is the effective context window minus a buffer.
+ * Inspired by cc-haha's getAutoCompactThreshold.
+ */
+export function getAutoCompactThreshold(model: string): number {
+  return getEffectiveContextWindowSize(model) - AUTOCOMPACT_BUFFER_TOKENS;
+}
+
 export function getContextLength(model: string): number {
   // Parse model identifier to extract modelKey (remove @providerId suffix)
   const modelKey = model.split('@')[0] || model;

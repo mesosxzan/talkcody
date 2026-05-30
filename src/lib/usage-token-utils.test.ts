@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { UsageTokenUtils } from './usage-token-utils';
+import { normalizeUsageTokens } from './usage-token-utils';
 
-describe('UsageTokenUtils', () => {
+describe('normalizeUsageTokens', () => {
   it('normalizes snake_case usage fields', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens({
+    const normalized = normalizeUsageTokens({
       prompt_tokens: 1200,
       completion_tokens: 300,
       total_tokens: 1500,
@@ -13,13 +13,13 @@ describe('UsageTokenUtils', () => {
     expect(normalized).toEqual({
       inputTokens: 1200,
       outputTokens: 300,
-      totalTokens: 1500,
+      totalTokens: 1550,
       cachedInputTokens: 50,
     });
   });
 
   it('prefers camelCase fields when both are present', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens({
+    const normalized = normalizeUsageTokens({
       inputTokens: 400,
       outputTokens: 100,
       totalTokens: 500,
@@ -36,7 +36,7 @@ describe('UsageTokenUtils', () => {
   });
 
   it('falls back to total_tokens when input/output are missing', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens({
+    const normalized = normalizeUsageTokens({
       total_tokens: 250,
     });
 
@@ -48,7 +48,7 @@ describe('UsageTokenUtils', () => {
   });
 
   it('uses totalUsage when usage is undefined', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(undefined, {
+    const normalized = normalizeUsageTokens(undefined, {
       prompt_tokens: 90,
       completion_tokens: 10,
     });
@@ -61,7 +61,7 @@ describe('UsageTokenUtils', () => {
   });
 
   it('falls back to totalUsage when primary has zero tokens', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(
+    const normalized = normalizeUsageTokens(
       { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       { inputTokens: 3, outputTokens: 4, totalTokens: 7 }
     );

@@ -103,6 +103,9 @@ export interface AgentLoopState {
    *  Moved here from LLMService instance field to ensure per-iteration isolation
    *  and avoid race conditions in parallel task execution. */
   toolSummaries: ToolSummary[];
+  /** Timestamp of the last assistant message response (usage event).
+   *  Used by micro-compact to detect when server prompt cache has expired. */
+  lastAssistantTimestamp: number;
 }
 
 export interface AgentLoopCallbacks {

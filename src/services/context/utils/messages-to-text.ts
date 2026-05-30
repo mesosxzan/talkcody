@@ -3,6 +3,7 @@ import type { Message as ModelMessage } from '@/services/llm/types';
 /**
  * @internal Serializes model messages to plain text for AI compression input.
  * Tool calls become `[TOOL CALL: name(params)]`, results become `[TOOL RESULT: name -> output]`.
+ * Reasoning blocks become `[REASONING: text]` (thinking content is included for context).
  */
 export function messagesToText(messages: ModelMessage[]): string {
   return messages
@@ -25,6 +26,9 @@ export function messagesToText(messages: ModelMessage[]): string {
             }) => {
               if (part.type === 'text') {
                 return part.text || part.value || '';
+              } else if (part.type === 'reasoning') {
+                // Include reasoning/thinking content for context preservation
+                return `[REASONING: ${part.text || ''}]`;
               } else if (part.type === 'tool-call') {
                 return `[TOOL CALL: ${part.toolName}(${JSON.stringify(part.input)})]`;
               } else if (part.type === 'tool-result') {

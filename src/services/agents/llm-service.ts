@@ -11,7 +11,7 @@ import { convertToAnthropicFormat } from '@/lib/message-convert';
 import { MessageTransform } from '@/lib/message-transform';
 import { toOpenAIToolDefinition } from '@/lib/tool-schema';
 import { createLlmTraceContext } from '@/lib/trace-utils';
-import { UsageTokenUtils } from '@/lib/usage-token-utils';
+import { normalizeUsageTokens } from '@/lib/usage-token-utils';
 import { generateId } from '@/lib/utils';
 import { getLocale, type SupportedLocale } from '@/locales';
 import { getContextLength } from '@/providers/config/model-config';
@@ -378,6 +378,7 @@ export class LLMService {
         lastFinishReason: undefined,
         lastRequestTokens: 0,
         toolSummaries: [],
+        lastAssistantTimestamp: 0,
       };
 
       // Resolve initial messages using CompactionCacheResolver
@@ -456,18 +457,15 @@ export class LLMService {
         // Between turns, clear old tool result content that has likely expired
         // from the server's prompt cache. This is a lightweight operation that
         // doesn't require an API call.
-        if (!freshContext && loopState.messages.length > 10) {
-          // Derive the last assistant timestamp from the messages themselves
-          const lastAssistantTime = (() => {
-            for (let i = loopState.messages.length - 1; i >= 0; i--) {
-              if (loopState.messages[i]?.role === 'assistant') {
-                // Use current time as approximation; messages don't carry timestamps
-                return Date.now();
-              }
-            }
-            return 0;
-          })();
-          loopState.messages = clearExpiredToolResults(loopState.messages, lastAssistantTime);
+        if (
+          !freshContext &&
+          loopState.messages.length > 10 &&
+          loopState.lastAssistantTimestamp > 0
+        ) {
+          loopState.messages = clearExpiredToolResults(
+            loopState.messages,
+            loopState.lastAssistantTimestamp
+          );
         }
 
         // Check and perform message compression if needed
@@ -742,7 +740,7 @@ export class LLMService {
                   break;
                 case 'usage': {
                   const requestDuration = Date.now() - requestStartTime;
-                  const normalizedUsage = UsageTokenUtils.normalizeUsageTokens(
+                  const normalizedUsage = normalizeUsageTokens(
                     {
                       inputTokens: delta.input_tokens,
                       outputTokens: delta.output_tokens,
@@ -767,6 +765,8 @@ export class LLMService {
                       }
                     }
                     loopState.lastRequestTokens = normalizedUsage.totalTokens;
+                    // Update last assistant timestamp for micro-compact time window detection
+                    loopState.lastAssistantTimestamp = Date.now();
                   }
 
                   if (normalizedUsage) {

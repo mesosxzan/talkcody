@@ -5,7 +5,10 @@ import {
 } from '@/lib/message-convert';
 import { validateAnthropicMessages } from '@/lib/message-validate';
 import { timedMethod } from '@/lib/timer';
-import { getContextLength } from '@/providers/config/model-config';
+import {
+  getAutoCompactThreshold,
+  getEffectiveContextWindowSize,
+} from '@/providers/config/model-config';
 import type { Message as ModelMessage } from '@/services/llm/types';
 import type {
   CompressionConfig,
@@ -20,6 +23,36 @@ import { ContextFilter } from './context-filter';
 import { ContextRewriter } from './context-rewriter';
 import { StrategySelector } from './strategy-selector';
 import { createCompressedMessages, messagesToText, parseSections } from './utils';
+
+/**
+ * Strip image and video content from messages to reduce token usage
+ * before sending to the compression API. Images/videos are replaced with
+ * placeholder text so the compressor knows they existed but doesn't
+ * process the expensive binary content.
+ */
+function stripMediaContent(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((msg) => {
+    if (msg.role !== 'user' && msg.role !== 'assistant') return msg;
+    if (!Array.isArray(msg.content)) return msg;
+
+    let stripped = false;
+    const newContent = msg.content.map((part) => {
+      if (typeof part === 'object' && part !== null && 'type' in part) {
+        if (part.type === 'image') {
+          stripped = true;
+          return { type: 'text' as const, text: '[Image content stripped for compression]' };
+        }
+        if (part.type === 'video') {
+          stripped = true;
+          return { type: 'text' as const, text: '[Video content stripped for compression]' };
+        }
+      }
+      return part;
+    });
+
+    return stripped ? { ...msg, content: newContent } : msg;
+  });
+}
 
 export interface ValidationResult {
   valid: boolean;
@@ -295,7 +328,7 @@ export class ContextCompactor {
   public async compactMessages(
     options: MessageCompactionOptions,
     lastTokenCount: number, // Original token count for early-exit check
-    abortController?: AbortController
+    _abortController?: AbortController
   ): Promise<CompressionResult> {
     const { messages, config } = options;
 
@@ -355,7 +388,7 @@ export class ContextCompactor {
     messagesToCompress: ModelMessage[],
     preservedMessages: ModelMessage[],
     config: CompressionConfig,
-    lastTokenCount: number
+    _lastTokenCount: number
   ): Promise<CompressionResult> {
     // Analyze context
     const analysis = await this.contextAnalyzer.analyze(messagesToCompress);
@@ -365,7 +398,7 @@ export class ContextCompactor {
 
     // Build strategy context
     const maxContextTokens = config.compressionModel
-      ? getContextLength(config.compressionModel)
+      ? getEffectiveContextWindowSize(config.compressionModel)
       : 200000;
     const targetTokenBudget = Math.floor(maxContextTokens * (1 - config.compressionThreshold));
     const strategyContext = this.strategySelector.buildContext(
@@ -427,6 +460,10 @@ export class ContextCompactor {
     lastTokenCount: number
   ): Promise<CompressionResult> {
     let currentMessagesToCompress = messagesToCompress;
+
+    // Strip image/video content before compression to reduce token usage.
+    // Images and videos are expensive in context but not useful for summarization.
+    currentMessagesToCompress = stripMediaContent(currentMessagesToCompress);
 
     // Apply tree-sitter based code summarization to reduce token usage
     try {
@@ -547,22 +584,22 @@ export class ContextCompactor {
 
     // Use actual token count from last AI request if available
     if (!lastTokenCount) {
-      // logger.info('No token count available, skipping compression check');
       return false;
     }
 
-    // logger.info('Actual token count for messages', { lastTokenCount });
-    const maxContextTokens = currentModel ? getContextLength(currentModel) : 200000;
-    // logger.info('Max context tokens for model', { currentModel, maxContextTokens });
-    const thresholdTokens = maxContextTokens * config.compressionThreshold;
+    // Use the auto-compact threshold which accounts for output reservation and buffer
+    const thresholdTokens = currentModel
+      ? getAutoCompactThreshold(currentModel)
+      : 200000 * config.compressionThreshold;
 
     if (lastTokenCount > thresholdTokens) {
+      const effectiveWindow = currentModel ? getEffectiveContextWindowSize(currentModel) : 200000;
       logger.info('Compression triggered by token count', {
         actualTokens: lastTokenCount,
         threshold: thresholdTokens,
         model: currentModel,
-        maxContextTokens,
-        ratio: lastTokenCount / maxContextTokens,
+        effectiveWindow,
+        ratio: lastTokenCount / effectiveWindow,
       });
       return true;
     }

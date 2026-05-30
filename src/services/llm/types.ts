@@ -83,6 +83,16 @@ export type TraceContext = {
   metadata?: Record<string, string>;
 };
 
+export type ContextManagementConfig = {
+  /** Enable API-level context management (e.g., Anthropic cache_edits).
+   * When enabled, the API can delete tool results from its cached prefix
+   * without requiring a full message rewrite. */
+  enabled: boolean;
+  /** Tool result IDs to delete from the server's cached context.
+   * These are sent as cache_edits in the API request. */
+  toolResultIdsToDelete?: string[];
+};
+
 export type StreamTextRequest = {
   model: string;
   fallbackModels?: string[] | null;
@@ -102,6 +112,7 @@ export type StreamTextRequest = {
   transportSessionId?: string | null;
   allowTransportFallback?: boolean | null;
   continuationContext?: ContinuationContext | null;
+  contextManagement?: ContextManagementConfig | null;
 };
 
 export type StreamResponse = {

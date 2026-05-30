@@ -30,6 +30,14 @@ const MAX_AUTO_COMPACTIONS = 1;
 /** File name for compacted messages storage */
 const COMPACTED_MESSAGES_FILE = 'compacted-messages.json';
 
+/**
+ * Maximum consecutive compaction failures before circuit breaker trips.
+ * Without this, sessions where context is irrecoverably over the limit
+ * hammer the API with doomed compaction attempts on every turn.
+ * Inspired by cc-haha's MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES.
+ */
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 // ── Types ──────────────────────────────────────────────────
 
 export type CompactionResult =
@@ -42,11 +50,37 @@ export class CompactionManager {
   private readonly messageCompactor: ContextCompactor;
   private readonly taskId: string;
   private readonly storeAccess: LoopStoreAccess;
+  /** Circuit breaker: counts consecutive compaction failures. */
+  private consecutiveFailures = 0;
 
   constructor(taskId: string, storeAccess: LoopStoreAccess) {
     this.taskId = taskId;
     this.storeAccess = storeAccess;
     this.messageCompactor = new ContextCompactor();
+  }
+
+  /** Check if the circuit breaker has tripped. */
+  isCircuitBreakerTripped(): boolean {
+    return this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES;
+  }
+
+  /** Record a compaction failure (for circuit breaker tracking). */
+  recordFailure(): void {
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      logger.warn(
+        '[CompactionManager] Circuit breaker tripped — skipping future compaction attempts this session',
+        {
+          consecutiveFailures: this.consecutiveFailures,
+          taskId: this.taskId,
+        }
+      );
+    }
+  }
+
+  /** Record a compaction success (resets circuit breaker). */
+  recordSuccess(): void {
+    this.consecutiveFailures = 0;
   }
 
   /**
@@ -212,53 +246,70 @@ export class CompactionManager {
     abortController?: AbortController,
     onStatus?: (status: string) => void
   ): Promise<boolean> {
+    // Circuit breaker: skip compaction if too many consecutive failures
+    if (this.isCircuitBreakerTripped()) {
+      logger.warn('[CompactionManager] Circuit breaker active — skipping auto-compaction');
+      return false;
+    }
+
     const language = this.storeAccess.getLanguage();
     const t = getLocale(language);
     onStatus?.(t.LLMService.status.contextTooLongCompacting);
 
-    const compressionResult = await this.messageCompactor.compactMessages(
-      {
-        messages: loopState.messages,
-        config: compressionConfig,
-        systemPrompt,
-      },
-      loopState.lastRequestTokens,
-      abortController
-    );
+    try {
+      const compressionResult = await this.messageCompactor.compactMessages(
+        {
+          messages: loopState.messages,
+          config: compressionConfig,
+          systemPrompt,
+        },
+        loopState.lastRequestTokens,
+        abortController
+      );
 
-    if (!compressionResult.compressedSummary && compressionResult.sections.length === 0) {
+      if (!compressionResult.compressedSummary && compressionResult.sections.length === 0) {
+        this.recordFailure();
+        return false;
+      }
+
+      const compressedMessages = this.messageCompactor.createCompressedMessages(compressionResult);
+      const validation = this.messageCompactor.validateCompressedMessages(compressedMessages);
+
+      const finalMessages =
+        validation.valid || !validation.fixedMessages
+          ? compressedMessages
+          : validation.fixedMessages;
+
+      loopState.messages = convertToAnthropicFormat(finalMessages, {
+        autoFix: true,
+        trimAssistantWhitespace: true,
+      });
+      const sessionId = loopState.responsesChain?.transportSessionId ?? null;
+      await closeSessionFn(loopState, sessionId);
+      invalidateResponsesChain(loopState, 'history_rewritten');
+      loopState.lastRequestTokens = 0;
+
+      this.recordSuccess();
+
+      onStatus?.(t.LLMService.status.compressed(compressionResult.compressionRatio.toFixed(2)));
+
+      if (this.taskId && !isSubagent) {
+        const currentUIMessageCount = this.storeAccess.getMessages(this.taskId).length;
+
+        this.saveCompactedMessages(
+          loopState.messages,
+          currentUIMessageCount,
+          loopState.lastRequestTokens
+        ).catch((err) => {
+          logger.warn('Failed to save compacted messages', err);
+        });
+      }
+
+      return true;
+    } catch (error) {
+      logger.error('[CompactionManager] Auto-compaction failed', error);
+      this.recordFailure();
       return false;
     }
-
-    const compressedMessages = this.messageCompactor.createCompressedMessages(compressionResult);
-    const validation = this.messageCompactor.validateCompressedMessages(compressedMessages);
-
-    const finalMessages =
-      validation.valid || !validation.fixedMessages ? compressedMessages : validation.fixedMessages;
-
-    loopState.messages = convertToAnthropicFormat(finalMessages, {
-      autoFix: true,
-      trimAssistantWhitespace: true,
-    });
-    const sessionId = loopState.responsesChain?.transportSessionId ?? null;
-    await closeSessionFn(loopState, sessionId);
-    invalidateResponsesChain(loopState, 'history_rewritten');
-    loopState.lastRequestTokens = 0;
-
-    onStatus?.(t.LLMService.status.compressed(compressionResult.compressionRatio.toFixed(2)));
-
-    if (this.taskId && !isSubagent) {
-      const currentUIMessageCount = this.storeAccess.getMessages(this.taskId).length;
-
-      this.saveCompactedMessages(
-        loopState.messages,
-        currentUIMessageCount,
-        loopState.lastRequestTokens
-      ).catch((err) => {
-        logger.warn('Failed to save compacted messages', err);
-      });
-    }
-
-    return true;
   }
 }

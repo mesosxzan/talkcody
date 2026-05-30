@@ -8,12 +8,62 @@
  *   truncate the oldest message groups until the request fits.
  * - Micro-compact time window: Between turns, clear old tool result content
  *   that has likely expired from the server's prompt cache.
+ * - Context usage warning: Calculate warning/error thresholds for UI display.
  */
 
 import { logger } from '@/lib/logger';
+import { getContextLength } from '@/providers/config/model-config';
 import type { ContextCompactor } from '@/services/context/context-compactor';
 import type { ContentPart, Message as ModelMessage } from '@/services/llm/types';
 import type { CompressionConfig, CompressionResult } from '@/types/agent';
+
+// === Context Usage Warning ===
+
+/** Buffer tokens reserved for output during compaction. */
+const AUTOCOMPACT_BUFFER_TOKENS = 13_000;
+/** Buffer tokens before warning threshold. */
+const WARNING_BUFFER_TOKENS = 20_000;
+/** Buffer tokens before error threshold. */
+const ERROR_BUFFER_TOKENS = 20_000;
+
+export interface ContextWarningState {
+  /** Percentage of context window remaining (0-100). */
+  percentLeft: number;
+  /** True when context usage exceeds warning threshold. */
+  isAboveWarningThreshold: boolean;
+  /** True when context usage exceeds error threshold. */
+  isAboveErrorThreshold: boolean;
+  /** True when auto-compact should trigger. */
+  isAboveAutoCompactThreshold: boolean;
+  /** True when context is at blocking limit. */
+  isAtBlockingLimit: boolean;
+}
+
+/**
+ * Calculate context usage warning state.
+ * Inspired by cc-haha's calculateTokenWarningState with 3-level thresholds.
+ */
+export function calculateContextWarningState(
+  tokenUsage: number,
+  model: string,
+  compressionEnabled: boolean = true
+): ContextWarningState {
+  const maxContextTokens = getContextLength(model);
+  const autoCompactThreshold = maxContextTokens - AUTOCOMPACT_BUFFER_TOKENS;
+  const threshold = compressionEnabled ? autoCompactThreshold : maxContextTokens;
+
+  const percentLeft = Math.max(0, Math.round(((threshold - tokenUsage) / threshold) * 100));
+  const warningThreshold = threshold - WARNING_BUFFER_TOKENS;
+  const errorThreshold = threshold - ERROR_BUFFER_TOKENS;
+
+  return {
+    percentLeft,
+    isAboveWarningThreshold: tokenUsage >= warningThreshold,
+    isAboveErrorThreshold: tokenUsage >= errorThreshold,
+    isAboveAutoCompactThreshold: compressionEnabled && tokenUsage >= autoCompactThreshold,
+    isAtBlockingLimit: tokenUsage >= maxContextTokens - 3_000,
+  };
+}
 
 // === Error Detection ===
 
@@ -43,12 +93,42 @@ export function isPromptTooLongError(error: unknown): boolean {
 // === PTL Retry (Prompt-Too-Long Retry) ===
 
 /**
+ * Identify API-round groups in the messages.
+ * An API-round group is: an assistant message + all following user/tool messages
+ * until the next assistant message. Removing entire rounds maintains
+ * message format validity.
+ */
+function identifyAPIRoundGroups(messages: ModelMessage[]): { start: number; end: number }[] {
+  const groups: { start: number; end: number }[] = [];
+  let groupStart = -1;
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (!msg) continue;
+
+    if (msg.role === 'assistant') {
+      // Start a new group
+      if (groupStart >= 0) {
+        groups.push({ start: groupStart, end: i - 1 });
+      }
+      groupStart = i;
+    }
+  }
+
+  // Close the last group
+  if (groupStart >= 0) {
+    groups.push({ start: groupStart, end: messages.length - 1 });
+  }
+
+  return groups;
+}
+
+/**
  * Incrementally truncate the oldest API-round message groups
  * until the request fits within the context window.
  *
- * An "API-round group" is a pair of assistant message + following user message
- * (which contains tool results). We remove entire rounds to maintain
- * message format validity.
+ * Improved version: groups messages by API rounds (assistant + following user/tool)
+ * for cleaner truncation that maintains message format validity.
  *
  * @param messages The messages that are too long
  * @param maxRetries Maximum number of truncation attempts
@@ -68,48 +148,40 @@ export function truncateHeadForPTLRetry(
   let currentMessages = [...messages];
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    // Find the first non-system message pair to remove
-    // System message is always index 0, so we start removing from index 1
-    let removeCount = 0;
-    let removeStart = 1; // Skip system message
+    // Find the system message to preserve
+    const systemMsgIndex = currentMessages[0]?.role === 'system' ? 0 : -1;
+    const contentStart = systemMsgIndex + 1;
 
-    // Find the first complete API round (assistant + user pair)
-    for (let i = removeStart; i < currentMessages.length - 1; i++) {
-      const msg = currentMessages[i];
-      const nextMsg = currentMessages[i + 1];
+    // Identify API round groups after the system message
+    const groups = identifyAPIRoundGroups(currentMessages.slice(contentStart));
 
-      if (!msg || !nextMsg) continue;
-
-      // Remove a complete round: assistant message followed by user/tool-result message
-      if (msg.role === 'assistant' && (nextMsg.role === 'user' || nextMsg.role === 'tool')) {
-        removeCount = 2;
-        removeStart = i;
-        break;
-      }
-
-      // Or just remove a single orphaned message
-      if (msg.role === 'assistant' || msg.role === 'user') {
-        removeCount = 1;
-        removeStart = i;
-        break;
-      }
-    }
-
-    if (removeCount === 0) {
-      logger.warn('[PTL Retry] No removable message groups found');
+    if (groups.length === 0) {
+      logger.warn('[PTL Retry] No API round groups found to remove');
       return null;
     }
 
-    // Remove the identified messages
+    // Remove the oldest group
+    const oldestGroup = groups[0];
+    if (!oldestGroup) {
+      logger.warn('[PTL Retry] No API round groups found to remove');
+      return null;
+    }
+    const removeStart = contentStart + oldestGroup.start;
+    const removeEnd = contentStart + oldestGroup.end;
+    const removeCount = removeEnd - removeStart + 1;
+
     currentMessages = [
       ...currentMessages.slice(0, removeStart),
-      ...currentMessages.slice(removeStart + removeCount),
+      ...currentMessages.slice(removeEnd + 1),
     ];
 
-    logger.info(`[PTL Retry] Attempt ${attempt}: removed ${removeCount} messages from head`, {
-      remainingMessages: currentMessages.length,
-      removedFrom: removeStart,
-    });
+    logger.info(
+      `[PTL Retry] Attempt ${attempt}: removed API round group (${removeCount} messages)`,
+      {
+        remainingMessages: currentMessages.length,
+        groupRange: `${oldestGroup.start}-${oldestGroup.end}`,
+      }
+    );
 
     if (currentMessages.length <= minMessages) {
       logger.info('[PTL Retry] Reached minimum message count');
@@ -122,15 +194,43 @@ export function truncateHeadForPTLRetry(
 
 // === Micro-Compact Time Window ===
 
+/** Default cache expiry time (5 minutes). */
+const DEFAULT_CACHE_EXPIRY_MS = 5 * 60 * 1000;
+
+/**
+ * Tool names whose results are safe to clear in micro-compact.
+ * These are read-only tools whose output can be stale after cache expiry.
+ */
+const MICRO_COMPACTABLE_TOOLS = new Set([
+  'readFile',
+  'read_file',
+  'glob',
+  'Glob',
+  'grep',
+  'Grep',
+  'codeSearch',
+  'listFiles',
+  'list_files',
+  'bash',
+  'shell',
+  'executeCommand',
+]);
+
 /**
  * Clear old tool result content that has likely expired from the
  * server's prompt cache. This is a lightweight operation that
  * doesn't require an API call - it just replaces old tool results
  * with a placeholder in the conversation history.
  *
+ * Cache-aware: Only clears results from compactable (read-only) tools,
+ * keeping results from write tools (file edits, etc.) since those
+ * represent actual state changes that shouldn't be discarded.
+ *
  * The key insight: if the server's prompt cache has expired (typically
  * after 5 minutes of inactivity), the cached content is no longer
  * providing a benefit, so we can safely clear it to free up context.
+ *
+ * Inspired by cc-haha's time-based microcompact.
  *
  * @param messages The messages to process
  * @param lastAssistantTimestamp When the last assistant message was sent
@@ -140,7 +240,7 @@ export function truncateHeadForPTLRetry(
 export function clearExpiredToolResults(
   messages: ModelMessage[],
   lastAssistantTimestamp: number,
-  cacheExpiryMs: number = 5 * 60 * 1000
+  cacheExpiryMs: number = DEFAULT_CACHE_EXPIRY_MS
 ): ModelMessage[] {
   const now = Date.now();
   const timeSinceLastAssistant = now - lastAssistantTimestamp;
@@ -150,40 +250,62 @@ export function clearExpiredToolResults(
     return messages;
   }
 
+  // Count compactable tool IDs to determine keep/clear boundary.
+  // Keep the most recent N results, clear the rest.
+  const compactableIds: string[] = [];
+  for (const msg of messages) {
+    if (msg.role === 'assistant' && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (
+          typeof part === 'object' &&
+          part !== null &&
+          'type' in part &&
+          part.type === 'tool-call' &&
+          'toolName' in part
+        ) {
+          const p = part as { toolName: string; toolCallId: string };
+          if (MICRO_COMPACTABLE_TOOLS.has(p.toolName)) {
+            compactableIds.push(p.toolCallId);
+          }
+        }
+      }
+    }
+  }
+
+  // Keep at least the most recent 1 compactable tool result
+  const keepRecent = Math.max(1, 3);
+  const keepSet = new Set(compactableIds.slice(-keepRecent));
+  const clearSet = new Set(compactableIds.filter((id) => !keepSet.has(id)));
+
+  if (clearSet.size === 0) {
+    return messages;
+  }
+
   let clearedCount = 0;
   const processedMessages = messages.map((msg) => {
     if (msg.role !== 'tool' || !Array.isArray(msg.content)) {
       return msg;
     }
 
-    // Check if this tool result is old enough to clear
-    const hasLargeContent = msg.content.some((part) => {
-      if (typeof part === 'object' && part !== null && 'type' in part) {
-        const p = part as { type: string; output?: unknown };
-        if (p.type === 'tool-result' && p.output) {
-          const outputStr = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
-          return outputStr.length > 5000; // Only clear large results
-        }
-      }
-      return false;
-    });
-
-    if (!hasLargeContent) {
-      return msg;
-    }
-
-    // Replace large tool results with a placeholder
+    // Replace large tool results from clearable IDs with placeholders
     const clearedContent: ContentPart[] = msg.content.map((part) => {
       if (typeof part === 'object' && part !== null && 'type' in part) {
-        const p = part as { type: string; output?: unknown; toolName?: string };
-        if (p.type === 'tool-result' && p.output) {
+        const p = part as {
+          type: string;
+          output?: unknown;
+          toolName?: string;
+          toolCallId?: string;
+        };
+        if (p.type === 'tool-result' && p.output && p.toolCallId && clearSet.has(p.toolCallId)) {
           const outputStr = typeof p.output === 'string' ? p.output : JSON.stringify(p.output);
           if (outputStr.length > 5000) {
             clearedCount++;
             return {
-              ...part,
+              type: 'tool-result' as const,
+              toolCallId: p.toolCallId,
+              toolName: p.toolName || 'unknown',
               output: `[Old tool result content cleared to free context. Tool: ${p.toolName || 'unknown'}]`,
-            } as ContentPart;
+            };
           }
         }
       }
@@ -197,6 +319,8 @@ export function clearExpiredToolResults(
     logger.info(`[Micro-Compact] Cleared ${clearedCount} expired tool results`, {
       timeSinceLastAssistant: `${Math.round(timeSinceLastAssistant / 1000)}s`,
       cacheExpiryMs: `${Math.round(cacheExpiryMs / 1000)}s`,
+      toolsCleared: clearSet.size,
+      toolsKept: keepSet.size,
     });
   }
 

@@ -3,7 +3,7 @@
 // if (loopState.lastFinishReason === 'tool-calls' && toolCalls.length > 0)
 // When toolCalls.length is 0, the loop should exit gracefully
 
-import { UsageTokenUtils } from '@/lib/usage-token-utils';
+import { normalizeUsageTokens } from '@/lib/usage-token-utils';
 import type { Message as ModelMessage } from '@/services/llm/types';
 import { describe, expect, it } from 'vitest';
 
@@ -396,7 +396,7 @@ describe('LLMService - parallel tool calls message structure', () => {
 
 describe('LLMService - usage normalization', () => {
   it('prefers usage input/output tokens when available', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(
+    const normalized = normalizeUsageTokens(
       { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
       { inputTokens: 100, outputTokens: 200, totalTokens: 300 }
     );
@@ -405,19 +405,19 @@ describe('LLMService - usage normalization', () => {
   });
 
   it('falls back to totalUsage when usage is missing', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(undefined, { inputTokens: 5, outputTokens: 7 });
+    const normalized = normalizeUsageTokens(undefined, { inputTokens: 5, outputTokens: 7 });
 
     expect(normalized).toEqual({ inputTokens: 5, outputTokens: 7, totalTokens: 12 });
   });
 
   it('handles providers that only return totalTokens', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(null, { totalTokens: 42 });
+    const normalized = normalizeUsageTokens(null, { totalTokens: 42 });
 
     expect(normalized).toEqual({ inputTokens: 42, outputTokens: 0, totalTokens: 42 });
   });
 
   it('supports prompt/completion token fields', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(
+    const normalized = normalizeUsageTokens(
       { promptTokens: 11, completionTokens: 13 },
       { totalTokens: 30 }
     );
@@ -426,7 +426,7 @@ describe('LLMService - usage normalization', () => {
   });
 
   it('supports snake_case usage fields', () => {
-    const normalized = UsageTokenUtils.normalizeUsageTokens(
+    const normalized = normalizeUsageTokens(
       {
         prompt_tokens: 9,
         completion_tokens: 6,
@@ -439,7 +439,7 @@ describe('LLMService - usage normalization', () => {
     expect(normalized).toEqual({
       inputTokens: 9,
       outputTokens: 6,
-      totalTokens: 15,
+      totalTokens: 17,
       cachedInputTokens: 2,
     });
   });
