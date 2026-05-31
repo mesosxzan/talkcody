@@ -375,7 +375,7 @@ pub async fn refresh_dock_menu() {
 /// Handle dock menu events (placeholder for future implementation)
 pub fn handle_dock_menu_event<R: tauri::Runtime>(
     _app: &tauri::AppHandle<R>,
-    _event: tauri::menu::MenuEvent,
+    _event: &tauri::menu::MenuEvent,
 ) {
     // Dock menu events are handled by native Cocoa code above
 }

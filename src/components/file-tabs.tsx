@@ -1,4 +1,4 @@
-import { Circle, Copy, FileText, MessageSquarePlus, X } from 'lucide-react';
+import { Circle, Copy, ExternalLink, FileText, MessageSquarePlus, X } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -10,8 +10,10 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { useTranslation } from '@/hooks/use-locale';
 import { cn } from '@/lib/utils';
 import { getRelativePath } from '@/services/repository-utils';
+import { WindowManagerService } from '@/services/window-manager-service';
 import type { OpenFile } from '@/types/file-system';
 
 interface FileTabsProps {
@@ -39,6 +41,7 @@ export function FileTabs({
   onAddFileToChat,
   rootPath,
 }: FileTabsProps) {
+  const t = useTranslation();
   const [_contextMenuTabIndex, setContextMenuTabIndex] = useState<number | null>(null);
   const tabRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
@@ -101,7 +104,7 @@ export function FileTabs({
       onCopyPath(filePath);
     } else {
       navigator.clipboard.writeText(filePath);
-      toast.success('Path copied to clipboard');
+      toast.success(t.FileTabs.pathCopied);
     }
     setContextMenuTabIndex(null);
   };
@@ -112,7 +115,7 @@ export function FileTabs({
     } else if (rootPath) {
       const relativePath = getRelativePath(filePath, rootPath);
       navigator.clipboard.writeText(relativePath);
-      toast.success('Relative path copied to clipboard');
+      toast.success(t.FileTabs.relativePathCopied);
     }
     setContextMenuTabIndex(null);
   };
@@ -121,10 +124,22 @@ export function FileTabs({
     if (onAddFileToChat && fileContent) {
       try {
         await onAddFileToChat(filePath, fileContent);
-        toast.success('File added to chat');
+        toast.success(t.FileTabs.fileAddedToChat);
       } catch (_error) {
-        toast.error('Failed to add file to chat');
+        toast.error(t.FileTabs.failedToAddFileToChat);
       }
+    }
+    setContextMenuTabIndex(null);
+  };
+
+  const handleOpenInNewWindow = async (filePath: string) => {
+    if (!rootPath) {
+      return;
+    }
+    try {
+      await WindowManagerService.openProjectInWindow(rootPath, undefined, true);
+    } catch (_error) {
+      toast.error(t.FileTabs.failedToAddFileToChat);
     }
     setContextMenuTabIndex(null);
   };
@@ -195,21 +210,21 @@ export function FileTabs({
                   onClick={() => handleContextMenuClose(index)}
                   className="cursor-pointer"
                 >
-                  Close
+                  {t.FileTabs.close}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => handleContextMenuCloseOthers(index)}
                   disabled={!canCloseOthers}
                   className="cursor-pointer"
                 >
-                  Close Others
+                  {t.FileTabs.closeOthers}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={handleContextMenuCloseAll}
                   disabled={!canCloseAll}
                   className="cursor-pointer"
                 >
-                  Close All
+                  {t.FileTabs.closeAll}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem
@@ -217,7 +232,7 @@ export function FileTabs({
                   className="cursor-pointer"
                 >
                   <Copy className="mr-2 h-4 w-4" />
-                  Copy Path
+                  {t.FileTabs.copyPath}
                 </ContextMenuItem>
                 <ContextMenuItem
                   onClick={() => handleCopyRelativePath(file.path)}
@@ -225,7 +240,7 @@ export function FileTabs({
                   className="cursor-pointer"
                 >
                   <Copy className="mr-2 h-4 w-4" />
-                  Copy Relative Path
+                  {t.FileTabs.copyRelativePath}
                 </ContextMenuItem>
                 <ContextMenuSeparator />
                 <ContextMenuItem
@@ -234,7 +249,15 @@ export function FileTabs({
                   className="cursor-pointer"
                 >
                   <MessageSquarePlus className="mr-2 h-4 w-4" />
-                  Add to Chat
+                  {t.FileTabs.addToChat}
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() => handleOpenInNewWindow(file.path)}
+                  disabled={!rootPath}
+                  className="cursor-pointer"
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {t.FileTabs.openInNewWindow}
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>

@@ -2243,6 +2243,46 @@ export interface LocaleDefinition {
     openInBrowser: string;
   };
 
+  FileTabs: {
+    close: string;
+    closeOthers: string;
+    closeAll: string;
+    copyPath: string;
+    copyRelativePath: string;
+    addToChat: string;
+    openInNewWindow: string;
+    pathCopied: string;
+    relativePathCopied: string;
+    fileAddedToChat: string;
+    failedToAddFileToChat: string;
+  };
+
+  AppMenu: {
+    about: string;
+    services: string;
+    hide: string;
+    hideOthers: string;
+    showAll: string;
+    quit: string;
+    file: string;
+    newWindow: string;
+    closeWindow: string;
+    edit: string;
+    undo: string;
+    redo: string;
+    cut: string;
+    copy: string;
+    paste: string;
+    selectAll: string;
+    view: string;
+    fullscreen: string;
+    minimize: string;
+    maximize: string;
+    window: string;
+    bringAllToFront: string;
+    help: string;
+  };
+
   // Claude Usage Dashboard
   usage: {
     title: string;

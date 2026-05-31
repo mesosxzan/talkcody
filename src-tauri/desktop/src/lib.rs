@@ -1,6 +1,7 @@
 #![allow(unexpected_cfgs)]
 // Re-export desktop app implementation from core modules.
 
+pub mod app_menu;
 pub mod dock_menu;
 pub mod file_watcher;
 pub mod keep_awake;
@@ -1010,6 +1011,31 @@ pub fn run() {
                 dock_menu::setup_dock_menu();
             }
 
+            // Initialize application menu bar (macOS, Windows, Linux)
+            {
+                // Determine initial locale from settings stored in database
+                let initial_locale = {
+                    let db = database.clone();
+                    // Try to read language setting from the database
+                    // Use a blocking approach since we're in sync setup
+                    let locale = tauri::async_runtime::block_on(async {
+                        match db.query("SELECT value FROM settings WHERE key = 'language'", vec![]).await {
+                            Ok(result) => result.rows.first()
+                                .and_then(|row| row.get("value"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                                .unwrap_or_else(|| "en".to_string()),
+                            Err(_) => "en".to_string(),
+                        }
+                    });
+                    locale
+                };
+
+                if let Err(e) = app_menu::build_app_menu(app.handle(), &initial_locale) {
+                    log::error!("Failed to build application menu: {}", e);
+                }
+            }
+
             // Start scheduled task scheduler
             let scheduler_db = Arc::clone(&database);
             let scheduler_handle = app.handle().clone();
@@ -1054,7 +1080,8 @@ pub fn run() {
                 .build(),
         )
         .on_menu_event(|app, event| {
-            dock_menu::handle_dock_menu_event(app, event);
+            dock_menu::handle_dock_menu_event(app, &event);
+            app_menu::handle_menu_event(app, &event);
         })
         .invoke_handler(tauri::generate_handler![
             start_file_watching,
@@ -1079,6 +1106,7 @@ pub fn run() {
             start_window_file_watching,
             stop_window_file_watching,
             activate_app,
+            app_menu::update_menu_locale,
             database::db_connect,
             database::db_execute,
             database::db_query,

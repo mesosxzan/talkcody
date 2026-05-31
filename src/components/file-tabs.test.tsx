@@ -11,6 +11,32 @@ vi.mock('sonner', () => ({
   },
 }));
 
+// Mock useTranslation hook
+vi.mock('@/hooks/use-locale', () => ({
+  useTranslation: () => ({
+    FileTabs: {
+      close: 'Close',
+      closeOthers: 'Close Others',
+      closeAll: 'Close All',
+      copyPath: 'Copy Path',
+      copyRelativePath: 'Copy Relative Path',
+      addToChat: 'Add to Chat',
+      openInNewWindow: 'Open in New Window',
+      pathCopied: 'Path copied to clipboard',
+      relativePathCopied: 'Relative path copied to clipboard',
+      fileAddedToChat: 'File added to chat',
+      failedToAddFileToChat: 'Failed to add file to chat',
+    },
+  }),
+}));
+
+// Mock WindowManagerService
+vi.mock('@/services/window-manager-service', () => ({
+  WindowManagerService: {
+    openProjectInWindow: vi.fn(),
+  },
+}));
+
 // JSDOM does not implement scrollIntoView
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -54,7 +80,7 @@ describe('FileTabs path handling', () => {
         {...baseProps}
         openFiles={[
           {
-            path: 'C\\\\Users\\\\dev\\\\project\\\\main.ts',
+            path: 'C\\\\\\\\Users\\\\\\\\dev\\\\\\\\project\\\\\\\\main.ts',
             content: '',
             isLoading: false,
             error: null,
@@ -74,7 +100,7 @@ describe('FileTabs path handling', () => {
         {...baseProps}
         openFiles={[
           {
-            path: 'C\\\\Users/dev/project/feature/file-with-mix.ts',
+            path: 'C\\\\\\\\Users/dev/project/feature/file-with-mix.ts',
             content: '',
             isLoading: false,
             error: null,
