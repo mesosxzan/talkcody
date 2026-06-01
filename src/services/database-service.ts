@@ -205,6 +205,12 @@ export class DatabaseService {
     return this.taskService.updateTaskProject(taskId, projectId);
   }
 
+  async updateTaskModel(taskId: string, model: string): Promise<void> {
+    await this.ensureInitialized();
+    if (!this.taskService) throw new Error('Task service not initialized');
+    return this.taskService.updateTaskModel(taskId, model);
+  }
+
   async deleteTask(taskId: string): Promise<void> {
     await this.ensureInitialized();
     if (!this.taskService) throw new Error('Task service not initialized');

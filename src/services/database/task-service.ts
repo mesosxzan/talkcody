@@ -371,4 +371,13 @@ export class TaskService {
 
     return result.length > 0 ? (result[0]?.settings ?? null) : null;
   }
+
+  @timedMethod('updateTaskModel')
+  async updateTaskModel(taskId: string, model: string): Promise<void> {
+    await this.db.execute('UPDATE conversations SET model = $1, updated_at = $2 WHERE id = $3', [
+      model,
+      Date.now(),
+      taskId,
+    ]);
+  }
 }

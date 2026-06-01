@@ -63,6 +63,9 @@ export class TursoDatabaseInit {
       // Migration 9: Add reasoning_content column to messages
       await TursoDatabaseInit.migrateMessagesReasoningContent(db);
 
+      // Migration 10: Add model column to conversations
+      await TursoDatabaseInit.migrateConversationsModel(db);
+
       logger.info('✅ Database migrations check completed');
     } catch (error) {
       logger.error('❌ Database migration error:', error);
@@ -361,6 +364,29 @@ export class TursoDatabaseInit {
       }
     } catch (error) {
       logger.error('Error migrating messages table reasoning_content:', error);
+    }
+  }
+
+  /**
+   * Add model field to conversations table
+   */
+  private static async migrateConversationsModel(db: TursoClient): Promise<void> {
+    try {
+      const result = await (db as any).execute(`
+        SELECT COUNT(*) as count
+        FROM pragma_table_info('conversations')
+        WHERE name = 'model'
+      `);
+
+      const columnExists = result.rows[0]?.count > 0;
+
+      if (!columnExists) {
+        logger.info('Migrating conversations table to add model field...');
+        await (db as any).execute(`ALTER TABLE conversations ADD COLUMN model TEXT DEFAULT NULL`);
+        logger.info('✅ Conversations table model migration completed');
+      }
+    } catch (error) {
+      logger.error('Error migrating conversations table model:', error);
     }
   }
 }

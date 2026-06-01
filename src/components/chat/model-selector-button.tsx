@@ -14,7 +14,9 @@ import { useModelSearch } from '@/hooks/use-model-search';
 import { getDocLinks } from '@/lib/doc-links';
 import { logger } from '@/lib/logger';
 import { useProviderStore } from '@/providers/stores/provider-store';
+import { databaseService } from '@/services/database-service';
 import { useSettingsStore } from '@/stores/settings-store';
+import { useTaskStore } from '@/stores/task-store';
 import type { AvailableModel } from '@/types/api-keys';
 
 export function ModelSelectorButton() {
@@ -134,6 +136,14 @@ export function ModelSelectorButton() {
       // Store as "modelKey@provider" format
       const modelIdentifier = `${model.key}@${model.provider}`;
       await setModelType('main', modelIdentifier);
+
+      // Also update the current task's model so the toolbar reflects the change
+      // and the next execution uses the new model
+      const currentTaskId = useTaskStore.getState().currentTaskId;
+      if (currentTaskId) {
+        useTaskStore.getState().updateTask(currentTaskId, { model: modelIdentifier });
+        await databaseService.updateTaskModel(currentTaskId, modelIdentifier);
+      }
 
       // Update recent models tracking
       setRecentModels((prev) => ({

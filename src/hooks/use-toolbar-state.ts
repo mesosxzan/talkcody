@@ -78,12 +78,14 @@ export function useToolbarState(): ToolbarState {
   // Fetch current model identifier and format display name
   const updateModelName = useCallback(async () => {
     try {
-      // Priority: 1. Model associated with the current task
-      //           2. Current global model from modelService
-      let modelIdentifier = taskModel;
+      // Priority: 1. Current global model from settings (reflects latest user intent)
+      //           2. Model associated with the current task (fallback for historical display)
+      // The global setting takes priority because when the user switches models,
+      // they expect the new model to be used immediately, not the old task model.
+      let modelIdentifier = await modelService.getCurrentModel();
 
-      if (!modelIdentifier) {
-        modelIdentifier = await modelService.getCurrentModel();
+      if (!modelIdentifier && taskModel) {
+        modelIdentifier = taskModel;
       }
 
       if (!modelIdentifier) {
