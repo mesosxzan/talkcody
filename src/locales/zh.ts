@@ -1899,6 +1899,7 @@ const zh: LocaleDefinition = {
       repositoryPathNotAvailable: '仓库路径不可用',
       failedToRevealInFolder: (message) => `在文件管理器中显示失败：${message}`,
       failedToOpenInBrowser: (message) => `在浏览器中打开失败：${message}`,
+      cannotMoveIntoChild: '无法将文件夹移动到其自身的子文件夹中',
     },
     contextMenu: {
       newFile: '新建文件',
@@ -1921,6 +1922,15 @@ const zh: LocaleDefinition = {
     },
     states: {
       loading: '加载中...',
+    },
+    dragDrop: {
+      overwriteTitle: '文件已存在',
+      overwriteConfirm: (fileName) => `目标文件夹中已存在名为 "${fileName}" 的文件。您要覆盖它吗？`,
+      moved: (fileName, targetFolder) => `已将 "${fileName}" 移动到 "${targetFolder}"`,
+      moveFailed: (message) => `移动失败：${message}`,
+      dragHint: '拖动以移动文件和文件夹',
+      dropHint: '拖放到此处以移动',
+      cancelled: '拖动操作已取消',
     },
   },
 

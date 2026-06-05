@@ -1954,6 +1954,7 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
       repositoryPathNotAvailable: 'Repository path not available',
       failedToRevealInFolder: (message) => `Failed to reveal in file manager: ${message}`,
       failedToOpenInBrowser: (message) => `Failed to open in browser: ${message}`,
+      cannotMoveIntoChild: 'Cannot move a folder into its own subfolder',
     },
     contextMenu: {
       newFile: 'New File',
@@ -1976,6 +1977,16 @@ Note: ChatGPT Plus/Pro subscription is separate from API access.`,
     },
     states: {
       loading: 'Loading...',
+    },
+    dragDrop: {
+      overwriteTitle: 'File Already Exists',
+      overwriteConfirm: (fileName) =>
+        `A file named "${fileName}" already exists in the target folder. Do you want to overwrite it?`,
+      moved: (fileName, targetFolder) => `Moved "${fileName}" to "${targetFolder}"`,
+      moveFailed: (message) => `Failed to move: ${message}`,
+      dragHint: 'Drag to move files and folders',
+      dropHint: 'Drop here to move',
+      cancelled: 'Drag operation cancelled',
     },
   },
 

@@ -30,6 +30,7 @@ import { useTranslation } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { cn } from '@/lib/utils';
 import { repositoryService } from '@/services/repository-service';
+import { getDirectoryNameFromPath, getFileNameFromPath } from '@/services/repository-utils';
 import { useGitStore } from '@/stores/git-store';
 import type { FileNode } from '@/types/file-system';
 import { GitFileStatus } from '@/types/git';
@@ -139,6 +140,9 @@ interface FileTreeNodeProps {
   onToggleExpansion?: (path: string) => void;
 }
 
+// Drop position type for VSCode-like drag indicator
+type DropPosition = 'before' | 'after' | 'inside';
+
 function FileTreeNode({
   node,
   level,
@@ -171,6 +175,10 @@ function FileTreeNode({
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [isLoadingChildren, setIsLoadingChildren] = useState(false);
+  // Drag and drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dropPosition, setDropPosition] = useState<DropPosition | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const newItemInputRef = useRef<HTMLInputElement>(null);
   const [_contextMenuOpen, setContextMenuOpen] = useState(false);
@@ -178,6 +186,12 @@ function FileTreeNode({
   const nodeRef = useRef<HTMLButtonElement>(null);
   // Track when rename mode was activated to ignore blur from context-menu dismiss
   const renameActivatedAt = useRef<number>(0);
+  // Drag counter to handle dragenter/dragleave correctly
+  const dragCounter = useRef(0);
+  // Auto-expand timer for drag-over
+  const autoExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track if drag is cancelled by Escape key
+  const isDragCancelledRef = useRef(false);
 
   // Focus input when creating new item
   useEffect(() => {
@@ -195,6 +209,24 @@ function FileTreeNode({
       });
     }
   }, [selectedFile, node.path]);
+
+  // Handle Escape key to cancel drag
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isDragging) {
+        isDragCancelledRef.current = true;
+        setIsDragging(false);
+      }
+    };
+
+    if (isDragging) {
+      window.addEventListener('keydown', handleKeyDown);
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isDragging]);
 
   // Auto-load children when directory is expanded but children are not loaded
   // This handles the case after file tree refresh where expandedPaths is preserved
@@ -372,13 +404,11 @@ function FileTreeNode({
       return;
     }
 
-    const targetDir = node.is_directory
-      ? node.path
-      : node.path.substring(0, node.path.lastIndexOf('/'));
+    const targetDir = node.is_directory ? node.path : getDirectoryNameFromPath(node.path);
 
     try {
       for (const sourcePath of clipboardState.paths) {
-        const fileName = sourcePath.substring(sourcePath.lastIndexOf('/') + 1);
+        const fileName = getFileNameFromPath(sourcePath);
         let targetPath = `${targetDir}/${fileName}`;
 
         // Handle name conflicts by adding a suffix
@@ -438,9 +468,7 @@ function FileTreeNode({
   const handleNewItemSubmit = () => {
     const trimmedName = newItemName.trim();
     if (trimmedName) {
-      const parentPath = node.is_directory
-        ? node.path
-        : node.path.substring(0, node.path.lastIndexOf('/'));
+      const parentPath = node.is_directory ? node.path : getDirectoryNameFromPath(node.path);
       const isDirectory = isCreatingFolder;
 
       onFileCreate?.(parentPath, trimmedName, isDirectory);
@@ -493,6 +521,255 @@ function FileTreeNode({
     }
   };
 
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent) => {
+    // Prevent dragging during rename or other operations
+    if (isRenaming || isCreatingFile || isCreatingFolder) {
+      e.preventDefault();
+      return;
+    }
+
+    setIsDragging(true);
+    isDragCancelledRef.current = false;
+
+    // Set drag data with path and directory flag
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(
+      'application/json',
+      JSON.stringify({
+        path: node.path,
+        isDirectory: node.is_directory,
+        name: node.name,
+      })
+    );
+    e.dataTransfer.setData('text/plain', node.path);
+
+    // Create a custom drag image with VSCode-like styling
+    const dragImage = document.createElement('div');
+    dragImage.className =
+      'flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white shadow-lg ring-1 ring-blue-400/50';
+    dragImage.style.opacity = '0.95';
+
+    // Add icon indicator
+    const icon = document.createElement('span');
+    icon.textContent = node.is_directory ? '📁' : '📄';
+    dragImage.appendChild(icon);
+
+    // Add name
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = node.name;
+    dragImage.appendChild(nameSpan);
+
+    document.body.appendChild(dragImage);
+    e.dataTransfer.setDragImage(dragImage, 0, 0);
+    setTimeout(() => document.body.removeChild(dragImage), 0);
+  };
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
+    setIsDragOver(false);
+    setDropPosition(null);
+    dragCounter.current = 0;
+
+    // Clear auto-expand timer
+    if (autoExpandTimerRef.current) {
+      clearTimeout(autoExpandTimerRef.current);
+      autoExpandTimerRef.current = null;
+    }
+  };
+
+  // Calculate drop position based on mouse Y position relative to the element
+  const calculateDropPosition = (e: React.DragEvent): DropPosition | null => {
+    if (!nodeRef.current) return null;
+
+    const rect = nodeRef.current.getBoundingClientRect();
+    const y = e.clientY - rect.top;
+    const height = rect.height;
+
+    // Top 25% = before, middle 50% = inside (for directories), bottom 25% = after
+    if (y < height * 0.25) {
+      return 'before';
+    }
+    if (y > height * 0.75) {
+      return 'after';
+    }
+    // Only directories can have "inside" drop position
+    return node.is_directory ? 'inside' : 'after';
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Check if drag was cancelled
+    if (isDragCancelledRef.current) return;
+
+    dragCounter.current++;
+
+    if (dragCounter.current === 1) {
+      setIsDragOver(true);
+      // Calculate and set drop position
+      const position = calculateDropPosition(e);
+      setDropPosition(position);
+
+      // Auto-expand directory when hovering over it
+      if (node.is_directory && !isExpanded && position === 'inside') {
+        // Clear any existing timer
+        if (autoExpandTimerRef.current) {
+          clearTimeout(autoExpandTimerRef.current);
+        }
+        // Set timer to expand after 500ms (VSCode-like delay)
+        autoExpandTimerRef.current = setTimeout(() => {
+          if (!isDragCancelledRef.current) {
+            onToggleExpansion?.(node.path);
+          }
+        }, 500);
+      }
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    dragCounter.current--;
+
+    if (dragCounter.current === 0) {
+      setIsDragOver(false);
+      setDropPosition(null);
+
+      // Clear auto-expand timer
+      if (autoExpandTimerRef.current) {
+        clearTimeout(autoExpandTimerRef.current);
+        autoExpandTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Check if drag was cancelled
+    if (isDragCancelledRef.current) {
+      e.dataTransfer.dropEffect = 'none';
+      return;
+    }
+
+    // Update drop position based on current mouse position
+    const position = calculateDropPosition(e);
+    setDropPosition(position);
+
+    // Set drop effect based on position
+    if (position === 'inside' && node.is_directory) {
+      e.dataTransfer.dropEffect = 'move';
+    } else {
+      e.dataTransfer.dropEffect = 'move';
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    setDropPosition(null);
+    dragCounter.current = 0;
+
+    // Clear auto-expand timer
+    if (autoExpandTimerRef.current) {
+      clearTimeout(autoExpandTimerRef.current);
+      autoExpandTimerRef.current = null;
+    }
+
+    // Get drag data
+    let sourcePath: string;
+    let isDirectory: boolean;
+    let sourceName: string;
+
+    try {
+      const jsonData = e.dataTransfer.getData('application/json');
+      if (jsonData) {
+        const parsed = JSON.parse(jsonData);
+        sourcePath = parsed.path;
+        isDirectory = parsed.isDirectory;
+        sourceName = parsed.name || getFileNameFromPath(sourcePath);
+      } else {
+        // Fallback to text/plain
+        sourcePath = e.dataTransfer.getData('text/plain');
+        isDirectory = false;
+        sourceName = getFileNameFromPath(sourcePath);
+      }
+    } catch {
+      return;
+    }
+
+    if (!sourcePath) return;
+
+    // Determine target based on drop position
+    const dropPos = calculateDropPosition(e);
+    let targetDir: string;
+    let targetName: string;
+
+    if (dropPos === 'inside' && node.is_directory) {
+      // Drop inside the directory
+      targetDir = node.path;
+      targetName = node.name;
+    } else {
+      // Drop before or after - target is the parent directory
+      targetDir = getDirectoryNameFromPath(node.path) || node.path;
+      targetName = node.name;
+    }
+
+    // Prevent dropping on itself
+    if (sourcePath === targetDir || sourcePath === node.path) return;
+
+    // Check if trying to drop a parent folder into its own child
+    if (isDirectory && targetDir.startsWith(sourcePath + '/')) {
+      toast.error(t.FileTree.errors.cannotMoveIntoChild);
+      return;
+    }
+
+    // Check if trying to drop into the same directory (when dropping before/after)
+    const sourceParentDir = getDirectoryNameFromPath(sourcePath) || '/';
+    if ((dropPos === 'before' || dropPos === 'after') && sourceParentDir === targetDir) {
+      // Dropping in the same directory, no move needed
+      return;
+    }
+
+    // Get the file/folder name from source path (use cross-platform helper)
+    const fileName = sourceName || getFileNameFromPath(sourcePath);
+    const destinationPath = `${targetDir}/${fileName}`;
+
+    try {
+      // Check if a file with the same name already exists in the target directory
+      if (await repositoryService.checkFileExists(destinationPath)) {
+        const shouldOverwrite = await ask(t.FileTree.dragDrop.overwriteConfirm(fileName), {
+          title: t.FileTree.dragDrop.overwriteTitle,
+          kind: 'warning',
+        });
+
+        if (!shouldOverwrite) {
+          return;
+        }
+
+        // Delete the existing file/folder before moving
+        await repositoryService.deleteFile(destinationPath);
+      }
+
+      // Move the file/folder
+      await repositoryService.moveFile(sourcePath, destinationPath);
+      toast.success(t.FileTree.dragDrop.moved(fileName, targetName));
+
+      // Refresh the file tree
+      onRefresh?.();
+    } catch (error) {
+      logger.error('Failed to move file/folder:', error);
+      toast.error(
+        t.FileTree.dragDrop.moveFailed(error instanceof Error ? error.message : 'Unknown error')
+      );
+    }
+  };
+
   const isHtmlFile = !node.is_directory && /^(.+)\.(html|htm)$/i.test(node.name);
 
   const isSelected = selectedFile === node.path;
@@ -505,11 +782,19 @@ function FileTreeNode({
     <button
       type="button"
       ref={nodeRef}
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
       className={cn(
-        'group relative flex w-full cursor-pointer items-center border-0 px-2 py-1 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800',
+        'group relative flex w-full cursor-pointer items-center border-0 px-2 py-1 text-left text-sm transition-colors duration-150 hover:bg-gray-100 dark:hover:bg-gray-800',
         isSelected && 'bg-blue-100 dark:bg-blue-900/30',
         isCut && 'opacity-50',
-        isGitIgnored && 'opacity-60'
+        isGitIgnored && 'opacity-60',
+        isDragging && 'opacity-40',
+        // Highlight when dropping inside a directory
+        isDragOver &&
+          dropPosition === 'inside' &&
+          'bg-blue-200 dark:bg-blue-800/50 ring-2 ring-blue-500 ring-inset'
       )}
       onClick={handleClick}
       onKeyDown={(e) => {
@@ -520,6 +805,13 @@ function FileTreeNode({
       }}
       style={{ paddingLeft: `${paddingLeft + 8}px` }}
     >
+      {/* Drop indicator line - VSCode-like visual feedback */}
+      {isDragOver && dropPosition === 'before' && (
+        <div className="absolute left-2 right-2 top-0 h-0.5 bg-blue-500" />
+      )}
+      {isDragOver && dropPosition === 'after' && (
+        <div className="absolute bottom-0 left-2 right-2 h-0.5 bg-blue-500" />
+      )}
       {/* Visual indent guide line for nested items */}
       {level > 0 && (
         <div
@@ -596,7 +888,12 @@ function FileTreeNode({
   );
 
   return (
-    <div>
+    <div
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <ContextMenu onOpenChange={handleContextMenuOpenChange}>
         <ContextMenuTrigger asChild>{fileTreeItem}</ContextMenuTrigger>
         <ContextMenuContent>

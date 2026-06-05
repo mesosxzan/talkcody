@@ -1873,6 +1873,7 @@ export interface LocaleDefinition {
       repositoryPathNotAvailable: string;
       failedToRevealInFolder: (message: string) => string;
       failedToOpenInBrowser: (message: string) => string;
+      cannotMoveIntoChild: string;
     };
     contextMenu: {
       newFile: string;
@@ -1895,6 +1896,15 @@ export interface LocaleDefinition {
     };
     states: {
       loading: string;
+    };
+    dragDrop: {
+      overwriteTitle: string;
+      overwriteConfirm: (fileName: string) => string;
+      moved: (fileName: string, targetFolder: string) => string;
+      moveFailed: (message: string) => string;
+      dragHint: string;
+      dropHint: string;
+      cancelled: string;
     };
   };
 
