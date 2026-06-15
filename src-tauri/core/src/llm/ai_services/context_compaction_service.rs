@@ -107,22 +107,66 @@ impl ContextCompactionService {
     /// Build the compaction prompt with the 8-section template
     fn build_compaction_prompt(&self, conversation_history: &str) -> String {
         format!(
-            "Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.\n\
-             This summary should be thorough in capturing technical details, code patterns, and architectural decisions that would be essential for continuing development work without losing context.\n\n\
-             Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts and ensure you've covered all necessary points.\n\n\
-             Your summary should include the following sections:\n\n\
-             1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail\n\
-             2. Key Technical Concepts: List all important technical concepts, technologies, and frameworks discussed.\n\
-             3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created. Pay special attention to the most recent messages and include full code snippets where applicable.\n\
-             4. Errors and fixes: List all errors that you ran into, and how you fixed them. Pay special attention to specific user feedback.\n\
-             5. Problem Solving: Document problems solved and any ongoing troubleshooting efforts.\n\
-             6. All user messages: List ALL user messages that are not tool results. These are critical for understanding the users' feedback and changing intent.\n\
-             7. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.\n\
-             8. Current Work: Describe in detail precisely what was being worked on immediately before this summary request.\n\n\
-             Please be comprehensive and technical in your summary. Include specific file paths, function names, error messages, and code patterns that would be essential for maintaining context.\n\n\
+            "CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.\n\
+             - Do NOT ask to inspect files, run commands, or fetch additional context.\n\
+             - You already have all the conversation context you will get.\n\
+             - Your entire response must be plain text containing exactly one <analysis> block followed by exactly one <summary> block.\n\
+             - Do NOT include XML tags other than <analysis> and <summary>.\n\n\
+             Your task is to create a continuation-grade summary of the conversation so far.\n\
+             The summary must preserve the user's latest intent, the assistant's latest in-progress work, important technical details, and any constraints needed to continue the task without drift.\n\n\
+             In <analysis>, think through the conversation chronologically and verify that you captured:\n\
+             1. The user's explicit requests, corrections, changed priorities, and acceptance/rejection of approaches.\n\
+             2. The assistant's concrete actions, edits, inspections, commands, tests, and incomplete work.\n\
+             3. Specific technical artifacts such as file paths, functions, modules, APIs, data structures, prompts, tests, and architecture decisions.\n\
+             4. Errors, regressions, failed attempts, and whether each issue was resolved or is still open.\n\
+             5. The most recent work state and the exact next step that would best continue the task.\n\n\
+             In <summary>, produce a concise but information-dense structured summary using the numbered sections below.\n\
+             Prefer distilled facts over long verbatim copies. Include exact commands, file paths, symbols, or error messages when they matter.\n\
+             Do NOT invent files, functions, edits, commands, or user intent that are not present in the conversation.\n\
+             If a section truly has no relevant information, write \"None\".\n\n\
+             Your summary must include the following sections:\n\n\
+             1. Primary Request and Intent: Capture the user's active goals, constraints, and the latest requested direction.\n\
+             2. Key Technical Concepts: List the important technical concepts, frameworks, services, prompts, or architectural ideas involved.\n\
+             3. Files and Code Sections: Enumerate specific files, functions, classes, modules, prompts, or configs examined or changed, and explain why each is relevant.\n\
+             4. Errors and fixes: List concrete errors, failures, and warnings, along with fixes attempted, fixes completed, or unresolved status. Include important user corrections.\n\
+             5. Problem Solving: Summarize debugging progress, design decisions, tradeoffs, and what approaches were chosen or rejected.\n\
+             6. All user messages: List ALL user-authored messages that are not tool results. Preserve the user's wording closely enough to retain intent changes and feedback.\n\
+             7. Pending Tasks: List unfinished work that the assistant was explicitly asked to do or that is required to complete the active request.\n\
+             8. Current Work: Describe precisely what the assistant was doing immediately before this summary request, emphasizing the latest meaningful work.\n\
+             9. Optional Next Step: Give the most appropriate next action to continue the task. Base it on the latest work and quote the most relevant recent request when helpful.\n\n\
+             Additional extraction rules:\n\
+             - Prioritize recency when deciding what is currently active.\n\
+             - Preserve test commands, verification results, and whether they passed or failed.\n\
+             - Preserve critical prompt or instruction changes when the task involves summarization, memory, or agent behavior.\n\
+             - Summarize large tool outputs instead of copying them verbatim unless a specific snippet is essential.\n\
+             - Explicitly mention if the assistant was blocked by API failures such as 503, prompt-too-long, or timeout issues.\n\n\
+             Output format:\n\
+             <analysis>\n\
+             ...reasoning scratchpad...\n\
+             </analysis>\n\
+             <summary>\n\
+             1. Primary Request and Intent:\n\
+             ...\n\
+             2. Key Technical Concepts:\n\
+             ...\n\
+             3. Files and Code Sections:\n\
+             ...\n\
+             4. Errors and fixes:\n\
+             ...\n\
+             5. Problem Solving:\n\
+             ...\n\
+             6. All user messages:\n\
+             ...\n\
+             7. Pending Tasks:\n\
+             ...\n\
+             8. Current Work:\n\
+             ...\n\
+             9. Optional Next Step:\n\
+             ...\n\
+             </summary>\n\n\
              CONVERSATION HISTORY TO SUMMARIZE:\n\
              {}\n\n\
-             Please provide a comprehensive structured summary following the 8-section format above.",
+             Produce the <analysis> block first, then the <summary> block.",
             conversation_history
         )
     }
@@ -249,6 +293,7 @@ mod tests {
         assert!(prompt.contains("All user messages"));
         assert!(prompt.contains("Pending Tasks"));
         assert!(prompt.contains("Current Work"));
+        assert!(prompt.contains("Optional Next Step"));
     }
 
     #[test]
@@ -257,6 +302,26 @@ mod tests {
         let prompt = service.build_compaction_prompt("test");
 
         assert!(prompt.contains("<analysis>"));
+        assert!(prompt.contains("<summary>"));
+    }
+
+    #[test]
+    fn build_prompt_forbids_tool_use_and_requires_text_only() {
+        let service = ContextCompactionService::new();
+        let prompt = service.build_compaction_prompt("test");
+
+        assert!(prompt.contains("Do NOT call any tools"));
+        assert!(prompt.contains("Respond with TEXT ONLY"));
+    }
+
+    #[test]
+    fn build_prompt_emphasizes_recency_and_user_feedback() {
+        let service = ContextCompactionService::new();
+        let prompt = service.build_compaction_prompt("test");
+
+        assert!(prompt.contains("Prioritize recency"));
+        assert!(prompt.contains("user corrections"));
+        assert!(prompt.contains("latest meaningful work"));
     }
 
     #[test]

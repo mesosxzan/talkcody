@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Message as ModelMessage } from '@/services/llm/types';
-import type { ContextAnalysis, StrategyContext } from '@/types/agent';
+import type { Message as ModelMessage } from '../../llm/types';
+import type { ContextAnalysis, StrategyContext } from '../../../types/agent';
 
-vi.mock('@/services/code-navigation-service', () => ({
+vi.mock('../../code-navigation-service', () => ({
   estimateTokens: vi.fn(),
 }));
 
-vi.mock('@/services/ai/ai-context-compaction', () => ({
+vi.mock('../../ai/ai-context-compaction', () => ({
   aiContextCompactionService: {
     compactContext: vi.fn().mockResolvedValue(
       '<analysis>Test analysis</analysis>\n1. Key Points: Important information here.',
@@ -22,7 +22,7 @@ vi.mock('@/services/context/context-rewriter', () => {
   };
 });
 
-import { estimateTokens } from '@/services/code-navigation-service';
+import { estimateTokens } from '../../code-navigation-service';
 import { AISummarizationStrategy } from './ai-summarization-strategy';
 
 function makeUserMessage(text: string): ModelMessage {
@@ -80,9 +80,27 @@ describe('AISummarizationStrategy', () => {
     expect(result.messages.length).toBe(2); // summary user + ack assistant
     expect(result.messages[0].role).toBe('user');
     expect(result.messages[0].content).toContain('[Previous conversation summary]');
+    expect(result.messages[0].content).toContain(
+      'This session is continuing after context compaction'
+    );
+    expect(result.messages[0].content).not.toContain('<analysis>');
     expect(result.messages[1].role).toBe('assistant');
+    expect(result.messages[1].content).toContain('continue from the latest active task');
     expect(result.metadata.modelUsed).toBe('test-model');
     expect(result.metadata.latencyMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('should unwrap summary tags before constructing restored messages', async () => {
+    const { aiContextCompactionService } = await import('../../ai/ai-context-compaction');
+    (aiContextCompactionService.compactContext as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      '<analysis>scratchpad</analysis>\n<summary>\n1. Primary Request and Intent:\nShip the feature\n</summary>'
+    );
+
+    const result = await strategy.execute(makeContext());
+
+    expect(result.messages[0].content).toContain('1. Primary Request and Intent:');
+    expect(result.messages[0].content).not.toContain('<summary>');
+    expect(result.messages[0].content).not.toContain('scratchpad');
   });
 
   it('should optionally pre-run code summarization', async () => {
@@ -96,7 +114,7 @@ describe('AISummarizationStrategy', () => {
   });
 
   it('should handle AI compression failure gracefully', async () => {
-    const { aiContextCompactionService } = await import('@/services/ai/ai-context-compaction');
+    const { aiContextCompactionService } = await import('../../ai/ai-context-compaction');
     (aiContextCompactionService.compactContext as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error('API error'),
     );

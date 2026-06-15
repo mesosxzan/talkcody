@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CompactionManager, type CompactionResult } from './compaction-manager';
 import type { LoopStoreAccess } from './loop-store-access';
-import { modelTypeService } from '@/providers/models/model-type-service';
+import { modelTypeService } from '../../providers/models/model-type-service';
+import { taskFileService } from '../task-file-service';
 
 // ── Mocks ────────────────────────────────────────────────────
 
@@ -75,6 +76,10 @@ function createMockStoreAccess(overrides: Partial<LoopStoreAccess> = {}): LoopSt
 // ── Tests ────────────────────────────────────────────────────
 
 describe('CompactionManager', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   // ── getDefaultCompressionConfig ───────────────────────────────
 
   describe('getDefaultCompressionConfig', () => {
@@ -150,6 +155,64 @@ describe('CompactionManager', () => {
       manager.handleContextLengthExceeded(1);
 
       expect(getLanguage).toHaveBeenCalled();
+    });
+  });
+
+  describe('session memory sidecar', () => {
+    it('saves session memory sidecar together with compacted messages', async () => {
+      const storeAccess = createMockStoreAccess();
+      const manager = new CompactionManager('task-1', storeAccess);
+
+      await manager.saveCompactedMessages(
+        [
+          { role: 'system', content: 'System prompt' },
+          {
+            role: 'user',
+            content:
+              '[Previous conversation summary]\n\nThis session is continuing after context compaction. The summary below covers the earlier portion of the work.\n\n1. Primary Request and Intent:\nContinue implementing session memory\n\nResume directly from the latest active task. Treat preserved recent messages as the most current source of truth if they are more recent than the summary. Do not restart solved work or ask the user to repeat context unless the preserved messages show that clarification is still needed.',
+          },
+        ],
+        12,
+        345,
+        {
+          systemPrompt: 'System prompt',
+        }
+      );
+
+      expect(taskFileService.writeFile).toHaveBeenCalledTimes(2);
+      expect(taskFileService.writeFile).toHaveBeenNthCalledWith(
+        2,
+        'context',
+        'task-1',
+        'session-memory.json',
+        expect.stringContaining('"summary":"1. Primary Request and Intent:\\nContinue implementing session memory"')
+      );
+    });
+
+    it('rebuilds compacted context from session memory when main cache is unavailable', async () => {
+      vi.mocked(taskFileService.readFile)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(
+          JSON.stringify({
+            summary: '1. Primary Request and Intent:\nShip the feature',
+            sourceUIMessageCount: 9,
+            lastRequestTokens: 777,
+            systemPrompt: 'System prompt',
+            updatedAt: Date.now(),
+          })
+        );
+
+      const storeAccess = createMockStoreAccess();
+      const manager = new CompactionManager('task-1', storeAccess);
+      const result = await manager.loadCompactedMessages();
+
+      expect(result).not.toBeNull();
+      expect(result?.sourceUIMessageCount).toBe(9);
+      expect(result?.lastRequestTokens).toBe(777);
+      expect(result?.messages[0]).toEqual({ role: 'system', content: 'System prompt' });
+      expect(result?.messages[1].content).toContain('[Previous conversation summary]');
+      expect(result?.messages[1].content).toContain('Ship the feature');
+      expect(result?.messages[2].content).toContain('latest active task');
     });
   });
 });

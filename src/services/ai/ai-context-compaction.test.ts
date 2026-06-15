@@ -73,6 +73,28 @@ describe('AIContextCompactionService', () => {
     expect(result).toBe('Summary text');
   });
 
+  it('retries with a smaller payload after transient 503 errors', async () => {
+    const longHistory = `${'User: very long line\n'.repeat(16_000)}Assistant: final context`;
+    const compactContextMock = llmClient.compactContext as ReturnType<typeof vi.fn>;
+
+    compactContextMock
+      .mockRejectedValueOnce(new Error('HTTP 503: service unavailable'))
+      .mockRejectedValueOnce(new Error('HTTP 503: service unavailable'))
+      .mockResolvedValueOnce({
+        compressedSummary: 'Recovered summary',
+      });
+
+    const result = await aiContextCompactionService.compactContext(longHistory);
+
+    expect(result).toBe('Recovered summary');
+    expect(compactContextMock).toHaveBeenCalledTimes(3);
+
+    const firstCall = compactContextMock.mock.calls[0]?.[0];
+    const thirdCall = compactContextMock.mock.calls[2]?.[0];
+    expect(firstCall?.conversationHistory.length).toBe(longHistory.length);
+    expect(thirdCall?.conversationHistory.length).toBeLessThan(longHistory.length);
+  });
+
   it('returns empty string and warns when summary is undefined', async () => {
     (llmClient.compactContext as ReturnType<typeof vi.fn>).mockResolvedValue({
       compressedSummary: undefined,

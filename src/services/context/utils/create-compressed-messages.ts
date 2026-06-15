@@ -6,6 +6,35 @@ import { condensePreviousSummary } from './condense-previous-summary';
 /** Maximum number of recently-read files to restore after compaction. */
 const POST_COMPACT_MAX_FILES_TO_RESTORE = 5;
 
+export function formatCompactionSummary(summary: string): string {
+  let formattedSummary = summary.trim();
+
+  formattedSummary = formattedSummary.replace(/<analysis>[\s\S]*?<\/analysis>/i, '').trim();
+
+  const summaryMatch = formattedSummary.match(/<summary>([\s\S]*?)<\/summary>/i);
+  if (summaryMatch?.[1]) {
+    formattedSummary = summaryMatch[1].trim();
+  }
+
+  return formattedSummary.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+export function buildContinuationSummaryMessage(summaryContent: string): string {
+  return [
+    '[Previous conversation summary]',
+    '',
+    'This session is continuing after context compaction. The summary below covers the earlier portion of the work.',
+    '',
+    summaryContent,
+    '',
+    'Resume directly from the latest active task. Treat preserved recent messages as the most current source of truth if they are more recent than the summary. Do not restart solved work or ask the user to repeat context unless the preserved messages show that clarification is still needed.',
+  ].join('\n');
+}
+
+export function buildSummaryAcknowledgement(): string {
+  return 'Understood. I will continue from the latest active task and use preserved recent context as the source of truth.';
+}
+
 /**
  * Deduplicate file content in compressed messages.
  * After compaction, the same file content may appear both in the summary
@@ -96,9 +125,11 @@ function buildRestorationContext(preservedMessages: ModelMessage[]): string | nu
   if (recentFiles.length === 0) return null;
 
   const lines = ['[Post-compact context restoration]'];
-  lines.push('The conversation was compacted. Key context that should be retained:');
-  lines.push(`Recently accessed files: ${recentFiles.join(', ')}`);
-  lines.push('You may need to re-read these files to continue the task effectively.');
+  lines.push('Recent file context worth preserving after compaction:');
+  lines.push(`- Recently accessed files: ${recentFiles.join(', ')}`);
+  lines.push(
+    '- Re-read these files only if the preserved recent messages do not already contain enough context.'
+  );
 
   return lines.join('\n');
 }
@@ -129,19 +160,19 @@ export function createCompressedMessages(result: CompressionResult): ModelMessag
   // Step 2: If we have a compressed summary, add it as a user message
   if (result.compressedSummary) {
     // Check if there's an old summary (from previous compression) that needs condensing
-    let summaryContent = result.compressedSummary;
+    let summaryContent = formatCompactionSummary(result.compressedSummary);
 
-    // Look for any old system summary messages that should be condensed
+    // Look for any old summary messages that should be condensed
     for (let i = startIndex; i < result.preservedMessages.length; i++) {
       const msg = result.preservedMessages[i];
       if (
-        msg?.role === 'system' &&
+        (msg?.role === 'system' || msg?.role === 'user') &&
         typeof msg.content === 'string' &&
         msg.content.includes('[Previous conversation summary]')
       ) {
         // Condense the old summary and include it
         const condensedPrevious = condensePreviousSummary(msg.content);
-        summaryContent = `${result.compressedSummary}\n\n---\nEarlier context (condensed):\n${condensedPrevious}`;
+        summaryContent = `${summaryContent}\n\n---\nEarlier context (condensed):\n${condensedPrevious}`;
         break;
       }
     }
@@ -149,13 +180,13 @@ export function createCompressedMessages(result: CompressionResult): ModelMessag
     // Add summary as user message (critical for LLM APIs that require user messages)
     compressedMessages.push({
       role: 'user',
-      content: `[Previous conversation summary]\n\n${summaryContent}\n\nPlease continue from where we left off.`,
+      content: buildContinuationSummaryMessage(summaryContent),
     });
 
     // Add assistant acknowledgment to maintain message alternation
     compressedMessages.push({
       role: 'assistant',
-      content: 'I understand the previous context. Continuing with the task.',
+      content: buildSummaryAcknowledgement(),
     });
   }
 

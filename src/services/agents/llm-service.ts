@@ -503,7 +503,10 @@ export class LLMService {
                   .saveCompactedMessages(
                     loopState.messages,
                     currentUIMessageCount,
-                    loopState.lastRequestTokens
+                    loopState.lastRequestTokens,
+                    {
+                      systemPrompt,
+                    }
                   )
                   .catch((err) => {
                     logger.warn('Failed to save compacted messages', err);

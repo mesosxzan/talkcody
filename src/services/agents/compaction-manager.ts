@@ -12,6 +12,11 @@ import { convertToAnthropicFormat } from '@/lib/message-convert';
 import { getLocale } from '@/locales';
 import { modelTypeService } from '@/providers/models/model-type-service';
 import { ContextCompactor } from '@/services/context/context-compactor';
+import {
+  buildContinuationSummaryMessage,
+  buildSummaryAcknowledgement,
+  formatCompactionSummary,
+} from '@/services/context/utils';
 import type { Message as ModelMessage } from '@/services/llm/types';
 import { taskFileService } from '@/services/task-file-service';
 import { ModelType } from '@/types/model-types';
@@ -29,6 +34,7 @@ const MAX_AUTO_COMPACTIONS = 1;
 
 /** File name for compacted messages storage */
 const COMPACTED_MESSAGES_FILE = 'compacted-messages.json';
+const SESSION_MEMORY_FILE = 'session-memory.json';
 
 /**
  * Maximum consecutive compaction failures before circuit breaker trips.
@@ -43,6 +49,14 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 export type CompactionResult =
   | { action: 'compact'; newAttempts: number }
   | { action: 'fail'; errorMessage: string };
+
+type SessionMemoryCache = {
+  summary: string;
+  sourceUIMessageCount: number;
+  lastRequestTokens: number;
+  updatedAt: number;
+  systemPrompt?: string;
+};
 
 // ── Manager ────────────────────────────────────────────────
 
@@ -138,7 +152,7 @@ export class CompactionManager {
     try {
       const json = await taskFileService.readFile('context', this.taskId, COMPACTED_MESSAGES_FILE);
       if (!json) {
-        return null;
+        return this.loadFromSessionMemoryFallback();
       }
 
       let data: unknown;
@@ -146,7 +160,7 @@ export class CompactionManager {
         data = JSON.parse(json);
       } catch (parseError) {
         logger.warn('Failed to parse compacted messages JSON', parseError);
-        return null;
+        return this.loadFromSessionMemoryFallback();
       }
 
       if (
@@ -156,7 +170,7 @@ export class CompactionManager {
         !Array.isArray(data.messages) ||
         data.messages.length === 0
       ) {
-        return null;
+        return this.loadFromSessionMemoryFallback();
       }
 
       const dataRecord = data as Record<string, unknown>;
@@ -166,7 +180,7 @@ export class CompactionManager {
         logger.warn('Invalid sourceUIMessageCount in compacted messages', {
           taskId: this.taskId,
         });
-        return null;
+        return this.loadFromSessionMemoryFallback();
       }
 
       return {
@@ -177,7 +191,7 @@ export class CompactionManager {
       };
     } catch (error) {
       logger.warn('Failed to load compacted messages', error);
-      return null;
+      return this.loadFromSessionMemoryFallback();
     }
   }
 
@@ -187,7 +201,11 @@ export class CompactionManager {
   async saveCompactedMessages(
     messages: ModelMessage[],
     sourceUIMessageCount: number,
-    lastRequestTokens: number
+    lastRequestTokens: number,
+    options?: {
+      sessionMemorySummary?: string;
+      systemPrompt?: string;
+    }
   ): Promise<void> {
     if (!this.taskId || this.taskId === 'nested') {
       return;
@@ -221,6 +239,27 @@ export class CompactionManager {
         COMPACTED_MESSAGES_FILE,
         JSON.stringify(data)
       );
+
+      const sessionMemorySummary = this.resolveSessionMemorySummary(
+        options?.sessionMemorySummary,
+        messages
+      );
+      if (sessionMemorySummary) {
+        const sessionMemoryCache: SessionMemoryCache = {
+          summary: sessionMemorySummary,
+          sourceUIMessageCount,
+          lastRequestTokens,
+          updatedAt: Date.now(),
+          systemPrompt: options?.systemPrompt,
+        };
+        await taskFileService.writeFile(
+          'context',
+          this.taskId,
+          SESSION_MEMORY_FILE,
+          JSON.stringify(sessionMemoryCache)
+        );
+      }
+
       logger.info('Saved compacted messages to file', {
         taskId: this.taskId,
         modelMessageCount: messages.length,
@@ -299,7 +338,11 @@ export class CompactionManager {
         this.saveCompactedMessages(
           loopState.messages,
           currentUIMessageCount,
-          loopState.lastRequestTokens
+          loopState.lastRequestTokens,
+          {
+            sessionMemorySummary: compressionResult.compressedSummary,
+            systemPrompt,
+          }
         ).catch((err) => {
           logger.warn('Failed to save compacted messages', err);
         });
@@ -310,6 +353,99 @@ export class CompactionManager {
       logger.error('[CompactionManager] Auto-compaction failed', error);
       this.recordFailure();
       return false;
+    }
+  }
+
+  private resolveSessionMemorySummary(
+    explicitSummary: string | undefined,
+    messages: ModelMessage[]
+  ): string | null {
+    if (explicitSummary?.trim()) {
+      return formatCompactionSummary(explicitSummary);
+    }
+
+    for (const message of messages) {
+      if (message.role !== 'user' || typeof message.content !== 'string') {
+        continue;
+      }
+
+      if (!message.content.includes('[Previous conversation summary]')) {
+        continue;
+      }
+
+      return this.extractSummaryFromWrappedMessage(message.content);
+    }
+
+    return null;
+  }
+
+  private extractSummaryFromWrappedMessage(content: string): string {
+    const marker = '[Previous conversation summary]';
+    const startIndex = content.indexOf(marker);
+    if (startIndex === -1) {
+      return formatCompactionSummary(content);
+    }
+
+    let normalized = content.slice(startIndex + marker.length).trim();
+    normalized = normalized.replace(
+      /^This session is continuing after context compaction\.[^\n]*\n*/i,
+      ''
+    );
+    normalized = normalized.replace(/\nResume directly from the latest active task\.[\s\S]*$/i, '');
+
+    return formatCompactionSummary(normalized);
+  }
+
+  private async loadFromSessionMemoryFallback(): Promise<{
+    messages: ModelMessage[];
+    lastRequestTokens: number;
+    sourceUIMessageCount: number;
+  } | null> {
+    try {
+      const json = await taskFileService.readFile('context', this.taskId, SESSION_MEMORY_FILE);
+      if (!json) {
+        return null;
+      }
+
+      const data = JSON.parse(json) as Partial<SessionMemoryCache>;
+      if (
+        typeof data.summary !== 'string' ||
+        !data.summary.trim() ||
+        typeof data.sourceUIMessageCount !== 'number' ||
+        data.sourceUIMessageCount < 0
+      ) {
+        return null;
+      }
+
+      const rebuiltMessages: ModelMessage[] = [];
+      if (data.systemPrompt?.trim()) {
+        rebuiltMessages.push({
+          role: 'system',
+          content: data.systemPrompt,
+        });
+      }
+      rebuiltMessages.push({
+        role: 'user',
+        content: buildContinuationSummaryMessage(formatCompactionSummary(data.summary)),
+      });
+      rebuiltMessages.push({
+        role: 'assistant',
+        content: buildSummaryAcknowledgement(),
+      });
+
+      logger.info('Recovered compacted context from session memory sidecar', {
+        taskId: this.taskId,
+        sourceUIMessageCount: data.sourceUIMessageCount,
+      });
+
+      return {
+        messages: rebuiltMessages,
+        lastRequestTokens: typeof data.lastRequestTokens === 'number' ? data.lastRequestTokens : 0,
+        sourceUIMessageCount: data.sourceUIMessageCount,
+      };
+    } catch (error) {
+      logger.warn('Failed to load session memory sidecar', error);
+      return null;
     }
   }
 }

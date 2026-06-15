@@ -8,7 +8,13 @@ import type {
 import { aiContextCompactionService } from '../../ai/ai-context-compaction';
 import { estimateTokens } from '../../code-navigation-service';
 import { ContextRewriter } from '../context-rewriter';
-import { messagesToText, parseSections } from '../utils';
+import {
+  buildContinuationSummaryMessage,
+  buildSummaryAcknowledgement,
+  formatCompactionSummary,
+  messagesToText,
+  parseSections,
+} from '../utils';
 
 export interface AISummarizationOptions {
   /** Whether to run code summarization (tree-sitter) before AI compression */
@@ -86,19 +92,21 @@ export class AISummarizationStrategy {
       };
     }
 
-    // Parse sections from the compressed summary
-    const sections = parseSections(compressedSummary);
+    const formattedSummary = formatCompactionSummary(compressedSummary);
+
+    // Parse sections from the normalized summary content
+    const sections = parseSections(formattedSummary);
 
     // Build compressed messages: summary user + ack assistant
     const compressedMessages: ModelMessage[] = [];
-    if (compressedSummary) {
+    if (formattedSummary) {
       compressedMessages.push({
         role: 'user',
-        content: `[Previous conversation summary]\n\n${compressedSummary}\n\nPlease continue from where we left off.`,
+        content: buildContinuationSummaryMessage(formattedSummary),
       });
       compressedMessages.push({
         role: 'assistant',
-        content: 'I understand the previous context. Continuing with the task.',
+        content: buildSummaryAcknowledgement(),
       });
     }
 

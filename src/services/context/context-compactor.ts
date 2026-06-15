@@ -21,6 +21,10 @@ import { estimateTokens } from '../code-navigation-service';
 import { ContextAnalyzer } from './context-analyzer';
 import { ContextFilter } from './context-filter';
 import { ContextRewriter } from './context-rewriter';
+import {
+  buildSessionMemoryCompactionCandidate,
+  shouldUseSessionMemoryCompaction,
+} from './session-memory-compaction';
 import { StrategySelector } from './strategy-selector';
 import { createCompressedMessages, messagesToText, parseSections } from './utils';
 
@@ -488,6 +492,32 @@ export class ContextCompactor {
       };
     }
 
+    const sessionMemoryCandidate = buildSessionMemoryCompactionCandidate(
+      currentMessagesToCompress,
+      preservedMessages,
+      lastTokenCount
+    );
+
+    if (sessionMemoryCandidate && shouldUseSessionMemoryCompaction(sessionMemoryCandidate)) {
+      logger.info('Using local session memory compaction instead of AI compression', {
+        estimatedTokens: sessionMemoryCandidate.estimatedTokens,
+        originalTokens: lastTokenCount,
+        compressionRatio: sessionMemoryCandidate.compressionRatio,
+      });
+
+      const result: CompressionResult = {
+        compressedSummary: sessionMemoryCandidate.summary,
+        sections: parseSections(sessionMemoryCandidate.summary),
+        preservedMessages,
+        originalMessageCount: messages.length,
+        compressedMessageCount: 1 + preservedMessages.length,
+        compressionRatio: sessionMemoryCandidate.compressionRatio,
+      };
+
+      this.updateStats(result);
+      return result;
+    }
+
     // Convert messages to text for compression
     const conversationHistory = messagesToText(currentMessagesToCompress);
 
@@ -537,6 +567,23 @@ export class ContextCompactor {
       );
     } catch (error) {
       logger.warn('AI compression failed, falling back to tree-sitter rewriting:', error);
+      if (sessionMemoryCandidate) {
+        logger.info('Falling back to local session memory summary after AI compression failure', {
+          estimatedTokens: sessionMemoryCandidate.estimatedTokens,
+          originalTokens: lastTokenCount,
+          compressionRatio: sessionMemoryCandidate.compressionRatio,
+        });
+
+        return {
+          compressedSummary: sessionMemoryCandidate.summary,
+          sections: parseSections(sessionMemoryCandidate.summary),
+          preservedMessages,
+          originalMessageCount: messages.length,
+          compressedMessageCount: 1 + preservedMessages.length,
+          compressionRatio: sessionMemoryCandidate.compressionRatio,
+        };
+      }
+
       return {
         compressedSummary: '',
         sections: [],

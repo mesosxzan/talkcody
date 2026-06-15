@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { parseSections } from './utils';
 
@@ -13,7 +13,7 @@ vi.mock('@/services/ai/ai-context-compaction', () => ({
   },
 }));
 
-import type { Message as ModelMessage } from '@/services/llm/types';
+import type { Message as ModelMessage } from '../llm/types';
 import { ContextCompactor } from './context-compactor';
 import type {
   CompressionConfig,
@@ -145,6 +145,64 @@ This is a test compression analysis.
       expect(mockCompactContext).not.toHaveBeenCalled();
     });
 
+    it('prefers local session memory compaction before calling AI', async () => {
+      const messages: ModelMessage[] = [
+        {
+          role: 'user',
+          content:
+            'Please stabilize context compaction for long coding sessions and preserve task state.',
+        },
+        {
+          role: 'assistant',
+          content:
+            '[Previous conversation summary]\n\n1. Current Work: Retry compaction on transient failures.\n2. Pending Tasks: Add session memory compaction.\n\nPlease continue from where we left off.',
+        },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool-call',
+              toolCallId: 'tool-1',
+              toolName: 'readFile',
+              input: { path: 'src/services/context/context-compactor.ts' },
+            },
+          ],
+        },
+        {
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: 'tool-1',
+              toolName: 'readFile',
+              output: 'Loaded src/services/context/context-compactor.ts successfully.',
+            },
+          ],
+        },
+        {
+          role: 'assistant',
+          content: 'Next I will build a structured session memory summary for compaction.',
+        },
+        {
+          role: 'user',
+          content: 'Keep the latest chat turns intact, but avoid another AI summary call if possible.',
+        },
+      ];
+
+      const result = await messageCompactor.compactMessages(
+        {
+          messages,
+          config: defaultConfig,
+        },
+        8_000
+      );
+
+      expect(mockCompactContext).not.toHaveBeenCalled();
+      expect(result.compressedSummary).toContain('2. Task Specification');
+      expect(result.compressedSummary).toContain('3. Current State');
+      expect(result.compressionRatio).toBeLessThan(1);
+    });
+
     it('should compress same messages multiple times', async () => {
       const messages = createTestMessages(12);
       const options: MessageCompactionOptions = {
@@ -198,11 +256,19 @@ This is a test compression analysis.
       // Summary should be a user message
       expect(compressedMessages[1].role).toBe('user');
       expect(compressedMessages[1].content).toContain('[Previous conversation summary]');
+      expect(compressedMessages[1].content).toContain(
+        'This session is continuing after context compaction'
+      );
       expect(compressedMessages[1].content).toContain('This is a test summary.');
+      expect(compressedMessages[1].content).toContain(
+        'Resume directly from the latest active task'
+      );
 
       // Assistant acknowledgment should follow
       expect(compressedMessages[2].role).toBe('assistant');
-      expect(compressedMessages[2].content).toContain('I understand the previous context');
+      expect(compressedMessages[2].content).toContain(
+        'continue from the latest active task'
+      );
     });
 
     it('should handle empty compression summary', () => {
@@ -260,6 +326,23 @@ This is a test compression analysis.
           m.content.includes('Old summary')
       );
       expect(hasOldSummarySystem).toBe(false);
+    });
+
+    it('should strip analysis blocks and unwrap summary tags before restoring context', () => {
+      const compressedMessages = messageCompactor.createCompressedMessages({
+        compressedSummary:
+          '<analysis>Internal scratchpad that should not leak</analysis>\n<summary>\n1. Primary Request and Intent:\nKeep working\n</summary>',
+        sections: [],
+        preservedMessages: [{ role: 'system', content: 'Original system prompt' }],
+        originalMessageCount: 4,
+        compressedMessageCount: 2,
+        compressionRatio: 0.5,
+      });
+
+      expect(compressedMessages[1].role).toBe('user');
+      expect(compressedMessages[1].content).not.toContain('Internal scratchpad');
+      expect(compressedMessages[1].content).not.toContain('<summary>');
+      expect(compressedMessages[1].content).toContain('1. Primary Request and Intent:');
     });
   });
 
@@ -773,14 +856,14 @@ This is a test compression analysis.
       }, 0);
 
       // Find messages with exitPlanMode
-      const hasToolCall = result.preservedMessages.some((msg) => {
+      const hasToolCall = result.preservedMessages.some((msg: ModelMessage) => {
         if (msg.role !== 'assistant' || !Array.isArray(msg.content)) return false;
         return msg.content.some(
           (part: any) => part.type === 'tool-call' && part.toolCallId === 'plan-1'
         );
       });
 
-      const hasToolResult = result.preservedMessages.some((msg) => {
+      const hasToolResult = result.preservedMessages.some((msg: ModelMessage) => {
         if (msg.role !== 'tool' || !Array.isArray(msg.content)) return false;
         return msg.content.some(
           (part: any) => part.type === 'tool-result' && part.toolCallId === 'plan-1'
