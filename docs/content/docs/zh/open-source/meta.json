@@ -2,5 +2,5 @@
   "title": "开源",
   "icon": "Code",
   "defaultOpen": true,
-  "pages": ["development-setup", "architecture", "roadmap"]
+  "pages": ["development-setup", "architecture", "llm-frontend-backend", "roadmap"]
 }
