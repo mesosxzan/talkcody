@@ -7,8 +7,11 @@ use crate::core::completion_hooks::{
     AutoReviewHook, CompletionHookPipeline, HookContext, HookResult, RalphLoopHook, StopHook,
 };
 use crate::core::session::SessionManager;
+use crate::core::tool_hooks::HookRunner;
 use crate::core::tool_name_normalizer::normalize_tool_name;
-use crate::core::tools::{ToolContext, ToolDispatchResult, ToolDispatcher, ToolRegistry};
+use crate::core::tools::{
+    ToolContext, ToolDispatchOutcome, ToolDispatchResult, ToolDispatcher, ToolRegistry,
+};
 use crate::core::types::*;
 use crate::core::{
     CompletionLoopConfig, CompletionLoopManager, CompletionLoopState, CompletionStopReason,
@@ -60,6 +63,12 @@ struct ToolMessageAttachment {
     file_path: String,
     mime_type: String,
     size: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ToolExecutionEnvelope {
+    result: ToolResult,
+    additional_context: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -350,17 +359,56 @@ impl CoreRuntime {
         let tool_registry = Arc::new(ToolRegistry::create_default().await);
         let tool_dispatcher = Arc::new(ToolDispatcher::new(tool_registry.clone()));
         let tool_executor = ToolExecutor::new();
+        let hook_runner = HookRunner::new();
         let action_rx = Arc::new(Mutex::new(action_rx));
         let mut loop_manager =
             CompletionLoopManager::new(CompletionLoopConfig::default_for_task(false));
         let tool_settings = input.settings.clone().unwrap_or_default();
         let mut transient_messages: Vec<Message> = Vec::new();
+        let mut did_run_session_start = false;
         let mut auto_continue_count = 0u32;
         let mut unknown_finish_reason_count = 0u32;
         let completion_hook_pipeline = Self::build_completion_hook_pipeline();
 
         let task_result = loop {
             loop_manager.increment_iteration();
+
+            if !did_run_session_start {
+                let hook_cwd = input
+                    .workspace
+                    .as_ref()
+                    .and_then(|workspace| workspace.worktree_path.clone())
+                    .or_else(|| {
+                        input
+                            .workspace
+                            .as_ref()
+                            .map(|workspace| workspace.root_path.clone())
+                    })
+                    .unwrap_or_else(|| ".".to_string());
+
+                match hook_runner
+                    .run_session_start(
+                        &task.session_id,
+                        &hook_cwd,
+                        &tool_settings,
+                        self._storage.settings.get_db(),
+                        "startup",
+                    )
+                    .await
+                {
+                    Ok(summary) => {
+                        if !summary.additional_context.is_empty() {
+                            transient_messages.push(Self::create_transient_system_message(
+                                &task.session_id,
+                                summary.additional_context.join("\n"),
+                            ));
+                        }
+                    }
+                    Err(error) => break Err(TaskTermination::Failed(error)),
+                }
+
+                did_run_session_start = true;
+            }
 
             let mut session_messages = match self
                 .session_manager
@@ -526,12 +574,15 @@ impl CoreRuntime {
                                         if slot.is_none() {
                                             *slot = Some(task_termination);
                                         }
-                                        ToolResult {
-                                            tool_call_id: request.tool_call_id,
-                                            name: Some(request.name),
-                                            success: false,
-                                            output: serde_json::Value::Null,
-                                            error: Some(error_message),
+                                        ToolExecutionEnvelope {
+                                            result: ToolResult {
+                                                tool_call_id: request.tool_call_id,
+                                                name: Some(request.name),
+                                                success: false,
+                                                output: serde_json::Value::Null,
+                                                error: Some(error_message),
+                                            },
+                                            additional_context: Vec::new(),
                                         }
                                     }
                                 }
@@ -545,12 +596,13 @@ impl CoreRuntime {
                 }
 
                 let mut persist_error: Option<String> = None;
-                for (request, result) in tool_results {
+                let mut hook_additional_contexts: Vec<String> = Vec::new();
+                for (request, envelope) in tool_results {
                     if let Err(error) = self
                         .persist_tool_result_message(
                             &task.session_id,
                             &request,
-                            &result,
+                            &envelope.result,
                             &event_sender,
                         )
                         .await
@@ -558,9 +610,16 @@ impl CoreRuntime {
                         persist_error = Some(error);
                         break;
                     }
+                    hook_additional_contexts.extend(envelope.additional_context);
                 }
                 if let Some(error) = persist_error {
                     break Err(TaskTermination::Failed(error));
+                }
+                if !hook_additional_contexts.is_empty() {
+                    transient_messages.push(Self::create_transient_system_message(
+                        &task.session_id,
+                        hook_additional_contexts.join("\n"),
+                    ));
                 }
             }
 
@@ -712,6 +771,18 @@ impl CoreRuntime {
             id: format!("msg_{}", uuid::Uuid::new_v4()),
             session_id: session_id.to_string(),
             role: MessageRole::User,
+            content: MessageContent::Text { text: text.into() },
+            created_at: chrono::Utc::now().timestamp(),
+            tool_call_id: None,
+            parent_id: None,
+        }
+    }
+
+    fn create_transient_system_message(session_id: &str, text: impl Into<String>) -> Message {
+        Message {
+            id: format!("msg_{}", uuid::Uuid::new_v4()),
+            session_id: session_id.to_string(),
+            role: MessageRole::System,
             content: MessageContent::Text { text: text.into() },
             created_at: chrono::Utc::now().timestamp(),
             tool_call_id: None,
@@ -1263,7 +1334,7 @@ impl CoreRuntime {
         session_manager: Arc<SessionManager>,
         event_sender: EventSender,
         task_id: RuntimeTaskId,
-    ) -> BoxFuture<'_, Result<ToolResult, TaskTermination>> {
+    ) -> BoxFuture<'_, Result<ToolExecutionEnvelope, TaskTermination>> {
         Box::pin(async move {
             let _ = event_sender.send(RuntimeEvent::ToolCallStarted {
                 task_id: task_id.clone(),
@@ -1289,7 +1360,10 @@ impl CoreRuntime {
                     task_id,
                     result: result.clone(),
                 });
-                return Ok(result);
+                return Ok(ToolExecutionEnvelope {
+                    result,
+                    additional_context: Vec::new(),
+                });
             }
 
             let result = Self::dispatch_tool_request(
@@ -1304,7 +1378,11 @@ impl CoreRuntime {
                 task_id.clone(),
             )
             .await;
-            self.finish_tool_span(span_id, &request, result.as_ref());
+            let span_result = match result.as_ref() {
+                Ok(envelope) => Ok(&envelope.result),
+                Err(error) => Err(error),
+            };
+            self.finish_tool_span(span_id, &request, span_result);
             result
         })
     }
@@ -1657,12 +1735,15 @@ impl CoreRuntime {
                                         if slot.is_none() {
                                             *slot = Some(task_termination);
                                         }
-                                        ToolResult {
-                                            tool_call_id: nested_request.tool_call_id,
-                                            name: Some(nested_request.name),
-                                            success: false,
-                                            output: serde_json::Value::Null,
-                                            error: Some(error_message),
+                                        ToolExecutionEnvelope {
+                                            result: ToolResult {
+                                                tool_call_id: nested_request.tool_call_id,
+                                                name: Some(nested_request.name),
+                                                success: false,
+                                                output: serde_json::Value::Null,
+                                                error: Some(error_message),
+                                            },
+                                            additional_context: Vec::new(),
                                         }
                                     }
                                 }
@@ -1679,7 +1760,7 @@ impl CoreRuntime {
                     self.persist_tool_result_message_with_parent(
                         &parent_context.session_id,
                         &nested_request,
-                        &nested_result,
+                        &nested_result.result,
                         Some(request.tool_call_id.clone()),
                         &event_sender,
                     )
@@ -1694,19 +1775,25 @@ impl CoreRuntime {
                                 tool_call_id: nested_request.tool_call_id.clone(),
                                 tool_name: nested_request.name.clone(),
                                 input: Some(nested_request.input.clone()),
-                                output: Some(nested_result.output.clone()),
-                                status: if nested_result.success {
+                                output: Some(nested_result.result.output.clone()),
+                                status: if nested_result.result.success {
                                     ToolResultStatus::Success
                                 } else {
                                     ToolResultStatus::Error
                                 },
-                                error_message: nested_result.error.clone(),
+                                error_message: nested_result.result.error.clone(),
                             },
                         },
                         created_at: chrono::Utc::now().timestamp(),
                         tool_call_id: Some(nested_request.tool_call_id.clone()),
                         parent_id: None,
                     });
+                    if !nested_result.additional_context.is_empty() {
+                        messages.push(Self::create_transient_system_message(
+                            &parent_context.session_id,
+                            nested_result.additional_context.join("\n"),
+                        ));
+                    }
                 }
             }
 
@@ -1780,7 +1867,7 @@ impl CoreRuntime {
         session_manager: Arc<SessionManager>,
         event_sender: EventSender,
         task_id: RuntimeTaskId,
-    ) -> Result<ToolResult, TaskTermination> {
+    ) -> Result<ToolExecutionEnvelope, TaskTermination> {
         let auto_approve = Self::should_auto_approve(&request.name, &settings);
         let session_id = context.session_id.clone();
 
@@ -1789,12 +1876,15 @@ impl CoreRuntime {
             .await
             .map_err(TaskTermination::Failed)?
         {
-            ToolDispatchResult::Completed(result) => {
+            ToolDispatchResult::Completed(outcome) => {
                 let _ = event_sender.send(RuntimeEvent::ToolCallCompleted {
                     task_id,
-                    result: result.clone(),
+                    result: outcome.result.clone(),
                 });
-                Ok(result)
+                Ok(ToolExecutionEnvelope {
+                    result: outcome.result,
+                    additional_context: outcome.additional_context,
+                })
             }
             ToolDispatchResult::PendingApproval(pending_request) => {
                 *task_state.write().await = RuntimeTaskState::WaitingForUser;
@@ -1804,11 +1894,12 @@ impl CoreRuntime {
                     .map_err(TaskTermination::Failed)?;
                 let _ = event_sender.send(RuntimeEvent::ToolCallRequested {
                     task_id: task_id.clone(),
-                    request: pending_request.clone(),
+                    request: pending_request.request.clone(),
                 });
 
                 let approved =
-                    Self::await_tool_approval(&pending_request.tool_call_id, action_rx).await?;
+                    Self::await_tool_approval(&pending_request.request.tool_call_id, action_rx)
+                        .await?;
 
                 *task_state.write().await = RuntimeTaskState::Running;
                 session_manager
@@ -1816,35 +1907,38 @@ impl CoreRuntime {
                     .await
                     .map_err(TaskTermination::Failed)?;
 
-                let result = match approved {
-                    ToolApproval::Approve => {
-                        dispatcher
+                let outcome =
+                    match approved {
+                        ToolApproval::Approve => dispatcher
                             .execute_approved(pending_request.clone(), context)
                             .await
-                    }
-                    ToolApproval::Reject(reason) => ToolResult {
-                        tool_call_id: pending_request.tool_call_id.clone(),
-                        name: Some(pending_request.name.clone()),
-                        success: false,
-                        output: serde_json::Value::Null,
-                        error: Some(
-                            reason.unwrap_or_else(|| "Tool execution rejected by user".to_string()),
-                        ),
-                    },
-                    ToolApproval::ProvidedResult(output) => ToolResult {
-                        tool_call_id: pending_request.tool_call_id.clone(),
-                        name: Some(pending_request.name.clone()),
-                        success: true,
-                        output,
-                        error: None,
-                    },
-                };
+                            .map_err(TaskTermination::Failed)?,
+                        ToolApproval::Reject(reason) => ToolDispatchOutcome {
+                            result: ToolResult {
+                                tool_call_id: pending_request.request.tool_call_id.clone(),
+                                name: Some(pending_request.request.name.clone()),
+                                success: false,
+                                output: serde_json::Value::Null,
+                                error: Some(reason.unwrap_or_else(|| {
+                                    "Tool execution rejected by user".to_string()
+                                })),
+                            },
+                            additional_context: pending_request.additional_context,
+                        },
+                        ToolApproval::ProvidedResult(output) => dispatcher
+                            .finalize_external_result(pending_request, context, output)
+                            .await
+                            .map_err(TaskTermination::Failed)?,
+                    };
 
                 let _ = event_sender.send(RuntimeEvent::ToolCallCompleted {
                     task_id,
-                    result: result.clone(),
+                    result: outcome.result.clone(),
                 });
-                Ok(result)
+                Ok(ToolExecutionEnvelope {
+                    result: outcome.result,
+                    additional_context: outcome.additional_context,
+                })
             }
             ToolDispatchResult::PendingUserInput(pending_request) => {
                 *task_state.write().await = RuntimeTaskState::WaitingForUser;
@@ -1854,11 +1948,12 @@ impl CoreRuntime {
                     .map_err(TaskTermination::Failed)?;
                 let _ = event_sender.send(RuntimeEvent::ToolCallRequested {
                     task_id: task_id.clone(),
-                    request: pending_request.clone(),
+                    request: pending_request.request.clone(),
                 });
 
                 let response =
-                    Self::await_tool_result(&pending_request.tool_call_id, action_rx).await?;
+                    Self::await_tool_result(&pending_request.request.tool_call_id, action_rx)
+                        .await?;
 
                 *task_state.write().await = RuntimeTaskState::Running;
                 session_manager
@@ -1866,38 +1961,43 @@ impl CoreRuntime {
                     .await
                     .map_err(TaskTermination::Failed)?;
 
-                let result = match response {
-                    ToolApproval::ProvidedResult(output) => ToolResult {
-                        tool_call_id: pending_request.tool_call_id.clone(),
-                        name: Some(pending_request.name.clone()),
-                        success: true,
-                        output,
-                        error: None,
+                let outcome = match response {
+                    ToolApproval::ProvidedResult(output) => dispatcher
+                        .finalize_external_result(pending_request, context, output)
+                        .await
+                        .map_err(TaskTermination::Failed)?,
+                    ToolApproval::Reject(reason) => ToolDispatchOutcome {
+                        result: ToolResult {
+                            tool_call_id: pending_request.request.tool_call_id.clone(),
+                            name: Some(pending_request.request.name.clone()),
+                            success: false,
+                            output: serde_json::Value::Null,
+                            error: Some(reason.unwrap_or_else(|| {
+                                "User declined to answer questions".to_string()
+                            })),
+                        },
+                        additional_context: pending_request.additional_context,
                     },
-                    ToolApproval::Reject(reason) => ToolResult {
-                        tool_call_id: pending_request.tool_call_id.clone(),
-                        name: Some(pending_request.name.clone()),
-                        success: false,
-                        output: serde_json::Value::Null,
-                        error: Some(
-                            reason
-                                .unwrap_or_else(|| "User declined to answer questions".to_string()),
-                        ),
-                    },
-                    ToolApproval::Approve => ToolResult {
-                        tool_call_id: pending_request.tool_call_id.clone(),
-                        name: Some(pending_request.name.clone()),
-                        success: false,
-                        output: serde_json::Value::Null,
-                        error: Some("Structured user response was required".to_string()),
+                    ToolApproval::Approve => ToolDispatchOutcome {
+                        result: ToolResult {
+                            tool_call_id: pending_request.request.tool_call_id.clone(),
+                            name: Some(pending_request.request.name.clone()),
+                            success: false,
+                            output: serde_json::Value::Null,
+                            error: Some("Structured user response was required".to_string()),
+                        },
+                        additional_context: pending_request.additional_context,
                     },
                 };
 
                 let _ = event_sender.send(RuntimeEvent::ToolCallCompleted {
                     task_id,
-                    result: result.clone(),
+                    result: outcome.result.clone(),
                 });
-                Ok(result)
+                Ok(ToolExecutionEnvelope {
+                    result: outcome.result,
+                    additional_context: outcome.additional_context,
+                })
             }
         }
     }
@@ -2841,7 +2941,7 @@ mod tests {
             .await
             .expect("tool should execute");
 
-        assert!(result.success);
+        assert!(result.result.success);
 
         let mut saw_started = false;
         let mut saw_completed = false;
@@ -2923,6 +3023,86 @@ mod tests {
                             && payload.get("toolCallId") == Some(&serde_json::json!("trace_todo_1"))
                     })
         }));
+    }
+
+    #[tokio::test]
+    async fn test_execute_tool_request_collects_hook_additional_context() {
+        let (runtime, temp_dir, _rx) = create_test_runtime().await;
+        runtime
+            ._storage
+            .settings
+            .set_setting("hooks_enabled", &serde_json::json!(true))
+            .await
+            .expect("hooks should be enabled");
+        tokio::fs::create_dir_all(temp_dir.path().join(".talkcody"))
+            .await
+            .expect("hooks dir should exist");
+        tokio::fs::write(
+            temp_dir.path().join(".talkcody/settings.json"),
+            serde_json::json!({
+                "hooks": {
+                    "PostToolUse": [{
+                        "matcher": "todoWrite",
+                        "hooks": [{
+                            "type": "command",
+                            "command": "printf '{\"additionalContext\":\"post hook context\"}'"
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("hook config should persist");
+
+        let session = runtime
+            .session_manager()
+            .create_session(None, None, None)
+            .await
+            .expect("session should be created");
+        let (_action_tx, action_rx) = mpsc::unbounded_channel();
+        let registry = Arc::new(ToolRegistry::create_default().await);
+        let dispatcher = Arc::new(ToolDispatcher::new(registry));
+
+        let result = runtime
+            .execute_tool_request(
+                dispatcher,
+                ToolRequest {
+                    tool_call_id: "hook_todo_1".to_string(),
+                    name: "todoWrite".to_string(),
+                    input: serde_json::json!({
+                        "todos": [{
+                            "id": "todo-1",
+                            "content": "Capture hook context",
+                            "status": "pending"
+                        }]
+                    }),
+                    provider_metadata: None,
+                },
+                ToolContext {
+                    session_id: session.id.clone(),
+                    task_id: "task_hook_ctx".to_string(),
+                    workspace_root: temp_dir.path().to_string_lossy().to_string(),
+                    worktree_path: None,
+                    settings: TaskSettings::default(),
+                    subagent_id: None,
+                    db: runtime._storage.settings.get_db(),
+                },
+                TaskSettings::default(),
+                Arc::new(Mutex::new(action_rx)),
+                Arc::new(RwLock::new(RuntimeTaskState::Running)),
+                runtime.session_manager(),
+                runtime.event_sender.clone(),
+                "task_hook_ctx".to_string(),
+            )
+            .await
+            .expect("tool should execute");
+
+        assert!(result.result.success);
+        assert_eq!(
+            result.additional_context,
+            vec!["post hook context".to_string()]
+        );
     }
 
     #[tokio::test]
@@ -3572,6 +3752,128 @@ mod tests {
                     == Some(&serde_json::json!(
                         "Task appears incomplete, continuing with next steps"
                     ))
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_runtime_session_start_hook_injects_system_context() {
+        let server = SequentialMockSseServer::start(vec![vec![
+            RecordedSseEvent {
+                event: None,
+                data: serde_json::json!({
+                    "choices": [{
+                        "delta": { "content": "Done." }
+                    }]
+                })
+                .to_string(),
+            },
+            RecordedSseEvent {
+                event: None,
+                data: serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "delta": {}
+                    }]
+                })
+                .to_string(),
+            },
+            RecordedSseEvent {
+                event: None,
+                data: "[DONE]".to_string(),
+            },
+        ]])
+        .expect("mock server should start");
+
+        let mut provider_registry = ProviderRegistry::default();
+        provider_registry.register_provider(ProviderConfig {
+            id: "mock-openai".to_string(),
+            name: "Mock OpenAI".to_string(),
+            protocol: ProtocolType::OpenAiCompatible,
+            base_url: server.base_url().to_string(),
+            api_key_name: "MOCK_OPENAI_KEY".to_string(),
+            supports_oauth: false,
+            supports_coding_plan: false,
+            supports_international: false,
+            coding_plan_base_url: None,
+            international_base_url: None,
+            headers: None,
+            extra_body: None,
+            auth_type: AuthType::Bearer,
+        });
+
+        let (runtime, temp_dir, _rx) = create_test_runtime_with_registry(provider_registry).await;
+        configure_mock_provider_and_model(&runtime, server.base_url())
+            .await
+            .expect("mock provider should be configured");
+        runtime
+            ._storage
+            .settings
+            .set_setting("hooks_enabled", &serde_json::json!(true))
+            .await
+            .expect("hooks should be enabled");
+        tokio::fs::create_dir_all(temp_dir.path().join(".talkcody"))
+            .await
+            .expect("hooks dir should exist");
+        tokio::fs::write(
+            temp_dir.path().join(".talkcody/settings.json"),
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "printf '{\"additionalContext\":\"session start context\"}'"
+                        }]
+                    }]
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .expect("hook config should persist");
+
+        let session = runtime
+            .session_manager()
+            .create_session(None, None, None)
+            .await
+            .expect("session should be created");
+
+        let handle = runtime
+            .start_task(TaskInput {
+                session_id: session.id.clone(),
+                agent_id: None,
+                project_id: None,
+                initial_message: "Start with hook context".to_string(),
+                settings: Some(TaskSettings {
+                    auto_approve_edits: None,
+                    auto_approve_plan: None,
+                    auto_code_review: None,
+                    extra: HashMap::from([(
+                        "model".to_string(),
+                        serde_json::json!("mock-model@mock-openai"),
+                    )]),
+                }),
+                workspace: Some(WorkspaceInfo {
+                    root_path: temp_dir.path().to_string_lossy().to_string(),
+                    worktree_path: None,
+                    repository_url: None,
+                    branch: None,
+                }),
+            })
+            .await
+            .expect("task should start");
+
+        wait_for_terminal_state(&handle).await;
+        assert_eq!(*handle.state.read().await, RuntimeTaskState::Completed);
+
+        let requests = server.recorded_requests();
+        assert_eq!(requests.len(), 1);
+        let first_messages = requests[0]
+            .get("messages")
+            .and_then(|value| value.as_array())
+            .expect("first request should contain messages");
+        assert!(first_messages.iter().any(|message| {
+            message.get("role") == Some(&serde_json::json!("system"))
+                && message.get("content") == Some(&serde_json::json!("session start context"))
         }));
     }
 }

@@ -3,6 +3,7 @@
 //! Provides a registry of available tools and dispatch mechanism for tool execution.
 //! Tools execute on the backend host (filesystem, git, shell, LSP, search).
 
+use crate::core::tool_hooks::HookRunner;
 use crate::core::types::*;
 use crate::database::Database;
 use crate::storage::models::*;
@@ -10,7 +11,28 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use tokio::sync::RwLock;
+
+const CIRCUIT_BREAKER_THRESHOLD: u32 = 3;
+const CIRCUIT_BREAKER_RESET_MS: i64 = 60_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PermissionDecision {
+    Deny(String),
+    Ask(String),
+}
+
+#[derive(Debug, Clone, Default)]
+struct DenialTrackingState {
+    consecutive_denials: u32,
+    last_denial_time_ms: i64,
+    circuit_breaker_open: bool,
+}
+
+struct PermissionRuleEngine {
+    denial_tracking: StdMutex<HashMap<String, DenialTrackingState>>,
+}
 
 /// Tool execution context passed to all tool handlers
 #[derive(Clone)]
@@ -30,6 +52,18 @@ pub struct ToolExecutionOutput {
     pub success: bool,
     pub data: serde_json::Value,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ToolDispatchOutcome {
+    pub result: ToolResult,
+    pub additional_context: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingToolExecution {
+    pub request: ToolRequest,
+    pub additional_context: Vec<String>,
 }
 
 /// Tool handler function type
@@ -181,14 +215,194 @@ impl Default for ToolRegistry {
     }
 }
 
+impl PermissionRuleEngine {
+    fn new() -> Self {
+        Self {
+            denial_tracking: StdMutex::new(HashMap::new()),
+        }
+    }
+
+    fn evaluate(
+        &self,
+        request: &ToolRequest,
+        context: &ToolContext,
+        auto_approve: bool,
+    ) -> Option<PermissionDecision> {
+        let normalized_name = crate::core::tool_name_normalizer::normalize_tool_name(&request.name);
+
+        if auto_approve
+            && self.is_circuit_breaker_open(&context.task_id)
+            && self.is_destructive_tool(&normalized_name)
+        {
+            return Some(PermissionDecision::Ask(
+                "Auto-approve is temporarily disabled due to recent permission denials. Please approve manually.".to_string(),
+            ));
+        }
+
+        if let Some(file_path) = Self::extract_file_path(&normalized_name, &request.input) {
+            if let Some(reason) = self.match_deny_rule(&normalized_name, file_path) {
+                self.record_denial(&context.task_id);
+                return Some(PermissionDecision::Deny(reason));
+            }
+
+            if let Some(reason) = Self::protected_path_reason(&normalized_name, file_path) {
+                self.record_denial(&context.task_id);
+                return Some(PermissionDecision::Ask(reason));
+            }
+        }
+
+        None
+    }
+
+    fn record_success(&self, task_id: &str) {
+        let mut denial_tracking = self
+            .denial_tracking
+            .lock()
+            .expect("permission denial tracking lock");
+        let state = denial_tracking.entry(task_id.to_string()).or_default();
+        state.consecutive_denials = 0;
+        if state.circuit_breaker_open {
+            state.circuit_breaker_open = false;
+        }
+    }
+
+    fn match_deny_rule(&self, tool_name: &str, file_path: &str) -> Option<String> {
+        let normalized_path = Self::normalize_path(file_path);
+        match tool_name {
+            "writeFile" if Self::matches_glob(".ssh/**", &normalized_path) => {
+                Some("SSH directory should never be written by AI".to_string())
+            }
+            "writeFile" if normalized_path == ".env" => {
+                Some("Environment files may contain secrets".to_string())
+            }
+            "editFile" if Self::matches_glob(".ssh/**", &normalized_path) => {
+                Some("SSH directory should never be modified by AI".to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn protected_path_reason(tool_name: &str, file_path: &str) -> Option<String> {
+        if !matches!(tool_name, "writeFile" | "editFile") {
+            return None;
+        }
+
+        let normalized_path = Self::normalize_path(file_path);
+        if normalized_path == ".git" || normalized_path.starts_with(".git/") {
+            return Some("Git internal files should not be modified by AI".to_string());
+        }
+        if normalized_path == ".talkcody/settings.json" {
+            return Some(
+                "TalkCody configuration should only be modified with explicit user consent"
+                    .to_string(),
+            );
+        }
+        if normalized_path == ".vscode" || normalized_path == ".vscode/settings.json" {
+            return Some(
+                "VS Code settings should only be modified with explicit user consent".to_string(),
+            );
+        }
+        if normalized_path.ends_with(".bashrc")
+            || normalized_path.ends_with(".zshrc")
+            || normalized_path.ends_with(".profile")
+        {
+            return Some(
+                "Shell configuration files should only be modified with explicit user consent"
+                    .to_string(),
+            );
+        }
+        if normalized_path.starts_with(".ssh/") {
+            return Some("SSH keys should never be modified by AI".to_string());
+        }
+        if normalized_path == ".env" || normalized_path.starts_with(".env.") {
+            return Some("Environment variable files may contain secrets".to_string());
+        }
+
+        None
+    }
+
+    fn extract_file_path<'a>(tool_name: &str, input: &'a serde_json::Value) -> Option<&'a str> {
+        match tool_name {
+            "writeFile" | "editFile" | "readFile" => {
+                input.get("file_path").and_then(|v| v.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    fn normalize_path(path: &str) -> String {
+        path.replace('\\', "/")
+            .trim_start_matches('/')
+            .trim_start_matches("./")
+            .to_string()
+    }
+
+    fn matches_glob(pattern: &str, path: &str) -> bool {
+        let normalized_pattern = pattern.trim_start_matches('/');
+        let normalized_path = Self::normalize_path(path);
+        if normalized_pattern == normalized_path {
+            return true;
+        }
+
+        if let Some(prefix) = normalized_pattern.strip_suffix("/**") {
+            return normalized_path == prefix || normalized_path.starts_with(&format!("{prefix}/"));
+        }
+
+        false
+    }
+
+    fn record_denial(&self, task_id: &str) {
+        let mut denial_tracking = self
+            .denial_tracking
+            .lock()
+            .expect("permission denial tracking lock");
+        let state = denial_tracking.entry(task_id.to_string()).or_default();
+        state.consecutive_denials += 1;
+        state.last_denial_time_ms = chrono::Utc::now().timestamp_millis();
+        if state.consecutive_denials >= CIRCUIT_BREAKER_THRESHOLD {
+            state.circuit_breaker_open = true;
+        }
+    }
+
+    fn is_circuit_breaker_open(&self, task_id: &str) -> bool {
+        let mut denial_tracking = self
+            .denial_tracking
+            .lock()
+            .expect("permission denial tracking lock");
+        let Some(state) = denial_tracking.get_mut(task_id) else {
+            return false;
+        };
+
+        let now = chrono::Utc::now().timestamp_millis();
+        if state.circuit_breaker_open
+            && now.saturating_sub(state.last_denial_time_ms) > CIRCUIT_BREAKER_RESET_MS
+        {
+            state.circuit_breaker_open = false;
+            state.consecutive_denials = 0;
+        }
+
+        state.circuit_breaker_open
+    }
+
+    fn is_destructive_tool(&self, tool_name: &str) -> bool {
+        matches!(tool_name, "writeFile" | "editFile" | "bash")
+    }
+}
+
 /// Tool dispatcher that manages tool execution with approval workflow
 pub struct ToolDispatcher {
     registry: Arc<ToolRegistry>,
+    permission_engine: Arc<PermissionRuleEngine>,
+    hook_runner: Arc<HookRunner>,
 }
 
 impl ToolDispatcher {
     pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+        Self {
+            registry,
+            permission_engine: Arc::new(PermissionRuleEngine::new()),
+            hook_runner: Arc::new(HookRunner::new()),
+        }
     }
 
     /// Dispatch a tool execution request
@@ -200,39 +414,183 @@ impl ToolDispatcher {
         auto_approve: bool,
     ) -> Result<ToolDispatchResult, String> {
         let normalized_name = crate::core::tool_name_normalizer::normalize_tool_name(&request.name);
-        let request = ToolRequest {
+        let mut request = ToolRequest {
             name: normalized_name,
             ..request
         };
+        let mut additional_context = Vec::new();
+
+        let pre_tool_summary = self
+            .hook_runner
+            .run_pre_tool_use(&request, &context)
+            .await?;
+        additional_context.extend(pre_tool_summary.additional_context);
+        if let Some(updated_input) = pre_tool_summary.updated_input {
+            request.input = updated_input;
+        }
+        if pre_tool_summary.blocked
+            || matches!(
+                pre_tool_summary.permission_decision.as_deref(),
+                Some("deny")
+            )
+        {
+            let error = pre_tool_summary
+                .permission_decision_reason
+                .or(pre_tool_summary.block_reason)
+                .unwrap_or_else(|| "Tool execution blocked by hook.".to_string());
+            return Ok(ToolDispatchResult::Completed(ToolDispatchOutcome {
+                result: ToolResult {
+                    tool_call_id: request.tool_call_id,
+                    name: Some(request.name.clone()),
+                    success: false,
+                    output: serde_json::json!({
+                        "hookBlocked": true,
+                        "toolName": request.name,
+                        "reason": error,
+                    }),
+                    error: Some(error),
+                },
+                additional_context,
+            }));
+        }
 
         // Check if tool requires approval
         let requires_approval = self.registry.requires_approval(&request.name).await;
         let requires_user_input = matches!(request.name.as_str(), "askUserQuestions");
 
+        if let Some(permission_decision) =
+            self.permission_engine
+                .evaluate(&request, &context, auto_approve)
+        {
+            return Ok(match permission_decision {
+                PermissionDecision::Deny(reason) => {
+                    ToolDispatchResult::Completed(ToolDispatchOutcome {
+                        result: ToolResult {
+                            tool_call_id: request.tool_call_id,
+                            name: Some(request.name.clone()),
+                            success: false,
+                            output: serde_json::json!({
+                                "permissionDenied": true,
+                                "toolName": request.name,
+                                "reason": reason,
+                            }),
+                            error: Some(reason),
+                        },
+                        additional_context,
+                    })
+                }
+                PermissionDecision::Ask(_) => {
+                    ToolDispatchResult::PendingApproval(PendingToolExecution {
+                        request,
+                        additional_context,
+                    })
+                }
+            });
+        }
+
         if requires_user_input {
             if let Err(error) = validate_ask_user_questions_input(&request.input) {
-                return Ok(ToolDispatchResult::Completed(ToolResult {
-                    tool_call_id: request.tool_call_id,
-                    name: Some(request.name),
-                    success: false,
-                    output: serde_json::Value::Null,
-                    error: Some(error),
+                return Ok(ToolDispatchResult::Completed(ToolDispatchOutcome {
+                    result: ToolResult {
+                        tool_call_id: request.tool_call_id,
+                        name: Some(request.name),
+                        success: false,
+                        output: serde_json::Value::Null,
+                        error: Some(error),
+                    },
+                    additional_context,
                 }));
             }
-            Ok(ToolDispatchResult::PendingUserInput(request))
+            Ok(ToolDispatchResult::PendingUserInput(PendingToolExecution {
+                request,
+                additional_context,
+            }))
         } else if requires_approval && !auto_approve {
             // Return pending for approval
-            Ok(ToolDispatchResult::PendingApproval(request))
+            Ok(ToolDispatchResult::PendingApproval(PendingToolExecution {
+                request,
+                additional_context,
+            }))
         } else {
             // Execute immediately
-            let result = self.registry.execute(request, context).await;
-            Ok(ToolDispatchResult::Completed(result))
+            let request_for_hooks = request.clone();
+            let result = self.registry.execute(request, context.clone()).await;
+            let outcome = self
+                .apply_post_tool_hooks(
+                    request_for_hooks,
+                    result,
+                    context.clone(),
+                    additional_context,
+                )
+                .await?;
+            if outcome.result.success {
+                self.permission_engine.record_success(&context.task_id);
+            }
+            Ok(ToolDispatchResult::Completed(outcome))
         }
     }
 
     /// Execute a tool that was pending approval
-    pub async fn execute_approved(&self, request: ToolRequest, context: ToolContext) -> ToolResult {
-        self.registry.execute(request, context).await
+    pub async fn execute_approved(
+        &self,
+        pending: PendingToolExecution,
+        context: ToolContext,
+    ) -> Result<ToolDispatchOutcome, String> {
+        let result = self
+            .registry
+            .execute(pending.request.clone(), context.clone())
+            .await;
+        let outcome = self
+            .apply_post_tool_hooks(
+                pending.request,
+                result,
+                context.clone(),
+                pending.additional_context,
+            )
+            .await?;
+        if outcome.result.success {
+            self.permission_engine.record_success(&context.task_id);
+        }
+        Ok(outcome)
+    }
+
+    pub async fn finalize_external_result(
+        &self,
+        pending: PendingToolExecution,
+        context: ToolContext,
+        output: serde_json::Value,
+    ) -> Result<ToolDispatchOutcome, String> {
+        self.apply_post_tool_hooks(
+            pending.request.clone(),
+            ToolResult {
+                tool_call_id: pending.request.tool_call_id,
+                name: Some(pending.request.name.clone()),
+                success: true,
+                output,
+                error: None,
+            },
+            context,
+            pending.additional_context,
+        )
+        .await
+    }
+
+    async fn apply_post_tool_hooks(
+        &self,
+        request: ToolRequest,
+        result: ToolResult,
+        context: ToolContext,
+        mut additional_context: Vec<String>,
+    ) -> Result<ToolDispatchOutcome, String> {
+        let post_tool_summary = self
+            .hook_runner
+            .run_post_tool_use(&request, &context, &result)
+            .await?;
+        additional_context.extend(post_tool_summary.additional_context);
+        Ok(ToolDispatchOutcome {
+            result,
+            additional_context,
+        })
     }
 }
 
@@ -240,11 +598,11 @@ impl ToolDispatcher {
 #[derive(Debug, Clone)]
 pub enum ToolDispatchResult {
     /// Tool executed immediately
-    Completed(ToolResult),
+    Completed(ToolDispatchOutcome),
     /// Tool requires user approval
-    PendingApproval(ToolRequest),
+    PendingApproval(PendingToolExecution),
     /// Tool is waiting for a user-provided structured result
-    PendingUserInput(ToolRequest),
+    PendingUserInput(PendingToolExecution),
 }
 
 /// Execute a tool by name using the platform
@@ -993,14 +1351,129 @@ mod tests {
 
         match result {
             ToolDispatchResult::Completed(result) => {
-                assert!(!result.success);
+                assert!(!result.result.success);
                 assert_eq!(
-                    result.error.as_deref(),
+                    result.result.error.as_deref(),
                     Some("Duplicate question IDs found")
                 );
             }
             other => panic!("unexpected dispatch result: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn write_file_to_dotenv_is_denied_even_with_auto_approve() {
+        let registry = Arc::new(ToolRegistry::create_default().await);
+        let dispatcher = ToolDispatcher::new(registry);
+        let (context, _temp_dir) = create_test_context().await;
+
+        let result = dispatcher
+            .dispatch(
+                ToolRequest {
+                    tool_call_id: "write_env".to_string(),
+                    name: "writeFile".to_string(),
+                    input: serde_json::json!({
+                        "file_path": ".env",
+                        "content": "SECRET=1"
+                    }),
+                    provider_metadata: None,
+                },
+                context,
+                true,
+            )
+            .await
+            .expect("dispatch should succeed");
+
+        match result {
+            ToolDispatchResult::Completed(result) => {
+                assert!(!result.result.success);
+                assert_eq!(
+                    result.result.error.as_deref(),
+                    Some("Environment files may contain secrets")
+                );
+                assert_eq!(
+                    result.result.output,
+                    serde_json::json!({
+                        "permissionDenied": true,
+                        "toolName": "writeFile",
+                        "reason": "Environment files may contain secrets"
+                    })
+                );
+            }
+            other => panic!("unexpected dispatch result: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn protected_write_file_requires_approval_even_with_auto_approve() {
+        let registry = Arc::new(ToolRegistry::create_default().await);
+        let dispatcher = ToolDispatcher::new(registry);
+        let (context, _temp_dir) = create_test_context().await;
+
+        let result = dispatcher
+            .dispatch(
+                ToolRequest {
+                    tool_call_id: "write_vscode".to_string(),
+                    name: "writeFile".to_string(),
+                    input: serde_json::json!({
+                        "file_path": ".vscode/settings.json",
+                        "content": "{}"
+                    }),
+                    provider_metadata: None,
+                },
+                context,
+                true,
+            )
+            .await
+            .expect("dispatch should succeed");
+
+        assert!(matches!(result, ToolDispatchResult::PendingApproval(_)));
+    }
+
+    #[tokio::test]
+    async fn circuit_breaker_disables_auto_approve_after_repeated_denials() {
+        let registry = Arc::new(ToolRegistry::create_default().await);
+        let dispatcher = ToolDispatcher::new(registry);
+        let (context, _temp_dir) = create_test_context().await;
+
+        for index in 0..3 {
+            let result = dispatcher
+                .dispatch(
+                    ToolRequest {
+                        tool_call_id: format!("write_env_{index}"),
+                        name: "writeFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": ".env",
+                            "content": format!("SECRET={index}")
+                        }),
+                        provider_metadata: None,
+                    },
+                    context.clone(),
+                    true,
+                )
+                .await
+                .expect("dispatch should succeed");
+            assert!(matches!(result, ToolDispatchResult::Completed(_)));
+        }
+
+        let result = dispatcher
+            .dispatch(
+                ToolRequest {
+                    tool_call_id: "write_normal".to_string(),
+                    name: "writeFile".to_string(),
+                    input: serde_json::json!({
+                        "file_path": "src/main.rs",
+                        "content": "fn main() {}"
+                    }),
+                    provider_metadata: None,
+                },
+                context,
+                true,
+            )
+            .await
+            .expect("dispatch should succeed");
+
+        assert!(matches!(result, ToolDispatchResult::PendingApproval(_)));
     }
 
     #[tokio::test]

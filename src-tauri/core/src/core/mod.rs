@@ -10,6 +10,7 @@ pub mod session;
 pub mod tool_definitions;
 pub mod tool_dependency_analyzer;
 pub mod tool_executor;
+pub mod tool_hooks;
 pub mod tool_name_normalizer;
 pub mod tools;
 pub mod types;

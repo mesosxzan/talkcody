@@ -7,7 +7,7 @@ use crate::core::tool_definitions::{get_tool_definitions, ToolMetadata};
 use crate::core::tool_dependency_analyzer::{
     ExecutionGroup, ExecutionPlan, ExecutionStage, ToolDependencyAnalyzer,
 };
-use crate::core::types::{ToolRequest, ToolResult};
+use crate::core::types::ToolRequest;
 use futures_util::future::join_all;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -36,14 +36,15 @@ impl ToolExecutor {
     }
 
     /// Execute tool calls using the analyzer-generated execution plan.
-    pub async fn execute_with_smart_concurrency<F, Fut>(
+    pub async fn execute_with_smart_concurrency<F, Fut, R>(
         &self,
         tool_calls: Vec<ToolRequest>,
         execute_tool: F,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         let execute_tool = Arc::new(execute_tool);
         let normalized_calls = tool_calls
@@ -57,14 +58,15 @@ impl ToolExecutor {
         self.execute_plan(plan, execute_tool).await
     }
 
-    async fn execute_plan<F, Fut>(
+    async fn execute_plan<F, Fut, R>(
         &self,
         plan: ExecutionPlan,
         execute_tool: Arc<F>,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         let mut all_results = Vec::new();
 
@@ -76,14 +78,15 @@ impl ToolExecutor {
         all_results
     }
 
-    async fn execute_stage<F, Fut>(
+    async fn execute_stage<F, Fut, R>(
         &self,
         stage: ExecutionStage,
         execute_tool: Arc<F>,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         let mut results = Vec::new();
 
@@ -95,14 +98,15 @@ impl ToolExecutor {
         results
     }
 
-    async fn execute_group<F, Fut>(
+    async fn execute_group<F, Fut, R>(
         &self,
         group: ExecutionGroup,
         execute_tool: Arc<F>,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         if group.concurrent && group.tools.len() > 1 {
             self.execute_concurrent(group.tools, group.max_concurrency, execute_tool)
@@ -112,15 +116,16 @@ impl ToolExecutor {
         }
     }
 
-    async fn execute_concurrent<F, Fut>(
+    async fn execute_concurrent<F, Fut, R>(
         &self,
         tool_calls: Vec<ToolRequest>,
         max_concurrency: Option<usize>,
         execute_tool: Arc<F>,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         let mut results = Vec::new();
         let limit = max_concurrency
@@ -143,14 +148,15 @@ impl ToolExecutor {
         results
     }
 
-    async fn execute_sequential<F, Fut>(
+    async fn execute_sequential<F, Fut, R>(
         &self,
         tool_calls: Vec<ToolRequest>,
         execute_tool: Arc<F>,
-    ) -> Vec<(ToolRequest, ToolResult)>
+    ) -> Vec<(ToolRequest, R)>
     where
         F: Fn(ToolRequest) -> Fut + Send + Sync,
-        Fut: Future<Output = ToolResult> + Send,
+        Fut: Future<Output = R> + Send,
+        R: Send,
     {
         let mut results = Vec::new();
 
@@ -230,7 +236,7 @@ impl Default for ToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::types::ToolRequest;
+    use crate::core::types::{ToolRequest, ToolResult};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::Mutex;
 
