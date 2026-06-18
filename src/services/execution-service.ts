@@ -23,10 +23,12 @@ import { ralphLoopService } from '@/services/agents/ralph-loop-service';
 import { stopHookService } from '@/services/agents/stop-hook-service';
 import { messageService } from '@/services/message-service';
 import { notificationService } from '@/services/notification-service';
+import { RustRuntimeAdapter } from '@/services/rust-runtime-adapter';
 import { taskQueueService } from '@/services/task-queue-service';
 import { taskService } from '@/services/task-service';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 import { useExecutionStore } from '@/stores/execution-store';
+import { settingsManager } from '@/stores/settings-store';
 import { useTaskStore } from '@/stores/task-store';
 import { useWorktreeStore } from '@/stores/worktree-store';
 import type { AgentToolSet, UIMessage } from '@/types/agent';
@@ -56,6 +58,7 @@ export interface ExecutionCallbacks {
 
 class ExecutionService {
   private llmServiceInstances = new Map<string, LLMService>();
+  private rustRuntimeAdapters = new Map<string, RustRuntimeAdapter>();
   private hooksRegistered = false;
 
   private async getTaskProjectId(taskId: string): Promise<string | null> {
@@ -130,18 +133,15 @@ class ExecutionService {
     let llmService: LLMService | undefined;
 
     try {
-      // 3. Create independent LLMService instance for this task
-      llmService = createLLMService(taskId);
-      this.llmServiceInstances.set(taskId, llmService);
-
+      // Helper: check if current assistant message has visible output
       const hasCurrentAssistantOutput = () => {
         return (
           streamedContent.length > 0 || (currentStreamingReasoningContent?.trim().length ?? 0) > 0
         );
       };
 
+      // Helper: finalize the current streaming message and persist usage
       const finalizeExecution = async (finalText?: string) => {
-        // Prefer finalText if it's longer (complete) over potentially truncated streamedContent
         const text =
           finalText && finalText.length >= streamedContent.length
             ? finalText
@@ -178,6 +178,7 @@ class ExecutionService {
         }
       };
 
+      // Helper: handle task completion (finalize, notify, queue)
       const handleCompletion = async (fullText: string, success: boolean = true) => {
         if (abortController.signal.aborted) return;
 
@@ -207,6 +208,104 @@ class ExecutionService {
           });
         }
       };
+
+      // Check if the Rust runtime should be used instead of the TS agent loop.
+      // When enabled, the Rust CoreRuntime handles the full agent loop, tool
+      // execution, message persistence, and streaming — the TS side only
+      // renders events received via Tauri.
+      const useRustRuntime = await this.shouldUseRustRuntime();
+
+      if (useRustRuntime) {
+        await this.startExecutionViaRust(
+          taskId,
+          agentId,
+          executionRootPath,
+          worktreePath,
+          abortController,
+          config.userMessage,
+          messages,
+          {
+            onAssistantMessageStart: () => {
+              if (abortController.signal.aborted) return;
+              if (currentMessageId && !hasCurrentAssistantOutput()) return;
+              if (currentMessageId && hasCurrentAssistantOutput()) {
+                messageService
+                  .finalizeMessage(
+                    taskId,
+                    currentMessageId,
+                    streamedContent,
+                    currentReasoningContent ?? currentStreamingReasoningContent
+                  )
+                  .catch((err) => logger.error('Failed to finalize previous message:', err));
+                currentReasoningContent = undefined;
+                currentStreamingReasoningContent = undefined;
+              }
+              streamedContent = '';
+              currentMessageId = messageService.createAssistantMessage(taskId, agentId);
+              currentReasoningContent = undefined;
+              currentStreamingReasoningContent = undefined;
+            },
+            onChunk: (chunk: string) => {
+              if (abortController.signal.aborted) return;
+              streamedContent += chunk;
+              if (currentMessageId) {
+                messageService.updateStreamingContent(taskId, currentMessageId, streamedContent);
+              }
+            },
+            onComplete: async (fullText: string) => {
+              if (abortController.signal.aborted) return;
+              await handleCompletion(fullText);
+            },
+            onError: async (error: Error) => {
+              if (abortController.signal.aborted) return;
+              logger.error('[ExecutionService] Rust runtime error', error);
+              executionStore.setError(taskId, error.message);
+              useTaskStore.getState().clearRunningTaskUsage(taskId);
+              const projectId = await this.getTaskProjectId(taskId);
+              if (projectId) {
+                await taskQueueService.handleExecutionTerminalState({
+                  taskId,
+                  projectId,
+                  status: 'error',
+                });
+              }
+              callbacks?.onError?.(error);
+            },
+            onStatus: (status: string) => {
+              if (abortController.signal.aborted) return;
+              executionStore.setServerStatus(taskId, status);
+            },
+            onToolMessage: (message: UIMessage) => {
+              if (abortController.signal.aborted) return;
+              const toolMessage: UIMessage = {
+                ...message,
+                assistantId: message.assistantId || agentId,
+              };
+              messageService.addToolMessage(taskId, toolMessage);
+            },
+            onReasoningUpdate: (payload: { reasoningContent: string; isStreaming: boolean }) => {
+              if (abortController.signal.aborted) return;
+              currentStreamingReasoningContent = payload.reasoningContent;
+              if (currentMessageId) {
+                messageService.updateStreamingReasoning(
+                  taskId,
+                  currentMessageId,
+                  payload.reasoningContent,
+                  payload.isStreaming
+                );
+              }
+              if (!payload.isStreaming) {
+                currentReasoningContent = payload.reasoningContent;
+              }
+            },
+          }
+        );
+        return;
+      }
+
+      // 3. Create independent LLMService instance for this task
+      llmService = createLLMService(taskId);
+      this.llmServiceInstances.set(taskId, llmService);
 
       // Run agent loop with callbacks that route through services
       // Completion hooks (stop hook, ralph loop, auto review) are handled internally by LLMService
@@ -337,6 +436,8 @@ class ExecutionService {
       }
     } finally {
       this.llmServiceInstances.delete(taskId);
+      this.rustRuntimeAdapters.get(taskId)?.dispose();
+      this.rustRuntimeAdapters.delete(taskId);
 
       // Release worktree if acquired
       if (worktreePath && useWorktreeStore.getState().isTaskUsingWorktree(taskId)) {
@@ -362,6 +463,17 @@ class ExecutionService {
     const executionStore = useExecutionStore.getState();
     executionStore.stopExecution(taskId);
     this.llmServiceInstances.delete(taskId);
+    const rustRuntimeAdapter = this.rustRuntimeAdapters.get(taskId);
+    this.rustRuntimeAdapters.delete(taskId);
+    if (rustRuntimeAdapter) {
+      try {
+        await rustRuntimeAdapter.cancel();
+      } catch (error) {
+        logger.warn('[ExecutionService] Failed to cancel Rust runtime task', error);
+      } finally {
+        rustRuntimeAdapter.dispose();
+      }
+    }
 
     // Stop streaming in task store
     useTaskStore.getState().stopStreaming(taskId);
@@ -400,6 +512,101 @@ class ExecutionService {
    */
   canStartNew(): boolean {
     return useExecutionStore.getState().canStartNew();
+  }
+
+  /**
+   * Check if the Rust runtime should be used instead of the TS agent loop.
+   * Reads the `use_rust_runtime` setting from the database.
+   * Returns false by default — the Rust runtime is opt-in.
+   */
+  private async shouldUseRustRuntime(): Promise<boolean> {
+    try {
+      const value = settingsManager.get('use_rust_runtime');
+      return typeof value === 'string' && value.toLowerCase() === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Start execution via the Rust CoreRuntime.
+   *
+   * This is the alternative to `llmService.runAgentLoop()`. The Rust runtime
+   * handles the full agent loop internally — this method only bridges events
+   * to the TS-side callbacks for UI rendering.
+   */
+  private async startExecutionViaRust(
+    taskId: string,
+    agentId: string | undefined,
+    rootPath: string,
+    worktreePath: string | null,
+    abortController: AbortController,
+    userMessage: string | undefined,
+    messages: UIMessage[],
+    callbacks: {
+      onAssistantMessageStart?: () => void;
+      onChunk: (chunk: string) => void;
+      onComplete?: (fullText: string) => void;
+      onError?: (error: Error) => void;
+      onStatus?: (status: string) => void;
+      onToolMessage?: (message: UIMessage) => void;
+      onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
+    }
+  ): Promise<void> {
+    // Load task settings to pass to the Rust runtime
+    let taskSettings: Record<string, unknown> | undefined;
+    try {
+      const settingsJson = await taskService.getTaskSettings(taskId);
+      if (settingsJson) {
+        taskSettings = JSON.parse(settingsJson);
+      }
+    } catch {
+      // Settings are optional
+    }
+
+    // Determine the model from task settings or default
+    const model =
+      (taskSettings?.model as string) ?? settingsManager.get('model') ?? 'gpt-4o@openai';
+
+    const latestUserMessageFromHistory = [...messages]
+      .reverse()
+      .find((message): message is UIMessage & { content: string } => {
+        return message.role === 'user' && typeof message.content === 'string';
+      })?.content;
+    const latestUserMessage = userMessage ?? latestUserMessageFromHistory ?? '';
+
+    // Build the workspace info
+    const workspace = {
+      rootPath,
+      worktreePath: worktreePath ?? undefined,
+    };
+
+    // Build the TaskInput for the Rust runtime
+    const input = {
+      sessionId: taskId,
+      agentId: agentId ?? undefined,
+      projectId: undefined,
+      initialMessage: latestUserMessage,
+      settings: taskSettings
+        ? {
+            autoApproveEdits: taskSettings.autoApproveEdits,
+            autoApprovePlan: taskSettings.autoApprovePlan,
+            autoCodeReview: taskSettings.autoCodeReview,
+            extra: {
+              ...taskSettings,
+              model,
+            },
+          }
+        : {
+            extra: { model },
+          },
+      workspace,
+    };
+
+    const adapter = new RustRuntimeAdapter();
+    this.rustRuntimeAdapters.set(taskId, adapter);
+
+    await adapter.start(input, callbacks, abortController.signal).catch(() => {});
   }
 }
 

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   startExecution: vi.fn(),
-  getRunningTaskIds: vi.fn(() => []),
+  getRunningTaskIds: vi.fn<() => string[]>(() => []),
   createTask: vi.fn(),
   addUserMessage: vi.fn(),
   getCurrentModel: vi.fn(),
@@ -108,7 +108,7 @@ describe('task-queue-service', () => {
       sourceTaskId: 'task-1',
       prompt: 'queued prompt',
     });
-    mocks.getRunningTaskIds.mockReturnValue(['task-other']);
+    mocks.getRunningTaskIds.mockReturnValue(['task-other'] as string[]);
     mocks.getTaskDetails.mockResolvedValue({ id: 'task-other', project_id: 'project-a' });
 
     const result = await taskQueueService.tryStartNextQueuedItem('project-a');
@@ -123,7 +123,7 @@ describe('task-queue-service', () => {
       sourceTaskId: 'task-1',
       prompt: 'queued prompt',
     });
-    mocks.getRunningTaskIds.mockReturnValue(['task-other']);
+    mocks.getRunningTaskIds.mockReturnValue(['task-other'] as string[]);
     mocks.getTaskDetails.mockResolvedValue({ id: 'task-other', project_id: 'project-b' });
 
     const result = await taskQueueService.tryStartNextQueuedItem('project-a');
@@ -167,6 +167,48 @@ describe('task-queue-service', () => {
 
     resolveStartExecution?.();
     await Promise.resolve();
+  });
+
+  it('persists queued user message before starting execution and forwards attachments', async () => {
+    const attachment = {
+      id: 'attach-1',
+      type: 'file' as const,
+      filename: 'notes.txt',
+      filePath: '/repo/notes.txt',
+      mimeType: 'text/plain',
+      size: 12,
+    };
+    const draft = useTaskQueueStore.getState().enqueueDraft({
+      projectId: 'project-a',
+      sourceTaskId: 'task-1',
+      prompt: 'queued prompt',
+      attachments: [attachment],
+    });
+
+    await taskQueueService.materializeDraft(draft);
+
+    expect(mocks.addUserMessage).toHaveBeenCalledWith('task-queued', 'queued prompt', {
+      attachments: [attachment],
+      agentId: 'planner',
+    });
+    expect(mocks.startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'task-queued',
+        userMessage: 'queued prompt',
+        messages: [
+          expect.objectContaining({
+            role: 'user',
+            content: 'queued prompt',
+            attachments: [attachment],
+            assistantId: 'planner',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    );
+    expect(mocks.addUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.startExecution.mock.invocationCallOrder[0],
+    );
   });
 
   it('continues with the next queued draft when startup fails after dequeue', async () => {

@@ -31,16 +31,14 @@ impl SessionManager {
         }
     }
 
-    /// Create a new session
-    pub async fn create_session(
+    async fn create_session_with_resolved_id(
         &self,
+        session_id: String,
         project_id: Option<String>,
         title: Option<String>,
         settings: Option<TaskSettings>,
     ) -> Result<Session, String> {
         let now = chrono::Utc::now().timestamp();
-        let session_id = format!("sess_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
-
         let session = Session {
             id: session_id.clone(),
             project_id,
@@ -52,10 +50,8 @@ impl SessionManager {
             metadata: None,
         };
 
-        // Persist session
         self.storage.chat_history.create_session(&session).await?;
 
-        // Store settings if provided
         let settings_for_state = if let Some(ref settings) = settings {
             self.storage
                 .settings
@@ -66,7 +62,6 @@ impl SessionManager {
             TaskSettings::default()
         };
 
-        // Add to active sessions
         let state = SessionState {
             session: session.clone(),
             settings: settings_for_state,
@@ -78,6 +73,30 @@ impl SessionManager {
         active.insert(session_id, Arc::new(RwLock::new(state)));
 
         Ok(session)
+    }
+
+    /// Create a new session
+    pub async fn create_session(
+        &self,
+        project_id: Option<String>,
+        title: Option<String>,
+        settings: Option<TaskSettings>,
+    ) -> Result<Session, String> {
+        let session_id = format!("sess_{}", uuid::Uuid::new_v4().to_string().replace("-", ""));
+        self.create_session_with_resolved_id(session_id, project_id, title, settings)
+            .await
+    }
+
+    /// Create a session with a caller-supplied ID.
+    pub async fn create_session_with_id(
+        &self,
+        session_id: String,
+        project_id: Option<String>,
+        title: Option<String>,
+        settings: Option<TaskSettings>,
+    ) -> Result<Session, String> {
+        self.create_session_with_resolved_id(session_id, project_id, title, settings)
+            .await
     }
 
     /// Get a session by ID

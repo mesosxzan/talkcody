@@ -199,11 +199,27 @@ impl CoreRuntime {
 
         // Create or get session
         let session = if let Some(ref session_id) = self.find_session_for_task(&input) {
-            self.session_manager.activate_session(session_id).await?;
-            self.session_manager
+            if self
+                .session_manager
                 .get_session(session_id)
                 .await?
-                .ok_or("Session not found")?
+                .is_some()
+            {
+                self.session_manager.activate_session(session_id).await?;
+                self.session_manager
+                    .get_session(session_id)
+                    .await?
+                    .ok_or("Session not found")?
+            } else {
+                self.session_manager
+                    .create_session_with_id(
+                        session_id.clone(),
+                        input.project_id.clone(),
+                        None,
+                        input.settings.clone(),
+                    )
+                    .await?
+            }
         } else {
             self.session_manager
                 .create_session(input.project_id.clone(), None, input.settings.clone())
@@ -269,6 +285,11 @@ impl CoreRuntime {
         tasks.values().cloned().collect()
     }
 
+    /// Get read access to the tasks map (for Tauri command bridge)
+    pub fn tasks_handle(&self) -> &Arc<RwLock<HashMap<RuntimeTaskId, TaskHandle>>> {
+        &self.tasks
+    }
+
     /// Cancel a task
     pub async fn cancel_task(&self, task_id: &str) -> Result<(), String> {
         let handle = self
@@ -307,43 +328,47 @@ impl CoreRuntime {
             previous_state: RuntimeTaskState::Pending,
         });
 
-        // Add initial user message
-        let initial_message = Message {
-            id: format!("msg_{}", uuid::Uuid::new_v4()),
-            session_id: task.session_id.clone(),
-            role: MessageRole::User,
-            content: MessageContent::Text {
-                text: input.initial_message.clone(),
-            },
-            created_at: now,
-            tool_call_id: None,
-            parent_id: None,
-        };
-
-        if let Err(e) = self
-            .session_manager
-            .add_message(initial_message.clone())
+        if self
+            .should_persist_initial_message(&task.session_id, &input.initial_message)
             .await
         {
-            let _ = event_sender.send(RuntimeEvent::Error {
-                task_id: Some(task.id.clone()),
-                session_id: Some(task.session_id.clone()),
-                message: format!("Failed to add message: {}", e),
-            });
-            self.complete_task(
-                &task,
-                RuntimeTaskState::Failed,
-                Some(e.to_string()),
-                &event_sender,
-            )
-            .await;
-            return;
-        }
+            let initial_message = Message {
+                id: format!("msg_{}", uuid::Uuid::new_v4()),
+                session_id: task.session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: input.initial_message.clone(),
+                },
+                created_at: now,
+                tool_call_id: None,
+                parent_id: None,
+            };
 
-        let _ = event_sender.send(RuntimeEvent::MessageCreated {
-            session_id: task.session_id.clone(),
-            message: initial_message,
-        });
+            if let Err(e) = self
+                .session_manager
+                .add_message(initial_message.clone())
+                .await
+            {
+                let _ = event_sender.send(RuntimeEvent::Error {
+                    task_id: Some(task.id.clone()),
+                    session_id: Some(task.session_id.clone()),
+                    message: format!("Failed to add message: {}", e),
+                });
+                self.complete_task(
+                    &task,
+                    RuntimeTaskState::Failed,
+                    Some(e.to_string()),
+                    &event_sender,
+                )
+                .await;
+                return;
+            }
+
+            let _ = event_sender.send(RuntimeEvent::MessageCreated {
+                session_id: task.session_id.clone(),
+                message: initial_message,
+            });
+        }
 
         let agent_config = match self.resolve_agent_config(&input).await {
             Ok(config) => config,
@@ -2112,6 +2137,15 @@ impl CoreRuntime {
             .update_session_status(&task.session_id, session_status, None)
             .await;
 
+        if let Some(err) = error.clone() {
+            log::error!("[Runtime] Task {} failed: {}", task.id, err);
+            let _ = event_sender.send(RuntimeEvent::Error {
+                task_id: Some(task.id.clone()),
+                session_id: Some(task.session_id.clone()),
+                message: err,
+            });
+        }
+
         // Emit completion event
         let _ = event_sender.send(RuntimeEvent::TaskStateChanged {
             task_id: task.id.clone(),
@@ -2123,21 +2157,38 @@ impl CoreRuntime {
             task_id: task.id.clone(),
             session_id: task.session_id.clone(),
         });
-
-        if let Some(err) = error {
-            log::error!("[Runtime] Task {} failed: {}", task.id, err);
-            let _ = event_sender.send(RuntimeEvent::Error {
-                task_id: Some(task.id.clone()),
-                session_id: Some(task.session_id.clone()),
-                message: err,
-            });
-        }
     }
 
     /// Find existing session for a task input
     fn find_session_for_task(&self, input: &TaskInput) -> Option<SessionId> {
         // If session_id is explicitly provided in input, use that
         Some(input.session_id.clone())
+    }
+
+    async fn should_persist_initial_message(
+        &self,
+        session_id: &str,
+        initial_message: &str,
+    ) -> bool {
+        if initial_message.trim().is_empty() {
+            return false;
+        }
+
+        match self
+            .session_manager
+            .get_messages(session_id, None, None)
+            .await
+        {
+            Ok(messages) => match messages.last() {
+                Some(Message {
+                    role: MessageRole::User,
+                    content: MessageContent::Text { text },
+                    ..
+                }) => text != initial_message,
+                _ => true,
+            },
+            Err(_) => true,
+        }
     }
 }
 
@@ -2179,6 +2230,106 @@ mod tests {
             .expect("Failed to create runtime");
 
         (runtime, temp_dir, rx)
+    }
+
+    #[tokio::test]
+    async fn test_start_task_creates_missing_session_with_input_session_id() {
+        let provider_registry = ProviderRegistry::new(Vec::new());
+        let (runtime, _temp, _rx) = create_test_runtime_with_registry(provider_registry).await;
+
+        let input_session_id = "task_frontend_bridge".to_string();
+        let handle = runtime
+            .start_task(TaskInput {
+                session_id: input_session_id.clone(),
+                agent_id: None,
+                project_id: Some("default".to_string()),
+                initial_message: "hello".to_string(),
+                settings: None,
+                workspace: None,
+            })
+            .await
+            .expect("task should start even when the session does not exist yet");
+
+        assert_eq!(handle.session_id, input_session_id);
+
+        let session = runtime
+            .session_manager()
+            .get_session(&handle.session_id)
+            .await
+            .expect("session lookup should succeed");
+        assert!(
+            session.is_some(),
+            "runtime should create the missing session"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_start_task_does_not_duplicate_existing_initial_user_message() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session = runtime
+            .session_manager()
+            .create_session(None, None, None)
+            .await
+            .expect("session should be created");
+
+        runtime
+            .session_manager()
+            .add_message(Message {
+                id: "msg_existing_user".to_string(),
+                session_id: session.id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "same prompt".to_string(),
+                },
+                created_at: chrono::Utc::now().timestamp(),
+                tool_call_id: None,
+                parent_id: None,
+            })
+            .await
+            .expect("existing message should persist");
+
+        let should_persist = runtime
+            .should_persist_initial_message(&session.id, "same prompt")
+            .await;
+        assert!(!should_persist);
+
+        let handle = runtime
+            .start_task(TaskInput {
+                session_id: session.id.clone(),
+                agent_id: None,
+                project_id: None,
+                initial_message: "same prompt".to_string(),
+                settings: None,
+                workspace: None,
+            })
+            .await
+            .expect("task should start");
+
+        runtime
+            .cancel_task(&handle.task_id)
+            .await
+            .expect("task should cancel");
+        wait_for_terminal_state(&handle).await;
+
+        let stored_messages = runtime
+            .session_manager()
+            .get_messages(&session.id, None, None)
+            .await
+            .expect("messages should load");
+        let matching_messages = stored_messages
+            .iter()
+            .filter(|message| {
+                matches!(
+                    &message.content,
+                    MessageContent::Text { text } if message.role == MessageRole::User && text == "same prompt"
+                )
+            })
+            .count();
+
+        assert_eq!(
+            matching_messages, 1,
+            "runtime should not duplicate the existing prompt"
+        );
     }
 
     async fn create_test_runtime() -> (CoreRuntime, TempDir, mpsc::UnboundedReceiver<RuntimeEvent>)

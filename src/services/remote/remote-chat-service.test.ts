@@ -94,6 +94,28 @@ const mocks = vi.hoisted(() => {
     executeCommand: vi.fn().mockResolvedValue(undefined),
   };
 
+  const taskService = {
+    createTask: vi.fn().mockResolvedValue('task-remote-1'),
+    updateTaskSettings: vi.fn().mockResolvedValue(undefined),
+    selectTask: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const messageService = {
+    addUserMessage: vi.fn().mockResolvedValue('user-msg-1'),
+  };
+
+  const executionService = {
+    startExecution: vi.fn().mockResolvedValue(undefined),
+    stopExecution: vi.fn().mockResolvedValue(undefined),
+  };
+
+  const remoteMediaService = {
+    prepareInboundMessage: vi.fn().mockImplementation(async (message: { text: string }) => ({
+      text: message.text,
+      attachments: [],
+    })),
+  };
+
   return {
     inboundUnsubscribe,
     executionUnsubscribe,
@@ -118,6 +140,10 @@ const mocks = vi.hoisted(() => {
     databaseService,
     commandRegistry,
     commandExecutor,
+    taskService,
+    messageService,
+    executionService,
+    remoteMediaService,
   };
 });
 
@@ -164,6 +190,22 @@ vi.mock('@/services/commands/command-registry', () => ({
 
 vi.mock('@/services/commands/command-executor', () => ({
   commandExecutor: mocks.commandExecutor,
+}));
+
+vi.mock('@/services/task-service', () => ({
+  taskService: mocks.taskService,
+}));
+
+vi.mock('@/services/message-service', () => ({
+  messageService: mocks.messageService,
+}));
+
+vi.mock('@/services/execution-service', () => ({
+  executionService: mocks.executionService,
+}));
+
+vi.mock('@/services/remote/remote-media-service', () => ({
+  remoteMediaService: mocks.remoteMediaService,
 }));
 
 vi.mock('@/stores/task-store', () => ({
@@ -239,6 +281,16 @@ describe('remote-chat-service', () => {
     service.sessions.clear();
     service.approvals.clear();
     service.lastStreamContent.clear();
+    mocks.useTaskStore.getState.mockReturnValue({
+      getMessages: vi.fn().mockReturnValue([
+        {
+          id: 'user-msg-1',
+          role: 'user',
+          content: 'hello remote',
+          timestamp: new Date(),
+        },
+      ]),
+    });
   });
 
   it('unsubscribes listeners on stop', async () => {
@@ -278,7 +330,6 @@ describe('remote-chat-service', () => {
       getExecution: vi.fn().mockReturnValue(execution),
     });
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', session);
 
     await remoteChatService.start();
@@ -313,7 +364,6 @@ describe('remote-chat-service', () => {
 
     await remoteChatService.start();
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', session);
 
     await mocks.executionListener();
@@ -334,7 +384,6 @@ describe('remote-chat-service', () => {
       streamingMessageId: 'msg-1',
     };
 
-    // @ts-expect-error - testing private method
     await remoteChatService.editMessage(session, 'update');
 
     expect(mocks.editMessage).not.toHaveBeenCalled();
@@ -351,7 +400,6 @@ describe('remote-chat-service', () => {
       }),
     });
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', {
       channelId: 'telegram',
       chatId: '1',
@@ -519,6 +567,55 @@ describe('remote-chat-service', () => {
     );
   });
 
+  it('persists the remote user message before starting execution', async () => {
+    const attachment = {
+      id: 'remote-attach-1',
+      type: 'image' as const,
+      filename: 'diagram.png',
+      filePath: '/tmp/diagram.png',
+      mimeType: 'image/png',
+      size: 42,
+    };
+    mocks.remoteMediaService.prepareInboundMessage.mockResolvedValueOnce({
+      text: 'hello remote',
+      attachments: [attachment],
+    });
+
+    await remoteChatService.start();
+
+    await remoteChatService.handleInboundMessage({
+      channelId: 'telegram',
+      chatId: '1',
+      messageId: 'remote-1',
+      text: 'hello remote',
+      date: Date.now(),
+      attachments: [],
+    });
+
+    expect(mocks.messageService.addUserMessage).toHaveBeenCalledWith('task-remote-1', 'hello remote', {
+      attachments: [attachment],
+    });
+    expect(mocks.executionService.startExecution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: 'task-remote-1',
+        userMessage: 'hello remote',
+        messages: [
+          expect.objectContaining({
+            id: 'user-msg-1',
+            role: 'user',
+            content: 'hello remote',
+          }),
+        ],
+      }),
+    );
+    expect(mocks.messageService.addUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.executionService.startExecution.mock.invocationCallOrder[0],
+    );
+    expect(mocks.taskService.updateTaskSettings).toHaveBeenCalledWith('task-remote-1', {
+      autoApprovePlan: true,
+    });
+  });
+
   it('sends final complete answer from execution.streamingContent when task store has stale data', async () => {
     vi.useFakeTimers();
 
@@ -561,7 +658,6 @@ describe('remote-chat-service', () => {
       ]),
     });
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', session);
 
     await remoteChatService.start();
@@ -630,7 +726,6 @@ describe('remote-chat-service', () => {
       getExecution: vi.fn().mockReturnValue(execution),
     });
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', session);
 
     await remoteChatService.start();
@@ -689,7 +784,6 @@ describe('remote-chat-service', () => {
       getExecution: vi.fn().mockReturnValue(execution),
     });
 
-    // @ts-expect-error - test setup
     remoteChatService.sessions.set('telegram:1', session);
 
     await remoteChatService.start();
@@ -729,7 +823,6 @@ describe('remote-chat-service', () => {
         getExecution: vi.fn().mockReturnValue(execution),
       });
 
-      // @ts-expect-error - test setup
       remoteChatService.sessions.set('feishu:user1', session);
 
       await remoteChatService.start();
@@ -773,7 +866,6 @@ describe('remote-chat-service', () => {
         getExecution: vi.fn().mockReturnValue(execution),
       });
 
-      // @ts-expect-error - test setup
       remoteChatService.sessions.set('feishu:user1', session);
 
       // Clear previous calls
@@ -824,7 +916,6 @@ describe('remote-chat-service', () => {
         getExecution: vi.fn().mockReturnValue(execution),
       });
 
-      // @ts-expect-error - test setup
       remoteChatService.sessions.set('feishu:user1', session);
 
       // Clear previous calls
@@ -880,7 +971,6 @@ describe('remote-chat-service', () => {
         getExecution: vi.fn().mockReturnValue(execution),
       });
 
-      // @ts-expect-error - test setup
       remoteChatService.sessions.set('feishu:user1', session);
 
       // Clear previous calls
@@ -928,7 +1018,6 @@ describe('remote-chat-service', () => {
         getExecution: vi.fn().mockReturnValue(execution),
       });
 
-      // @ts-expect-error - test setup
       remoteChatService.sessions.set('feishu:user1', session);
 
       // Clear previous calls

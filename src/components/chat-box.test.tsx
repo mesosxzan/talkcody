@@ -26,6 +26,11 @@ const mocks = vi.hoisted(() => ({
   executeCommand: vi.fn(),
   parseCommand: vi.fn(() => ({ isValid: false, command: null, rawArgs: '' })),
   addUserMessage: vi.fn(),
+  createTask: vi.fn(),
+  startExecution: vi.fn(),
+  getCurrentModel: vi.fn(),
+  getAgentId: vi.fn(),
+  getWithResolvedTools: vi.fn(),
   deleteMessageFromService: vi.fn(),
   initialOnDelete: undefined as undefined | ((messageId: string) => Promise<void> | void),
   latestOnDelete: undefined as undefined | ((messageId: string) => Promise<void> | void),
@@ -87,7 +92,7 @@ vi.mock('@/hooks/use-tasks', () => ({
   useTasks: () => ({
     currentTaskId: mocks.currentTaskId,
     setError: vi.fn(),
-    createTask: vi.fn(),
+    createTask: mocks.createTask,
   }),
 }));
 
@@ -114,7 +119,7 @@ vi.mock('@/services/hooks/hook-service', () => ({
 
 vi.mock('@/services/execution-service', () => ({
   executionService: {
-    startExecution: vi.fn(),
+    startExecution: mocks.startExecution,
     stopExecution: vi.fn(),
     isRunning: vi.fn(() => false),
     getRunningTaskIds: vi.fn(() => []),
@@ -123,7 +128,7 @@ vi.mock('@/services/execution-service', () => ({
 
 vi.mock('@/providers/stores/provider-store', () => ({
   modelService: {
-    getCurrentModel: vi.fn(),
+    getCurrentModel: mocks.getCurrentModel,
   },
 }));
 
@@ -133,7 +138,7 @@ vi.mock('@/providers/core/provider-utils', () => ({
 
 vi.mock('@/services/agents/agent-registry', () => ({
   agentRegistry: {
-    getWithResolvedTools: vi.fn(),
+    getWithResolvedTools: mocks.getWithResolvedTools,
   },
 }));
 
@@ -191,7 +196,7 @@ vi.mock('@/stores/settings-store', () => {
 
   return {
     settingsManager: {
-      getAgentId: vi.fn(),
+      getAgentId: mocks.getAgentId,
     },
     useSettingsStore: (selector: (state: typeof settingsState) => unknown) => selector(settingsState),
   };
@@ -321,6 +326,15 @@ describe('ChatBox queue action', () => {
     mocks.tryStartNextQueuedItem.mockResolvedValue(null);
     mocks.parseCommand.mockReturnValue({ isValid: false, command: null, rawArgs: '' });
     mocks.executeCommand.mockResolvedValue({ success: true });
+    mocks.createTask.mockResolvedValue('task-1');
+    mocks.startExecution.mockResolvedValue(undefined);
+    mocks.getCurrentModel.mockResolvedValue('test-model@provider');
+    mocks.getAgentId.mockResolvedValue('planner');
+    mocks.getWithResolvedTools.mockResolvedValue({
+      systemPrompt: 'You are helpful',
+      tools: {},
+      fallbackModels: [],
+    });
   });
 
   it('shows the queue action when any task is running', () => {
@@ -328,7 +342,7 @@ describe('ChatBox queue action', () => {
 
     render(<ChatBox />);
 
-    expect(screen.getByRole('button', { name: 'queue-action' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'queue-action' })).toBeTruthy();
   });
 
   it('enqueues from the composer and immediately checks whether the queued draft can start', async () => {
@@ -376,7 +390,7 @@ describe('ChatBox queue action', () => {
         updatedAt: new Date(),
       },
     };
-    mocks.parseCommand.mockReturnValue(parsedCommand);
+    mocks.parseCommand.mockReturnValue(parsedCommand as never);
 
     render(<ChatBox />);
 
@@ -392,6 +406,47 @@ describe('ChatBox queue action', () => {
         })
       );
     });
+  });
+
+  it('persists the user message before starting execution for the normal chat flow', async () => {
+    render(<ChatBox />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'set-input' }));
+    fireEvent.click(screen.getByRole('button', { name: 'submit-input' }));
+
+    await waitFor(() => {
+      expect(mocks.createTask).toHaveBeenCalledWith('queued prompt');
+    });
+
+    await waitFor(() => {
+      expect(mocks.addUserMessage).toHaveBeenCalledWith(
+        'task-1',
+        'queued prompt',
+        expect.objectContaining({
+          agentId: 'planner',
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(mocks.startExecution).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId: 'task-1',
+          userMessage: 'queued prompt',
+          messages: [
+            expect.objectContaining({
+              role: 'user',
+              content: 'queued prompt',
+            }),
+          ],
+        }),
+        expect.any(Object),
+      );
+    });
+
+    expect(mocks.addUserMessage.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.startExecution.mock.invocationCallOrder[0],
+    );
   });
 
   it('blocks delete requests while the task is still loading', async () => {

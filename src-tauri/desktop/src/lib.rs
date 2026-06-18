@@ -9,6 +9,7 @@ pub mod scheduled_tasks;
 pub mod window_manager;
 
 pub mod llm_commands;
+pub mod runtime_commands;
 
 pub use talkcody_core::analytics;
 pub use talkcody_core::background_tasks;
@@ -1283,6 +1284,10 @@ pub fn run() {
             scheduled_tasks::scheduled_task_runner_status,
             scheduled_tasks::scheduled_task_runner_sync,
             scheduled_tasks::scheduled_task_runner_run_now,
+            runtime_commands::runtime_start_task,
+            runtime_commands::runtime_cancel_task,
+            runtime_commands::runtime_send_action,
+            runtime_commands::runtime_get_task_state,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { .. } = event {
