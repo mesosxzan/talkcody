@@ -201,6 +201,11 @@ pub enum RuntimeEvent {
         task_id: RuntimeTaskId,
         request: ToolRequest,
     },
+    /// Tool execution started
+    ToolCallStarted {
+        task_id: RuntimeTaskId,
+        request: ToolRequest,
+    },
     /// Tool execution completed
     ToolCallCompleted {
         task_id: RuntimeTaskId,

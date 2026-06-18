@@ -312,6 +312,6 @@ mod tests {
     #[test]
     fn test_talkcody_migrations_count() {
         let registry = talkcody_db::talkcody_migrations();
-        assert_eq!(registry.migrations().len(), 9);
+        assert_eq!(registry.migrations().len(), 11);
     }
 }

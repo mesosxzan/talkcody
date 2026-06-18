@@ -4,16 +4,24 @@
 //! and tool execution. This module is the heart of the cloud backend.
 
 pub mod completion_hooks;
+pub mod completion_loop;
 pub mod runtime;
 pub mod session;
 pub mod tool_definitions;
 pub mod tool_dependency_analyzer;
+pub mod tool_executor;
 pub mod tool_name_normalizer;
+pub mod tools;
 pub mod types;
 
 // Re-export main types for convenience
+pub use completion_loop::{
+    CompletionLoopConfig, CompletionLoopManager, CompletionLoopResult, CompletionLoopState,
+    CompletionLoopSummary, CompletionStopReason,
+};
 pub use runtime::{CoreRuntime, SettingsValidator};
 pub use session::{SessionManager, SessionState};
+pub use tool_executor::ToolExecutor;
 pub use tool_name_normalizer::{is_known_tool_name, normalize_tool_name};
 pub use types::*;
 

@@ -72,6 +72,34 @@ impl AttachmentsRepository {
         Ok(())
     }
 
+    pub async fn create_attachment_reference(&self, attachment: &Attachment) -> Result<(), String> {
+        let Some(message_id) = attachment.message_id.as_ref() else {
+            return Err("Attachment reference requires a message_id".to_string());
+        };
+
+        self.db
+            .execute(
+                r#"
+                INSERT INTO message_attachments (
+                    id, message_id, type, filename, file_path, mime_type, size, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                "#,
+                vec![
+                    serde_json::json!(attachment.id),
+                    serde_json::json!(message_id),
+                    serde_json::json!(attachment_type(&attachment.mime_type, &attachment.filename)),
+                    serde_json::json!(attachment.filename),
+                    serde_json::json!(attachment.path),
+                    serde_json::json!(attachment.mime_type),
+                    serde_json::json!(attachment.size),
+                    serde_json::json!(to_db_timestamp(attachment.created_at)),
+                ],
+            )
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn get_attachment(&self, attachment_id: &str) -> Result<Option<Attachment>, String> {
         let result = self
             .db

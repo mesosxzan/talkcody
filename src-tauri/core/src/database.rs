@@ -25,6 +25,10 @@ impl Database {
         }
     }
 
+    pub fn db_path(&self) -> &str {
+        &self.db_path
+    }
+
     pub async fn connect(&self) -> Result<(), String> {
         // Ensure the parent directory exists before attempting to open the database
         let db_path = Path::new(&self.db_path);
