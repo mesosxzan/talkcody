@@ -741,14 +741,17 @@ impl CoreRuntime {
                 if auto_continue_count <= MAX_AUTO_CONTINUE_ATTEMPTS {
                     let mut compactable_messages = persisted_session_messages.clone();
                     if !iteration_output.assistant_text.trim().is_empty() {
+                        // Persist to storage but suppress MessageCreated event — the
+                        // frontend already received a streaming placeholder + Token events.
                         if let Err(error) = self
-                            .persist_text_message(
+                            .persist_text_message_with_emit(
                                 &task.session_id,
                                 MessageRole::Assistant,
                                 iteration_output.assistant_text.clone(),
                                 None,
                                 None,
                                 &event_sender,
+                                false,
                             )
                             .await
                         {
@@ -815,14 +818,17 @@ impl CoreRuntime {
             unknown_finish_reason_count = 0;
 
             if !iteration_output.assistant_text.trim().is_empty() {
+                // Persist to storage but suppress MessageCreated event — the
+                // frontend already received a streaming placeholder + Token events.
                 if let Err(error) = self
-                    .persist_text_message(
+                    .persist_text_message_with_emit(
                         &task.session_id,
                         MessageRole::Assistant,
                         iteration_output.assistant_text.clone(),
                         None,
                         None,
                         &event_sender,
+                        false,
                     )
                     .await
                 {
@@ -2045,6 +2051,27 @@ impl CoreRuntime {
         let event_sender = event_sender.clone();
         let iteration_output_ref = iteration_output.clone();
 
+        // Emit a MessageCreated event for the assistant text placeholder BEFORE
+        // streaming starts. The frontend RustRuntimeAdapter uses this event to
+        // call onAssistantMessageStart, which creates the assistant message
+        // placeholder (currentMessageId). Without this, all subsequent Token
+        // events are silently dropped because currentMessageId is null.
+        let streaming_message_id = format!("msg_{}", uuid::Uuid::new_v4());
+        let _ = event_sender.send(RuntimeEvent::MessageCreated {
+            session_id: task.session_id.clone(),
+            message: Message {
+                id: streaming_message_id.clone(),
+                session_id: task.session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: String::new(),
+                },
+                created_at: chrono::Utc::now().timestamp(),
+                tool_call_id: None,
+                parent_id: None,
+            },
+        });
+
         runner
             .stream(
                 crate::llm::types::StreamTextRequest {
@@ -2324,6 +2351,33 @@ impl CoreRuntime {
         parent_id: Option<String>,
         event_sender: &EventSender,
     ) -> Result<(), String> {
+        self.persist_text_message_with_emit(
+            session_id,
+            role,
+            text,
+            tool_call_id,
+            parent_id,
+            event_sender,
+            true,
+        )
+        .await
+    }
+
+    /// Persist a text message to storage. When `emit_event` is false, the
+    /// `MessageCreated` event is suppressed — used when the frontend has
+    /// already received a streaming placeholder `MessageCreated` and built
+    /// the full text via `Token` events.
+    #[allow(clippy::too_many_arguments)]
+    async fn persist_text_message_with_emit(
+        &self,
+        session_id: &str,
+        role: MessageRole,
+        text: String,
+        tool_call_id: Option<String>,
+        parent_id: Option<String>,
+        event_sender: &EventSender,
+        emit_event: bool,
+    ) -> Result<(), String> {
         let message = Message {
             id: format!("msg_{}", uuid::Uuid::new_v4()),
             session_id: session_id.to_string(),
@@ -2335,10 +2389,12 @@ impl CoreRuntime {
         };
 
         self.session_manager.add_message(message.clone()).await?;
-        let _ = event_sender.send(RuntimeEvent::MessageCreated {
-            session_id: session_id.to_string(),
-            message,
-        });
+        if emit_event {
+            let _ = event_sender.send(RuntimeEvent::MessageCreated {
+                session_id: session_id.to_string(),
+                message,
+            });
+        }
         Ok(())
     }
 

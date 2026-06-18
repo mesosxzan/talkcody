@@ -307,6 +307,10 @@ const en: LocaleDefinition = {
     },
     toolbar: {
       model: 'Model',
+      runtime: 'Runtime',
+      runtimeTooltip: 'Current agent runtime',
+      runtimeRust: 'Rust',
+      runtimeTypeScript: 'TypeScript',
       planMode: 'Plan Mode',
       actMode: 'Act Mode',
       planModeTooltip: 'AI will create a detailed plan for your approval before making changes',

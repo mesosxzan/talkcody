@@ -294,6 +294,10 @@ const zh: LocaleDefinition = {
     },
     toolbar: {
       model: '模型',
+      runtime: '运行时',
+      runtimeTooltip: '当前代理运行时',
+      runtimeRust: 'Rust',
+      runtimeTypeScript: 'TypeScript',
       planMode: '计划模式',
       actMode: '执行模式',
       planModeTooltip: 'AI 将先创建详细计划供您审批，然后再进行更改',

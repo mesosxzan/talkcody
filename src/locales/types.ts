@@ -290,6 +290,10 @@ export interface LocaleDefinition {
     };
     toolbar: {
       model: string;
+      runtime: string;
+      runtimeTooltip: string;
+      runtimeRust: string;
+      runtimeTypeScript: string;
       planMode: string;
       actMode: string;
       planModeTooltip: string;

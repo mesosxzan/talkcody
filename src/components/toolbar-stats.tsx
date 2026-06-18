@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp } from 'lucide-react';
+import { ArrowDown, ArrowUp, Cpu } from 'lucide-react';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/use-locale';
@@ -9,6 +9,7 @@ import {
   getContextUsageColor,
   useToolbarState,
 } from '@/hooks/use-toolbar-state';
+import { settingsManager } from '@/stores/settings-store';
 
 /**
  * Toolbar stats component displaying model, cost/tokens, and context usage.
@@ -17,6 +18,12 @@ import {
  */
 export function ToolbarStats() {
   const t = useTranslation();
+  const useRustRuntime =
+    typeof settingsManager.get('use_rust_runtime') === 'string' &&
+    settingsManager.get('use_rust_runtime').toLowerCase() === 'true';
+  const runtimeLabel = useRustRuntime
+    ? t.Chat.toolbar.runtimeRust
+    : t.Chat.toolbar.runtimeTypeScript;
   const {
     modelName,
     cost,
@@ -32,6 +39,22 @@ export function ToolbarStats() {
 
   return (
     <>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex shrink-0 items-center gap-1 rounded-md border border-purple-200 bg-purple-100 px-2 py-1 dark:border-purple-800 dark:bg-purple-900/30">
+            <Cpu className="h-3 w-3 text-purple-700 dark:text-purple-300" />
+            <span className="font-semibold text-purple-800 text-xs dark:text-purple-200">
+              {t.Chat.toolbar.runtime}: {runtimeLabel}
+            </span>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>
+            {t.Chat.toolbar.runtimeTooltip}: {runtimeLabel}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+
       {modelName && (
         <Tooltip>
           <TooltipTrigger asChild>
