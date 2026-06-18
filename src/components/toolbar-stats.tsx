@@ -17,7 +17,18 @@ import {
  */
 export function ToolbarStats() {
   const t = useTranslation();
-  const { modelName, cost, inputTokens, outputTokens, contextUsage } = useToolbarState();
+  const {
+    modelName,
+    cost,
+    inputTokens,
+    outputTokens,
+    contextUsage,
+    contextPercentLeft,
+    isAboveWarningThreshold,
+    isAboveErrorThreshold,
+    isAboveAutoCompactThreshold,
+    isAtBlockingLimit,
+  } = useToolbarState();
 
   return (
     <>
@@ -77,10 +88,28 @@ export function ToolbarStats() {
         <Tooltip>
           <TooltipTrigger asChild>
             <div
-              className={`flex flex-shrink-0 items-center gap-1 rounded-md px-2 py-1 ${getContextUsageBgColor(contextUsage)}`}
+              className={`flex flex-shrink-0 items-center gap-1 rounded-md px-2 py-1 ${getContextUsageBgColor(
+                contextUsage,
+                {
+                  contextPercentLeft,
+                  isAboveWarningThreshold,
+                  isAboveErrorThreshold,
+                  isAboveAutoCompactThreshold,
+                  isAtBlockingLimit,
+                }
+              )}`}
             >
               <span
-                className={`whitespace-nowrap font-medium text-xs ${getContextUsageColor(contextUsage)}`}
+                className={`whitespace-nowrap font-medium text-xs ${getContextUsageColor(
+                  contextUsage,
+                  {
+                    contextPercentLeft,
+                    isAboveWarningThreshold,
+                    isAboveErrorThreshold,
+                    isAboveAutoCompactThreshold,
+                    isAtBlockingLimit,
+                  }
+                )}`}
               >
                 <span className="hidden @sm:inline">Context: </span>
                 {contextUsage.toFixed(0)}%
@@ -89,6 +118,12 @@ export function ToolbarStats() {
           </TooltipTrigger>
           <TooltipContent>
             <p>Context: {contextUsage.toFixed(0)}%</p>
+            {typeof contextPercentLeft === 'number' && <p>Remaining: {contextPercentLeft}%</p>}
+            {isAtBlockingLimit && <p>Blocking limit reached</p>}
+            {!isAtBlockingLimit && isAboveErrorThreshold && <p>Error threshold reached</p>}
+            {!isAtBlockingLimit && !isAboveErrorThreshold && isAboveWarningThreshold && (
+              <p>Warning threshold reached</p>
+            )}
           </TooltipContent>
         </Tooltip>
       )}

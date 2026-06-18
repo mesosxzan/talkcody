@@ -190,6 +190,12 @@ pub enum RuntimeEvent {
         total_tokens: Option<i32>,
         cached_input_tokens: Option<i32>,
         cache_creation_input_tokens: Option<i32>,
+        context_usage: Option<f64>,
+        context_percent_left: Option<u32>,
+        is_above_warning_threshold: Option<bool>,
+        is_above_error_threshold: Option<bool>,
+        is_above_auto_compact_threshold: Option<bool>,
+        is_at_blocking_limit: Option<bool>,
     },
     /// LLM stream done
     Done {

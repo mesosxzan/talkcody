@@ -275,6 +275,25 @@ class ExecutionService {
               if (abortController.signal.aborted) return;
               executionStore.setServerStatus(taskId, status);
             },
+            onUsage: (usage) => {
+              if (abortController.signal.aborted) return;
+              useTaskStore.getState().updateTaskUsage(taskId, {
+                costDelta: 0,
+                inputTokensDelta: usage.inputTokens,
+                outputTokensDelta: usage.outputTokens,
+                requestCountDelta: 1,
+                contextUsage: usage.contextUsage,
+                contextPercentLeft: usage.contextPercentLeft,
+                isAboveWarningThreshold: usage.isAboveWarningThreshold,
+                isAboveErrorThreshold: usage.isAboveErrorThreshold,
+                isAboveAutoCompactThreshold: usage.isAboveAutoCompactThreshold,
+                isAtBlockingLimit: usage.isAtBlockingLimit,
+              });
+              useTaskStore.getState().flushRunningTaskUsage(taskId);
+              useTaskStore.getState().updateTask(taskId, {
+                last_request_input_token: usage.inputTokens,
+              });
+            },
             onToolMessage: (message: UIMessage) => {
               if (abortController.signal.aborted) return;
               const toolMessage: UIMessage = {
@@ -549,6 +568,17 @@ class ExecutionService {
       onComplete?: (fullText: string) => void;
       onError?: (error: Error) => void;
       onStatus?: (status: string) => void;
+      onUsage?: (payload: {
+        inputTokens: number;
+        outputTokens: number;
+        totalTokens?: number;
+        contextUsage?: number;
+        contextPercentLeft?: number;
+        isAboveWarningThreshold?: boolean;
+        isAboveErrorThreshold?: boolean;
+        isAboveAutoCompactThreshold?: boolean;
+        isAtBlockingLimit?: boolean;
+      }) => void;
       onToolMessage?: (message: UIMessage) => void;
       onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
     }

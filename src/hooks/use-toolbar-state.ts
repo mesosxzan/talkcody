@@ -22,15 +22,39 @@ export function formatCost(costValue: number): string {
   return `$${costValue.toFixed(4)}`;
 }
 
-export function getContextUsageColor(usage: number): string {
-  if (usage >= 90) return 'text-red-600 dark:text-red-400';
-  if (usage >= 70) return 'text-yellow-600 dark:text-yellow-400';
+export interface ContextUsageIndicators {
+  contextPercentLeft?: number;
+  isAboveWarningThreshold?: boolean;
+  isAboveErrorThreshold?: boolean;
+  isAboveAutoCompactThreshold?: boolean;
+  isAtBlockingLimit?: boolean;
+}
+
+function getContextUsageTone(
+  usage: number,
+  indicators?: ContextUsageIndicators
+): 'normal' | 'warning' | 'error' | 'blocking' {
+  if (indicators?.isAtBlockingLimit) return 'blocking';
+  if (indicators?.isAboveErrorThreshold) return 'error';
+  if (indicators?.isAboveWarningThreshold || indicators?.isAboveAutoCompactThreshold) {
+    return 'warning';
+  }
+  if (usage >= 90) return 'error';
+  if (usage >= 70) return 'warning';
+  return 'normal';
+}
+
+export function getContextUsageColor(usage: number, indicators?: ContextUsageIndicators): string {
+  const tone = getContextUsageTone(usage, indicators);
+  if (tone === 'blocking' || tone === 'error') return 'text-red-600 dark:text-red-400';
+  if (tone === 'warning') return 'text-yellow-600 dark:text-yellow-400';
   return 'text-emerald-600 dark:text-emerald-400';
 }
 
-export function getContextUsageBgColor(usage: number): string {
-  if (usage >= 90) return 'bg-red-100 dark:bg-red-900/30';
-  if (usage >= 70) return 'bg-yellow-100 dark:bg-yellow-900/30';
+export function getContextUsageBgColor(usage: number, indicators?: ContextUsageIndicators): string {
+  const tone = getContextUsageTone(usage, indicators);
+  if (tone === 'blocking' || tone === 'error') return 'bg-red-100 dark:bg-red-900/30';
+  if (tone === 'warning') return 'bg-yellow-100 dark:bg-yellow-900/30';
   return 'bg-emerald-100 dark:bg-emerald-900/30';
 }
 
@@ -40,6 +64,11 @@ export interface ToolbarState {
   inputTokens: number;
   outputTokens: number;
   contextUsage: number;
+  contextPercentLeft?: number;
+  isAboveWarningThreshold?: boolean;
+  isAboveErrorThreshold?: boolean;
+  isAboveAutoCompactThreshold?: boolean;
+  isAtBlockingLimit?: boolean;
 }
 
 export function useToolbarState(): ToolbarState {
@@ -48,6 +77,9 @@ export function useToolbarState(): ToolbarState {
   // Get current task usage from task store
   const currentTask = useTaskStore((state) =>
     state.currentTaskId ? state.getTask(state.currentTaskId) : undefined
+  );
+  const currentRunningUsage = useTaskStore((state) =>
+    state.currentTaskId ? state.runningTaskUsage.get(state.currentTaskId) : undefined
   );
   const cost = currentTask?.cost ?? 0;
   const inputTokens = currentTask?.last_request_input_token ?? currentTask?.input_token ?? 0;
@@ -147,5 +179,10 @@ export function useToolbarState(): ToolbarState {
     inputTokens,
     outputTokens,
     contextUsage,
+    contextPercentLeft: currentRunningUsage?.contextPercentLeft,
+    isAboveWarningThreshold: currentRunningUsage?.isAboveWarningThreshold,
+    isAboveErrorThreshold: currentRunningUsage?.isAboveErrorThreshold,
+    isAboveAutoCompactThreshold: currentRunningUsage?.isAboveAutoCompactThreshold,
+    isAtBlockingLimit: currentRunningUsage?.isAtBlockingLimit,
   };
 }

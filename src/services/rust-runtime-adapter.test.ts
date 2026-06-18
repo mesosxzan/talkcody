@@ -278,4 +278,61 @@ describe('RustRuntimeAdapter', () => {
       }),
     );
   });
+
+  it('forwards usage events with context threshold metadata', async () => {
+    const adapter = new RustRuntimeAdapter();
+    const onUsage = vi.fn();
+
+    const startPromise = adapter.start(
+      {
+        sessionId: 'task-1',
+        initialMessage: 'hello',
+      },
+      {
+        onChunk: vi.fn(),
+        onUsage,
+      },
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    eventHandler?.({
+      payload: {
+        type: 'usage',
+        sessionId: 'task-1',
+        taskId: 'runtime-task-1',
+        inputTokens: 1200,
+        outputTokens: 400,
+        totalTokens: 32000,
+        contextUsage: 25,
+        contextPercentLeft: 63,
+        isAboveWarningThreshold: false,
+        isAboveErrorThreshold: false,
+        isAboveAutoCompactThreshold: false,
+        isAtBlockingLimit: false,
+      },
+    });
+    eventHandler?.({
+      payload: {
+        type: 'taskCompleted',
+        sessionId: 'task-1',
+        taskId: 'runtime-task-1',
+      },
+    });
+
+    await startPromise;
+
+    expect(onUsage).toHaveBeenCalledWith({
+      inputTokens: 1200,
+      outputTokens: 400,
+      totalTokens: 32000,
+      contextUsage: 25,
+      contextPercentLeft: 63,
+      isAboveWarningThreshold: false,
+      isAboveErrorThreshold: false,
+      isAboveAutoCompactThreshold: false,
+      isAtBlockingLimit: false,
+    });
+  });
 });

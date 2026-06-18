@@ -182,6 +182,11 @@ interface TaskUsageUpdate {
   outputTokensDelta?: number;
   requestCountDelta?: number;
   contextUsage?: number;
+  contextPercentLeft?: number;
+  isAboveWarningThreshold?: boolean;
+  isAboveErrorThreshold?: boolean;
+  isAboveAutoCompactThreshold?: boolean;
+  isAtBlockingLimit?: boolean;
 }
 
 interface RunningTaskUsage {
@@ -190,6 +195,11 @@ interface RunningTaskUsage {
   outputTokensDelta: number;
   requestCountDelta: number;
   contextUsage?: number;
+  contextPercentLeft?: number;
+  isAboveWarningThreshold?: boolean;
+  isAboveErrorThreshold?: boolean;
+  isAboveAutoCompactThreshold?: boolean;
+  isAtBlockingLimit?: boolean;
 }
 
 interface TaskState {
@@ -449,6 +459,12 @@ export const useTaskStore = create<TaskState>()((set, get) => ({
         outputTokensDelta: existing.outputTokensDelta + (usage.outputTokensDelta ?? 0),
         requestCountDelta: existing.requestCountDelta + (usage.requestCountDelta ?? 0),
         contextUsage: usage.contextUsage ?? existing.contextUsage,
+        contextPercentLeft: usage.contextPercentLeft ?? existing.contextPercentLeft,
+        isAboveWarningThreshold: usage.isAboveWarningThreshold ?? existing.isAboveWarningThreshold,
+        isAboveErrorThreshold: usage.isAboveErrorThreshold ?? existing.isAboveErrorThreshold,
+        isAboveAutoCompactThreshold:
+          usage.isAboveAutoCompactThreshold ?? existing.isAboveAutoCompactThreshold,
+        isAtBlockingLimit: usage.isAtBlockingLimit ?? existing.isAtBlockingLimit,
       };
 
       runningTaskUsage.set(taskId, nextUsage);

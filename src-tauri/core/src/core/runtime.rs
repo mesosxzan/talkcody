@@ -17,7 +17,9 @@ use crate::core::{
     CompletionLoopConfig, CompletionLoopManager, CompletionLoopState, CompletionStopReason,
     ToolExecutor,
 };
+use crate::llm::ai_services::context_compaction_service::ContextCompactionService;
 use crate::llm::ai_services::model_resolver::{resolve_model_identifier, FallbackStrategy};
+use crate::llm::ai_services::types::ContextCompactionRequest;
 use crate::llm::auth::api_key_manager::ApiKeyManager;
 use crate::llm::providers::provider_registry::ProviderRegistry;
 use crate::llm::tracing::TraceWriter;
@@ -31,6 +33,7 @@ use crate::storage::{
     Storage, StoredToolResult, TaskSettings, ToolCall, ToolResultStatus, WorkspaceInfo,
 };
 use futures_util::future::BoxFuture;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
@@ -47,6 +50,8 @@ struct StreamIterationOutput {
     assistant_text: String,
     tool_calls: Vec<ToolRequest>,
     finish_reason: Option<String>,
+    error_message: Option<String>,
+    last_request_tokens: usize,
     response_id: Option<String>,
     transport_session_id: Option<String>,
     response_transport: Option<ResponseTransport>,
@@ -71,6 +76,44 @@ struct ToolExecutionEnvelope {
     additional_context: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionCompactionState {
+    summary_text: String,
+    source_message_count: usize,
+    #[serde(default)]
+    source_transient_message_count: usize,
+    last_request_tokens: usize,
+    #[serde(skip_serializing, default = "default_persist_compaction_cache")]
+    persist_cache: bool,
+}
+
+const fn default_persist_compaction_cache() -> bool {
+    true
+}
+
+#[derive(Debug, Clone)]
+struct SessionMessageRewriteState {
+    rewritten_messages: Vec<Message>,
+    source_message_count: usize,
+    source_transient_message_count: usize,
+}
+
+#[derive(Debug, Clone)]
+enum SessionMessageWindowState {
+    Compacted(SessionCompactionState),
+    Rewritten(SessionMessageRewriteState),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ContextWarningState {
+    percent_left: usize,
+    is_above_warning_threshold: bool,
+    is_above_error_threshold: bool,
+    is_above_auto_compact_threshold: bool,
+    is_at_blocking_limit: bool,
+}
+
 #[derive(Debug)]
 enum TaskTermination {
     Cancelled(String),
@@ -85,7 +128,26 @@ enum ToolApproval {
 }
 
 const MAX_AUTO_CONTINUE_ATTEMPTS: u32 = 10;
+const MAX_AUTO_COMPACTIONS: u32 = 1;
 const MAX_UNKNOWN_FINISH_REASON_RETRIES: u32 = 3;
+const PTL_HEAD_TRUNCATION_MAX_RETRIES: usize = 5;
+const PTL_HEAD_TRUNCATION_MIN_MESSAGES: usize = 6;
+const MICRO_COMPACT_CACHE_EXPIRY_SECS: i64 = 5 * 60;
+const MICRO_COMPACT_OUTPUT_CHAR_THRESHOLD: usize = 5_000;
+const MICRO_COMPACT_KEEP_RECENT: usize = 3;
+const SESSION_MEMORY_MAX_SECTION_ITEMS: usize = 6;
+const SESSION_MEMORY_MAX_PATHS: usize = 10;
+const SESSION_MEMORY_MAX_WORK_LOG_ITEMS: usize = 8;
+const SESSION_MEMORY_MAX_SECTION_CHARS: usize = 1_600;
+const SESSION_MEMORY_MAX_SUMMARY_CHARS: usize = 9_000;
+const SESSION_MEMORY_ACCEPT_RATIO: f64 = 0.72;
+const COMPACTION_CACHE_SETTINGS_KEY_PREFIX: &str = "runtime.compactionCache.";
+const AUTOCOMPACT_BUFFER_TOKENS: usize = 13_000;
+const WARNING_BUFFER_TOKENS: usize = 20_000;
+const ERROR_BUFFER_TOKENS: usize = 20_000;
+const BLOCKING_LIMIT_BUFFER_TOKENS: usize = 3_000;
+const DEFAULT_CONTEXT_LENGTH_TOKENS: usize = 200_000;
+const MAX_CONSECUTIVE_COMPACTION_FAILURES: usize = 3;
 
 fn is_truncation_finish_reason(reason: Option<&str>) -> bool {
     matches!(reason, Some("length" | "max_tokens"))
@@ -95,6 +157,35 @@ fn is_normal_finish_reason(reason: Option<&str>) -> bool {
     matches!(
         reason,
         Some("stop" | "end_turn" | "stop_sequence" | "tool_calls")
+    )
+}
+
+fn is_prompt_too_long_error(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    normalized.contains("context length exceeded")
+        || normalized.contains("prompt is too long")
+        || normalized.contains("prompt-too-long")
+        || normalized.contains("maximum context length")
+        || normalized.contains("token limit")
+        || normalized.contains("input is too long")
+        || normalized.contains("too many tokens")
+        || (normalized.contains("max_tokens") && normalized.contains("context"))
+        || (normalized.contains("prompt is too long") && normalized.contains("tokens"))
+}
+
+fn is_micro_compactable_tool_name(tool_name: &str) -> bool {
+    matches!(
+        tool_name.to_ascii_lowercase().as_str(),
+        "readfile"
+            | "read_file"
+            | "glob"
+            | "grep"
+            | "codesearch"
+            | "listfiles"
+            | "list_files"
+            | "bash"
+            | "shell"
+            | "executecommand"
     )
 }
 
@@ -118,6 +209,10 @@ pub struct CoreRuntime {
     api_key_manager: ApiKeyManager,
     /// Trace writer for runtime/tool spans
     trace_writer: Arc<TraceWriter>,
+    /// Session-scoped compaction cache reused across tasks in the same runtime.
+    session_compaction_cache: Arc<RwLock<HashMap<SessionId, SessionCompactionState>>>,
+    /// Session-scoped consecutive auto-compaction failures for circuit breaking.
+    session_compaction_failures: Arc<RwLock<HashMap<SessionId, usize>>>,
 }
 
 /// Settings validator
@@ -160,6 +255,52 @@ impl Default for SettingsValidator {
 }
 
 impl CoreRuntime {
+    fn calculate_context_warning_state(
+        token_usage: usize,
+        max_context_tokens: usize,
+        compression_enabled: bool,
+    ) -> ContextWarningState {
+        let auto_compact_threshold = max_context_tokens.saturating_sub(AUTOCOMPACT_BUFFER_TOKENS);
+        let threshold = if compression_enabled {
+            auto_compact_threshold
+        } else {
+            max_context_tokens
+        };
+        let warning_threshold = threshold.saturating_sub(WARNING_BUFFER_TOKENS);
+        let error_threshold = threshold.saturating_sub(ERROR_BUFFER_TOKENS);
+        let percent_left = if threshold == 0 || token_usage >= threshold {
+            0
+        } else {
+            (((threshold - token_usage) * 100) + (threshold / 2)) / threshold
+        };
+
+        ContextWarningState {
+            percent_left,
+            is_above_warning_threshold: token_usage >= warning_threshold,
+            is_above_error_threshold: token_usage >= error_threshold,
+            is_above_auto_compact_threshold: compression_enabled
+                && token_usage >= auto_compact_threshold,
+            is_at_blocking_limit: token_usage
+                >= max_context_tokens.saturating_sub(BLOCKING_LIMIT_BUFFER_TOKENS),
+        }
+    }
+
+    async fn load_model_context_length(&self, model: &str) -> usize {
+        let model_key = model.split('@').next().unwrap_or(model);
+        self.api_key_manager
+            .load_models_config()
+            .await
+            .ok()
+            .and_then(|config| {
+                config
+                    .models
+                    .get(model_key)
+                    .and_then(|cfg| cfg.context_length)
+            })
+            .map(|value| value as usize)
+            .unwrap_or(DEFAULT_CONTEXT_LENGTH_TOKENS)
+    }
+
     /// Create a new CoreRuntime instance
     pub async fn new(
         storage: Storage,
@@ -181,6 +322,8 @@ impl CoreRuntime {
             provider_registry,
             api_key_manager,
             trace_writer,
+            session_compaction_cache: Arc::new(RwLock::new(HashMap::new())),
+            session_compaction_failures: Arc::new(RwLock::new(HashMap::new())),
         })
     }
 
@@ -393,6 +536,9 @@ impl CoreRuntime {
         let mut did_run_session_start = false;
         let mut auto_continue_count = 0u32;
         let mut unknown_finish_reason_count = 0u32;
+        let mut message_window_state: Option<SessionMessageWindowState> = None;
+        let mut reactive_compaction_attempts = 0u32;
+        let mut last_request_tokens = 0usize;
         let completion_hook_pipeline = Self::build_completion_hook_pipeline();
 
         let task_result = loop {
@@ -435,7 +581,7 @@ impl CoreRuntime {
                 did_run_session_start = true;
             }
 
-            let mut session_messages = match self
+            let persisted_session_messages = match self
                 .session_manager
                 .get_messages(&task.session_id, None, None)
                 .await
@@ -443,29 +589,157 @@ impl CoreRuntime {
                 Ok(messages) => messages,
                 Err(error) => break Err(TaskTermination::Failed(error)),
             };
-            session_messages.extend(transient_messages.clone());
+            if !matches!(
+                message_window_state,
+                Some(SessionMessageWindowState::Rewritten(_))
+            ) {
+                message_window_state = self
+                    .resolve_cached_compaction_state(&task.session_id, &persisted_session_messages)
+                    .await
+                    .map(SessionMessageWindowState::Compacted);
+            }
+            if last_request_tokens == 0 {
+                if let Some(SessionMessageWindowState::Compacted(state)) = &message_window_state {
+                    last_request_tokens = state.last_request_tokens;
+                }
+            }
+            let session_messages = match &message_window_state {
+                Some(state) => Self::build_message_window(
+                    &task.session_id,
+                    &persisted_session_messages,
+                    &transient_messages,
+                    state,
+                ),
+                None => {
+                    let mut messages = persisted_session_messages.clone();
+                    messages.extend(transient_messages.clone());
+                    messages
+                }
+            };
+            let request_messages = Self::clear_expired_tool_results(&session_messages);
+            if let Some(state) = self
+                .maybe_build_auto_compaction_state(
+                    &task.session_id,
+                    &request_messages,
+                    persisted_session_messages.len(),
+                    transient_messages.len(),
+                    message_window_state.as_ref(),
+                    last_request_tokens,
+                    &agent_config.model,
+                )
+                .await
+            {
+                message_window_state = Some(state);
+                self.update_cached_compaction_state(
+                    &task.session_id,
+                    message_window_state.as_ref(),
+                )
+                .await;
+                last_request_tokens = 0;
+                continue;
+            }
 
             let iteration_output = match self
                 .run_llm_iteration(
                     &task,
                     &input,
                     &agent_config,
-                    &session_messages,
+                    &request_messages,
                     tool_registry.clone(),
                     &event_sender,
                 )
                 .await
             {
                 Ok(output) => output,
+                Err(error) if is_prompt_too_long_error(&error) => {
+                    if reactive_compaction_attempts >= MAX_AUTO_COMPACTIONS {
+                        break Err(TaskTermination::Failed(
+                            "Agent context exceeded the model window and reactive compaction could not recover"
+                                .to_string(),
+                        ));
+                    }
+                    reactive_compaction_attempts += 1;
+                    match self
+                        .build_prompt_too_long_recovery_state(
+                            &request_messages,
+                            &persisted_session_messages,
+                            &transient_messages,
+                            &agent_config.model,
+                        )
+                        .await
+                    {
+                        Ok(state) => {
+                            Self::apply_prompt_too_long_recovery_state(
+                                &mut message_window_state,
+                                state,
+                                &mut last_request_tokens,
+                            );
+                            continue;
+                        }
+                        Err(recovery_error) => {
+                            break Err(TaskTermination::Failed(recovery_error));
+                        }
+                    }
+                }
                 Err(error) => break Err(TaskTermination::Failed(error)),
             };
+            if iteration_output.last_request_tokens > 0 {
+                last_request_tokens = iteration_output.last_request_tokens;
+                if let Some(SessionMessageWindowState::Compacted(state)) =
+                    message_window_state.as_mut()
+                {
+                    state.last_request_tokens = iteration_output.last_request_tokens;
+                    self.update_cached_compaction_state(
+                        &task.session_id,
+                        message_window_state.as_ref(),
+                    )
+                    .await;
+                }
+            }
 
             let has_tool_calls = !iteration_output.tool_calls.is_empty();
             let finish_reason = iteration_output.finish_reason.as_deref();
 
+            if !has_tool_calls
+                && iteration_output
+                    .error_message
+                    .as_deref()
+                    .is_some_and(is_prompt_too_long_error)
+            {
+                if reactive_compaction_attempts >= MAX_AUTO_COMPACTIONS {
+                    break Err(TaskTermination::Failed(
+                        "Agent context exceeded the model window and reactive compaction could not recover"
+                            .to_string(),
+                    ));
+                }
+                reactive_compaction_attempts += 1;
+                match self
+                    .build_prompt_too_long_recovery_state(
+                        &request_messages,
+                        &persisted_session_messages,
+                        &transient_messages,
+                        &agent_config.model,
+                    )
+                    .await
+                {
+                    Ok(state) => {
+                        Self::apply_prompt_too_long_recovery_state(
+                            &mut message_window_state,
+                            state,
+                            &mut last_request_tokens,
+                        );
+                        continue;
+                    }
+                    Err(recovery_error) => {
+                        break Err(TaskTermination::Failed(recovery_error));
+                    }
+                }
+            }
+
             if !has_tool_calls && is_truncation_finish_reason(finish_reason) {
                 auto_continue_count += 1;
                 if auto_continue_count <= MAX_AUTO_CONTINUE_ATTEMPTS {
+                    let mut compactable_messages = persisted_session_messages.clone();
                     if !iteration_output.assistant_text.trim().is_empty() {
                         if let Err(error) = self
                             .persist_text_message(
@@ -479,6 +753,40 @@ impl CoreRuntime {
                             .await
                         {
                             break Err(TaskTermination::Failed(error));
+                        }
+                        compactable_messages.push(Message {
+                            id: format!("msg_{}", uuid::Uuid::new_v4()),
+                            session_id: task.session_id.clone(),
+                            role: MessageRole::Assistant,
+                            content: MessageContent::Text {
+                                text: iteration_output.assistant_text.clone(),
+                            },
+                            created_at: chrono::Utc::now().timestamp(),
+                            tool_call_id: None,
+                            parent_id: None,
+                        });
+                    }
+                    match self
+                        .compact_messages_for_continuation(
+                            &compactable_messages,
+                            &agent_config.model,
+                        )
+                        .await
+                    {
+                        Ok(state) => {
+                            message_window_state =
+                                Some(SessionMessageWindowState::Compacted(state));
+                            self.update_cached_compaction_state(
+                                &task.session_id,
+                                message_window_state.as_ref(),
+                            )
+                            .await;
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "[CoreRuntime] Failed to compact session after truncation: {}",
+                                error
+                            );
                         }
                     }
                     transient_messages.push(Self::create_transient_user_message(
@@ -652,7 +960,7 @@ impl CoreRuntime {
                 let hook_context = HookContext {
                     task_id: task.id.clone(),
                     session_id: task.session_id.clone(),
-                    messages: session_messages,
+                    messages: request_messages,
                     full_text: iteration_output.assistant_text.clone(),
                     settings: tool_settings.clone(),
                 };
@@ -815,6 +1123,815 @@ impl CoreRuntime {
         }
     }
 
+    fn create_compaction_summary_message(session_id: &str, summary_text: &str) -> Message {
+        Self::create_transient_system_message(
+            session_id,
+            format!(
+                "Conversation summary for continuation:\n{}",
+                summary_text.trim()
+            ),
+        )
+    }
+
+    fn build_message_window(
+        session_id: &str,
+        persisted_messages: &[Message],
+        transient_messages: &[Message],
+        state: &SessionMessageWindowState,
+    ) -> Vec<Message> {
+        match state {
+            SessionMessageWindowState::Compacted(state) => Self::build_compacted_message_window(
+                session_id,
+                persisted_messages,
+                transient_messages,
+                state,
+            ),
+            SessionMessageWindowState::Rewritten(state) => {
+                Self::build_rewritten_message_window(persisted_messages, transient_messages, state)
+            }
+        }
+    }
+
+    fn apply_prompt_too_long_recovery_state(
+        message_window_state: &mut Option<SessionMessageWindowState>,
+        state: SessionMessageWindowState,
+        last_request_tokens: &mut usize,
+    ) {
+        *message_window_state = Some(state);
+        // The previous token count was measured against the pre-recovery window.
+        *last_request_tokens = 0;
+    }
+
+    fn build_compacted_message_window(
+        session_id: &str,
+        persisted_messages: &[Message],
+        transient_messages: &[Message],
+        state: &SessionCompactionState,
+    ) -> Vec<Message> {
+        let mut messages = vec![Self::create_compaction_summary_message(
+            session_id,
+            &state.summary_text,
+        )];
+        messages.extend(
+            persisted_messages
+                .iter()
+                .skip(state.source_message_count)
+                .cloned(),
+        );
+        messages.extend(
+            transient_messages
+                .iter()
+                .skip(state.source_transient_message_count)
+                .cloned(),
+        );
+        messages
+    }
+
+    fn build_rewritten_message_window(
+        persisted_messages: &[Message],
+        transient_messages: &[Message],
+        state: &SessionMessageRewriteState,
+    ) -> Vec<Message> {
+        let mut messages = state.rewritten_messages.clone();
+        messages.extend(
+            persisted_messages
+                .iter()
+                .skip(state.source_message_count)
+                .cloned(),
+        );
+        messages.extend(
+            transient_messages
+                .iter()
+                .skip(state.source_transient_message_count)
+                .cloned(),
+        );
+        messages
+    }
+
+    fn format_messages_for_compaction(messages: &[Message]) -> String {
+        let mut lines = Vec::new();
+
+        for message in messages {
+            if message.parent_id.is_some() {
+                continue;
+            }
+
+            match &message.content {
+                MessageContent::Text { text } => {
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    lines.push(format!("{}: {}", message.role.as_str(), text.trim()));
+                }
+                MessageContent::ToolCalls { calls } => {
+                    if calls.is_empty() {
+                        continue;
+                    }
+                    lines.push(format!(
+                        "{} tool_calls: {}",
+                        message.role.as_str(),
+                        serde_json::to_string(calls).unwrap_or_else(|_| "[]".to_string())
+                    ));
+                }
+                MessageContent::ToolResult { result } => {
+                    lines.push(format!(
+                        "{} tool_result: {}",
+                        message.role.as_str(),
+                        serde_json::to_string(result).unwrap_or_else(|_| "{}".to_string())
+                    ));
+                }
+            }
+        }
+
+        lines.join("\n")
+    }
+
+    fn estimate_tokens_from_text(text: &str) -> usize {
+        std::cmp::max(1, text.len().div_ceil(4))
+    }
+
+    fn truncate_compaction_text(text: &str, max_length: usize) -> String {
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.len() <= max_length {
+            return normalized;
+        }
+
+        format!(
+            "{}...",
+            normalized[..max_length.saturating_sub(3)].trim_end()
+        )
+    }
+
+    fn format_session_memory_section(title: &str, items: &[String]) -> Option<String> {
+        let limited_items: Vec<String> = items
+            .iter()
+            .filter(|item| !item.trim().is_empty())
+            .take(SESSION_MEMORY_MAX_SECTION_ITEMS)
+            .cloned()
+            .collect();
+        if limited_items.is_empty() {
+            return None;
+        }
+
+        let body = limited_items
+            .iter()
+            .map(|item| format!("- {}", Self::truncate_compaction_text(item, 260)))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!(
+            "{}:\n{}",
+            title,
+            Self::truncate_compaction_text(&body, SESSION_MEMORY_MAX_SECTION_CHARS)
+        ))
+    }
+
+    fn unwrap_previous_summary(text: &str) -> String {
+        let marker = "[Previous conversation summary]";
+        if let Some(start) = text.find(marker) {
+            let tail = text[start + marker.len()..].trim();
+            return tail
+                .trim_end_matches("Please continue from where we left off.")
+                .trim()
+                .to_string();
+        }
+
+        text.to_string()
+    }
+
+    fn extract_message_text(message: &Message) -> String {
+        match &message.content {
+            MessageContent::Text { text } => {
+                Self::truncate_compaction_text(&Self::unwrap_previous_summary(text), 600)
+            }
+            MessageContent::ToolCalls { calls } => Self::truncate_compaction_text(
+                &calls
+                    .iter()
+                    .map(|call| format!("tool {}", call.name))
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+                600,
+            ),
+            MessageContent::ToolResult { result } => {
+                let output = result
+                    .output
+                    .as_ref()
+                    .map(|value| {
+                        if let Some(text) = value.as_str() {
+                            text.to_string()
+                        } else {
+                            value.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                Self::truncate_compaction_text(&format!("{}: {}", result.tool_name, output), 600)
+            }
+        }
+    }
+
+    fn is_error_like(text: &str) -> bool {
+        let normalized = text.to_ascii_lowercase();
+        normalized.contains("error")
+            || normalized.contains("failed")
+            || normalized.contains("exception")
+            || normalized.contains("traceback")
+            || normalized.contains("enoent")
+            || normalized.contains("eacces")
+            || normalized.contains("503")
+            || normalized.contains("500")
+            || normalized.contains("timeout")
+    }
+
+    fn extract_path_hints_from_text(text: &str, paths: &mut Vec<String>) {
+        if paths.len() >= SESSION_MEMORY_MAX_PATHS {
+            return;
+        }
+
+        let path_regex = regex::Regex::new(
+            r"(?:/[A-Za-z0-9._~/-]+(?:/[A-Za-z0-9._-]+)+|[A-Za-z]:\\(?:[\w. -]+\\)*[\w. -]+|(?:src|app|apps|packages|docs|tests?)/[\w./-]+)",
+        )
+        .expect("session memory path regex should compile");
+        for capture in path_regex.find_iter(text) {
+            let path = capture.as_str().to_string();
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+            if paths.len() >= SESSION_MEMORY_MAX_PATHS {
+                break;
+            }
+        }
+    }
+
+    fn extract_path_hints_from_value(value: &serde_json::Value, paths: &mut Vec<String>) {
+        if paths.len() >= SESSION_MEMORY_MAX_PATHS {
+            return;
+        }
+
+        match value {
+            serde_json::Value::String(text) => Self::extract_path_hints_from_text(text, paths),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    Self::extract_path_hints_from_value(item, paths);
+                    if paths.len() >= SESSION_MEMORY_MAX_PATHS {
+                        break;
+                    }
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (key, entry) in map {
+                    if matches!(key.as_str(), "path" | "filePath" | "file_path" | "cwd")
+                        || key.to_ascii_lowercase().contains("path")
+                        || key.to_ascii_lowercase().contains("file")
+                    {
+                        Self::extract_path_hints_from_value(entry, paths);
+                    }
+                    if key == "command" {
+                        Self::extract_path_hints_from_value(entry, paths);
+                    }
+                    if paths.len() >= SESSION_MEMORY_MAX_PATHS {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn build_session_memory_summary(messages: &[Message]) -> Option<String> {
+        if messages.is_empty() {
+            return None;
+        }
+
+        let mut previous_summaries = Vec::new();
+        let mut task_specification = Vec::new();
+        let mut current_state = Vec::new();
+        let mut files_and_paths = Vec::new();
+        let mut workflow = Vec::new();
+        let mut errors = Vec::new();
+        let mut key_results = Vec::new();
+        let mut work_log = Vec::new();
+
+        let recent_start = messages.len().saturating_sub(8);
+
+        for (index, message) in messages.iter().enumerate() {
+            let raw_text = match &message.content {
+                MessageContent::Text { text } => text.as_str(),
+                _ => "",
+            };
+            let text = Self::extract_message_text(message);
+
+            if raw_text.contains("[Previous conversation summary]") {
+                previous_summaries.push(Self::truncate_compaction_text(
+                    &Self::unwrap_previous_summary(raw_text),
+                    260,
+                ));
+            }
+
+            if message.role == MessageRole::User
+                && !text.is_empty()
+                && !raw_text.contains("[Previous conversation summary]")
+            {
+                if task_specification.len() < 4 {
+                    task_specification.push(text.clone());
+                }
+                if index >= recent_start {
+                    current_state.push(format!("User: {}", text));
+                }
+            }
+
+            if message.role == MessageRole::Assistant && !text.is_empty() {
+                if index >= recent_start {
+                    current_state.push(format!("Assistant: {}", text));
+                }
+                if !text.to_ascii_lowercase().contains("tool ") && key_results.len() < 4 {
+                    key_results.push(text.clone());
+                }
+            }
+
+            match &message.content {
+                MessageContent::ToolCalls { calls } => {
+                    for call in calls {
+                        Self::extract_path_hints_from_value(&call.input, &mut files_and_paths);
+                        if is_micro_compactable_tool_name(&call.name)
+                            && call.name.to_ascii_lowercase().contains("bash")
+                        {
+                            workflow.push(call.input.to_string());
+                        }
+                        work_log.push(format!("Assistant called {}", call.name));
+                    }
+                }
+                MessageContent::ToolResult { result } => {
+                    if let Some(output) = &result.output {
+                        Self::extract_path_hints_from_value(output, &mut files_and_paths);
+                        let output_text = output
+                            .as_str()
+                            .map(|text| text.to_string())
+                            .unwrap_or_else(|| output.to_string());
+                        if Self::is_error_like(&output_text) {
+                            errors.push(format!(
+                                "{}: {}",
+                                result.tool_name,
+                                Self::truncate_compaction_text(&output_text, 240)
+                            ));
+                        }
+                        work_log.push(format!(
+                            "Tool {} returned {}",
+                            result.tool_name,
+                            Self::truncate_compaction_text(&output_text, 140)
+                        ));
+                    }
+                }
+                MessageContent::Text { text } => {
+                    Self::extract_path_hints_from_text(text, &mut files_and_paths);
+                }
+            }
+
+            if !text.is_empty() && Self::is_error_like(&text) {
+                errors.push(text.clone());
+            }
+
+            if index
+                >= messages
+                    .len()
+                    .saturating_sub(SESSION_MEMORY_MAX_WORK_LOG_ITEMS)
+                && !text.is_empty()
+            {
+                work_log.push(format!("{}: {}", message.role.as_str(), text));
+            }
+        }
+
+        let sections = [
+            Self::format_session_memory_section("1. Previous Summary", &previous_summaries),
+            Self::format_session_memory_section("2. Task Specification", &task_specification),
+            Self::format_session_memory_section("3. Current State", &current_state),
+            Self::format_session_memory_section("4. Files and Paths", &files_and_paths),
+            Self::format_session_memory_section("5. Workflow", &workflow),
+            Self::format_session_memory_section("6. Errors and Corrections", &errors),
+            Self::format_session_memory_section("7. Key Results", &key_results),
+            Self::format_session_memory_section("8. Work Log", &work_log),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        if sections.is_empty() {
+            return None;
+        }
+
+        Some(Self::truncate_compaction_text(
+            &sections.join("\n\n"),
+            SESSION_MEMORY_MAX_SUMMARY_CHARS,
+        ))
+    }
+
+    fn build_session_memory_summary_if_effective(messages: &[Message]) -> Option<String> {
+        let summary = Self::build_session_memory_summary(messages)?;
+        let original_tokens =
+            Self::estimate_tokens_from_text(&Self::format_messages_for_compaction(messages));
+        let summary_tokens = Self::estimate_tokens_from_text(&summary);
+        if original_tokens == 0 {
+            return None;
+        }
+
+        let ratio = summary_tokens as f64 / original_tokens as f64;
+        (ratio <= SESSION_MEMORY_ACCEPT_RATIO).then_some(summary)
+    }
+
+    async fn compact_messages_for_continuation(
+        &self,
+        messages: &[Message],
+        model: &str,
+    ) -> Result<SessionCompactionState, String> {
+        self.compact_message_window_for_continuation(messages, model, messages.len(), 0)
+            .await
+    }
+
+    async fn compact_message_window_for_continuation(
+        &self,
+        messages: &[Message],
+        model: &str,
+        source_message_count: usize,
+        source_transient_message_count: usize,
+    ) -> Result<SessionCompactionState, String> {
+        let conversation_history = Self::format_messages_for_compaction(messages);
+        if conversation_history.trim().is_empty() {
+            return Err("No compactable conversation history was available".to_string());
+        }
+
+        let result = ContextCompactionService::new()
+            .compact_context(
+                ContextCompactionRequest {
+                    conversation_history,
+                    model: Some(model.to_string()),
+                    fallback_models: None,
+                },
+                &self.api_key_manager,
+                &self.provider_registry,
+            )
+            .await;
+
+        let summary_text = match result {
+            Ok(result) if !result.compressed_summary.trim().is_empty() => result.compressed_summary,
+            Ok(_) | Err(_) => Self::build_session_memory_summary_if_effective(messages)
+                .ok_or_else(|| "No compactable conversation history was available".to_string())?,
+        };
+
+        Ok(SessionCompactionState {
+            summary_text,
+            source_message_count,
+            source_transient_message_count,
+            last_request_tokens: 0,
+            persist_cache: true,
+        })
+    }
+
+    async fn resolve_cached_compaction_state(
+        &self,
+        session_id: &str,
+        persisted_messages: &[Message],
+    ) -> Option<SessionCompactionState> {
+        let cached = {
+            let cache = self.session_compaction_cache.read().await;
+            cache.get(session_id).cloned()
+        };
+
+        let cached = if let Some(cached) = cached {
+            cached
+        } else {
+            let loaded = self.load_persisted_compaction_state(session_id).await?;
+            let mut cache = self.session_compaction_cache.write().await;
+            cache.insert(session_id.to_string(), loaded.clone());
+            loaded
+        };
+
+        if persisted_messages.len() < cached.source_message_count {
+            self.clear_persisted_compaction_state(session_id).await;
+            return None;
+        }
+
+        Some(cached)
+    }
+
+    async fn is_auto_compaction_circuit_breaker_tripped(&self, session_id: &str) -> bool {
+        self.session_compaction_failures
+            .read()
+            .await
+            .get(session_id)
+            .copied()
+            .unwrap_or(0)
+            >= MAX_CONSECUTIVE_COMPACTION_FAILURES
+    }
+
+    async fn record_auto_compaction_failure(&self, session_id: &str) {
+        let mut failures = self.session_compaction_failures.write().await;
+        let next_count = failures.get(session_id).copied().unwrap_or(0) + 1;
+        failures.insert(session_id.to_string(), next_count);
+        if next_count >= MAX_CONSECUTIVE_COMPACTION_FAILURES {
+            log::warn!(
+                "[CoreRuntime] Auto-compaction circuit breaker tripped for session {} after {} failures",
+                session_id,
+                next_count
+            );
+        }
+    }
+
+    async fn reset_auto_compaction_failures(&self, session_id: &str) {
+        self.session_compaction_failures
+            .write()
+            .await
+            .remove(session_id);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn maybe_build_auto_compaction_state(
+        &self,
+        session_id: &str,
+        current_messages: &[Message],
+        source_message_count: usize,
+        source_transient_message_count: usize,
+        current_state: Option<&SessionMessageWindowState>,
+        last_request_tokens: usize,
+        model: &str,
+    ) -> Option<SessionMessageWindowState> {
+        if matches!(current_state, Some(SessionMessageWindowState::Compacted(_)))
+            || last_request_tokens == 0
+        {
+            return None;
+        }
+        if self
+            .is_auto_compaction_circuit_breaker_tripped(session_id)
+            .await
+        {
+            log::warn!(
+                "[CoreRuntime] Auto-compaction circuit breaker active for session {}",
+                session_id
+            );
+            return None;
+        }
+
+        let max_context_tokens = self.load_model_context_length(model).await;
+        let warning_state =
+            Self::calculate_context_warning_state(last_request_tokens, max_context_tokens, true);
+        if !warning_state.is_above_auto_compact_threshold {
+            return None;
+        }
+
+        match self
+            .compact_message_window_for_continuation(
+                current_messages,
+                model,
+                source_message_count,
+                source_transient_message_count,
+            )
+            .await
+        {
+            Ok(mut state) => {
+                // The old token count no longer applies to the compacted window.
+                state.last_request_tokens = 0;
+                self.reset_auto_compaction_failures(session_id).await;
+                Some(SessionMessageWindowState::Compacted(state))
+            }
+            Err(error) => {
+                self.record_auto_compaction_failure(session_id).await;
+                log::warn!(
+                    "[CoreRuntime] Failed to auto-compact from token usage threshold: {}",
+                    error
+                );
+                None
+            }
+        }
+    }
+
+    async fn update_cached_compaction_state(
+        &self,
+        session_id: &str,
+        state: Option<&SessionMessageWindowState>,
+    ) {
+        let mut cache = self.session_compaction_cache.write().await;
+        match state {
+            Some(SessionMessageWindowState::Compacted(state)) => {
+                if !state.persist_cache {
+                    return;
+                }
+                cache.insert(session_id.to_string(), state.clone());
+                drop(cache);
+                let _ = self.persist_compaction_state(session_id, state).await;
+            }
+            Some(SessionMessageWindowState::Rewritten(_)) | None => {
+                cache.remove(session_id);
+                drop(cache);
+                self.clear_persisted_compaction_state(session_id).await;
+            }
+        }
+    }
+
+    fn compaction_cache_settings_key(session_id: &str) -> String {
+        format!("{COMPACTION_CACHE_SETTINGS_KEY_PREFIX}{session_id}")
+    }
+
+    async fn load_persisted_compaction_state(
+        &self,
+        session_id: &str,
+    ) -> Option<SessionCompactionState> {
+        let key = Self::compaction_cache_settings_key(session_id);
+        self._storage
+            .settings
+            .get_setting(&key)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value::<SessionCompactionState>(value).ok())
+    }
+
+    async fn persist_compaction_state(
+        &self,
+        session_id: &str,
+        state: &SessionCompactionState,
+    ) -> Result<(), String> {
+        let key = Self::compaction_cache_settings_key(session_id);
+        let value = serde_json::to_value(state)
+            .map_err(|error| format!("Failed to serialize compaction cache: {}", error))?;
+        self._storage.settings.set_setting(&key, &value).await
+    }
+
+    async fn clear_persisted_compaction_state(&self, session_id: &str) {
+        let key = Self::compaction_cache_settings_key(session_id);
+        {
+            let mut cache = self.session_compaction_cache.write().await;
+            cache.remove(session_id);
+        }
+        let _ = self._storage.settings.delete_setting(&key).await;
+    }
+
+    async fn build_prompt_too_long_recovery_state(
+        &self,
+        current_messages: &[Message],
+        persisted_messages: &[Message],
+        transient_messages: &[Message],
+        model: &str,
+    ) -> Result<SessionMessageWindowState, String> {
+        if let Some(truncated_messages) = Self::truncate_head_for_ptl_retry(
+            current_messages,
+            PTL_HEAD_TRUNCATION_MAX_RETRIES,
+            PTL_HEAD_TRUNCATION_MIN_MESSAGES,
+        ) {
+            if truncated_messages.len() < current_messages.len() {
+                return Ok(SessionMessageWindowState::Rewritten(
+                    SessionMessageRewriteState {
+                        rewritten_messages: truncated_messages,
+                        source_message_count: persisted_messages.len(),
+                        source_transient_message_count: transient_messages.len(),
+                    },
+                ));
+            }
+        }
+
+        let compacted = self
+            .compact_message_window_for_continuation(
+                current_messages,
+                model,
+                persisted_messages.len(),
+                transient_messages.len(),
+            )
+            .await?;
+        Ok(SessionMessageWindowState::Compacted(
+            SessionCompactionState {
+                summary_text: compacted.summary_text,
+                source_message_count: compacted.source_message_count,
+                source_transient_message_count: compacted.source_transient_message_count,
+                last_request_tokens: compacted.last_request_tokens,
+                persist_cache: false,
+            },
+        ))
+    }
+
+    fn truncate_head_for_ptl_retry(
+        messages: &[Message],
+        max_retries: usize,
+        min_messages: usize,
+    ) -> Option<Vec<Message>> {
+        if messages.len() <= min_messages {
+            return None;
+        }
+
+        let mut current_messages = messages.to_vec();
+
+        for _ in 0..max_retries {
+            if current_messages.len() <= min_messages {
+                return Some(current_messages);
+            }
+
+            let (remove_start, remove_end) =
+                Self::identify_oldest_api_round_group(&current_messages)?;
+
+            current_messages = current_messages
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, message)| {
+                    ((index < remove_start) || (index > remove_end)).then_some(message)
+                })
+                .collect();
+        }
+
+        Some(current_messages)
+    }
+
+    fn identify_oldest_api_round_group(messages: &[Message]) -> Option<(usize, usize)> {
+        let assistant_indices: Vec<usize> = messages
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                (message.parent_id.is_none() && message.role == MessageRole::Assistant)
+                    .then_some(index)
+            })
+            .collect();
+
+        let start = *assistant_indices.first()?;
+        let end = assistant_indices
+            .get(1)
+            .map(|index| index.saturating_sub(1))
+            .unwrap_or_else(|| messages.len().saturating_sub(1));
+        Some((start, end))
+    }
+
+    fn clear_expired_tool_results(messages: &[Message]) -> Vec<Message> {
+        if messages.len() <= 10 {
+            return messages.to_vec();
+        }
+
+        let last_assistant_timestamp = messages
+            .iter()
+            .filter(|message| message.parent_id.is_none() && message.role == MessageRole::Assistant)
+            .map(|message| message.created_at)
+            .max();
+
+        let Some(last_assistant_timestamp) = last_assistant_timestamp else {
+            return messages.to_vec();
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        if now - last_assistant_timestamp < MICRO_COMPACT_CACHE_EXPIRY_SECS {
+            return messages.to_vec();
+        }
+
+        let compactable_ids: Vec<String> = messages
+            .iter()
+            .filter_map(|message| match &message.content {
+                MessageContent::ToolCalls { calls }
+                    if message.parent_id.is_none() && message.role == MessageRole::Assistant =>
+                {
+                    Some(
+                        calls
+                            .iter()
+                            .filter(|call| is_micro_compactable_tool_name(&call.name))
+                            .map(|call| call.id.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        if compactable_ids.len() <= MICRO_COMPACT_KEEP_RECENT {
+            return messages.to_vec();
+        }
+
+        let keep_from = compactable_ids.len() - MICRO_COMPACT_KEEP_RECENT;
+        let clear_ids = compactable_ids[..keep_from]
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+
+        messages
+            .iter()
+            .cloned()
+            .map(|mut message| {
+                if message.role != MessageRole::Tool || message.parent_id.is_some() {
+                    return message;
+                }
+
+                if let MessageContent::ToolResult { result } = &mut message.content {
+                    let should_clear = clear_ids.contains(&result.tool_call_id)
+                        && result
+                            .output
+                            .as_ref()
+                            .map(|output| {
+                                output.to_string().len() > MICRO_COMPACT_OUTPUT_CHAR_THRESHOLD
+                            })
+                            .unwrap_or(false);
+                    if should_clear {
+                        result.output = Some(serde_json::json!(format!(
+                            "[Old tool result content cleared to free context. Tool: {}]",
+                            result.tool_name
+                        )));
+                    }
+                }
+
+                message
+            })
+            .collect()
+    }
+
     fn create_trace_context(task_id: &str, iteration: u32) -> TraceContext {
         TraceContext {
             trace_id: Some(task_id.to_string()),
@@ -924,6 +2041,7 @@ impl CoreRuntime {
         let iteration_output = Arc::new(std::sync::Mutex::new(StreamIterationOutput::default()));
         let session_id = task.session_id.clone();
         let task_id = task.id.clone();
+        let max_context_tokens = self.load_model_context_length(&agent_config.model).await;
         let event_sender = event_sender.clone();
         let iteration_output_ref = iteration_output.clone();
 
@@ -1000,6 +2118,29 @@ impl CoreRuntime {
                         cached_input_tokens,
                         cache_creation_input_tokens,
                     } => {
+                        let mut state = iteration_output_ref.lock().expect("iteration output lock");
+                        state.last_request_tokens = total_tokens
+                            .and_then(|value| usize::try_from(value).ok())
+                            .unwrap_or(0);
+                        let current_tokens = state.last_request_tokens;
+                        drop(state);
+                        let context_warning = if current_tokens > 0 {
+                            Some(Self::calculate_context_warning_state(
+                                current_tokens,
+                                max_context_tokens,
+                                true,
+                            ))
+                        } else {
+                            None
+                        };
+                        let context_usage = if current_tokens > 0 && max_context_tokens > 0 {
+                            Some(
+                                ((current_tokens as f64 / max_context_tokens as f64) * 100.0)
+                                    .min(100.0),
+                            )
+                        } else {
+                            None
+                        };
                         let _ = event_sender.send(RuntimeEvent::Usage {
                             session_id: session_id.clone(),
                             input_tokens,
@@ -1007,6 +2148,22 @@ impl CoreRuntime {
                             total_tokens,
                             cached_input_tokens,
                             cache_creation_input_tokens,
+                            context_usage,
+                            context_percent_left: context_warning
+                                .as_ref()
+                                .map(|warning| warning.percent_left as u32),
+                            is_above_warning_threshold: context_warning
+                                .as_ref()
+                                .map(|warning| warning.is_above_warning_threshold),
+                            is_above_error_threshold: context_warning
+                                .as_ref()
+                                .map(|warning| warning.is_above_error_threshold),
+                            is_above_auto_compact_threshold: context_warning
+                                .as_ref()
+                                .map(|warning| warning.is_above_auto_compact_threshold),
+                            is_at_blocking_limit: context_warning
+                                .as_ref()
+                                .map(|warning| warning.is_at_blocking_limit),
                         });
                     }
                     StreamEvent::Done { finish_reason } => {
@@ -1040,6 +2197,7 @@ impl CoreRuntime {
                     StreamEvent::Error { message } => {
                         let mut state = iteration_output_ref.lock().expect("iteration output lock");
                         state.finish_reason = Some("error".to_string());
+                        state.error_message = Some(message.clone());
                         drop(state);
                         let _ = event_sender.send(RuntimeEvent::Error {
                             task_id: Some(task_id.clone()),
@@ -1556,9 +2714,46 @@ impl CoreRuntime {
         let mut final_text = String::new();
         let mut auto_continue_count = 0u32;
         let mut unknown_finish_reason_count = 0u32;
+        let mut message_window_state: Option<SessionMessageWindowState> = None;
+        let mut reactive_compaction_attempts = 0u32;
+        let mut last_request_tokens = 0usize;
 
         let subagent_result = loop {
             loop_manager.increment_iteration();
+
+            if last_request_tokens == 0 {
+                if let Some(SessionMessageWindowState::Compacted(state)) = &message_window_state {
+                    last_request_tokens = state.last_request_tokens;
+                }
+            }
+            let iteration_messages = match &message_window_state {
+                Some(state) => {
+                    Self::build_message_window(&parent_context.session_id, &messages, &[], state)
+                }
+                None => messages.clone(),
+            };
+            let request_messages = Self::clear_expired_tool_results(&iteration_messages);
+            if let Some(state) = self
+                .maybe_build_auto_compaction_state(
+                    &parent_context.session_id,
+                    &request_messages,
+                    messages.len(),
+                    0,
+                    message_window_state.as_ref(),
+                    last_request_tokens,
+                    &subagent_config.model,
+                )
+                .await
+            {
+                message_window_state = Some(state);
+                self.update_cached_compaction_state(
+                    &parent_context.session_id,
+                    message_window_state.as_ref(),
+                )
+                .await;
+                last_request_tokens = 0;
+                continue;
+            }
 
             let iteration_output = match self
                 .run_llm_iteration(
@@ -1577,18 +2772,97 @@ impl CoreRuntime {
                         }),
                     },
                     &subagent_config,
-                    &messages,
+                    &request_messages,
                     tool_registry.clone(),
                     &nested_event_sender,
                 )
                 .await
             {
                 Ok(output) => output,
+                Err(error) if is_prompt_too_long_error(&error) => {
+                    if reactive_compaction_attempts >= MAX_AUTO_COMPACTIONS {
+                        break Err(TaskTermination::Failed(
+                            "Subagent context exceeded the model window and reactive compaction could not recover"
+                                .to_string(),
+                        ));
+                    }
+                    reactive_compaction_attempts += 1;
+                    match self
+                        .build_prompt_too_long_recovery_state(
+                            &request_messages,
+                            &messages,
+                            &[],
+                            &subagent_config.model,
+                        )
+                        .await
+                    {
+                        Ok(state) => {
+                            Self::apply_prompt_too_long_recovery_state(
+                                &mut message_window_state,
+                                state,
+                                &mut last_request_tokens,
+                            );
+                            continue;
+                        }
+                        Err(recovery_error) => {
+                            break Err(TaskTermination::Failed(recovery_error));
+                        }
+                    }
+                }
                 Err(error) => break Err(TaskTermination::Failed(error)),
             };
+            if iteration_output.last_request_tokens > 0 {
+                last_request_tokens = iteration_output.last_request_tokens;
+                if let Some(SessionMessageWindowState::Compacted(state)) =
+                    message_window_state.as_mut()
+                {
+                    state.last_request_tokens = iteration_output.last_request_tokens;
+                    self.update_cached_compaction_state(
+                        &parent_context.session_id,
+                        message_window_state.as_ref(),
+                    )
+                    .await;
+                }
+            }
 
             let has_tool_calls = !iteration_output.tool_calls.is_empty();
             let finish_reason = iteration_output.finish_reason.as_deref();
+
+            if !has_tool_calls
+                && iteration_output
+                    .error_message
+                    .as_deref()
+                    .is_some_and(is_prompt_too_long_error)
+            {
+                if reactive_compaction_attempts >= MAX_AUTO_COMPACTIONS {
+                    break Err(TaskTermination::Failed(
+                        "Subagent context exceeded the model window and reactive compaction could not recover"
+                            .to_string(),
+                    ));
+                }
+                reactive_compaction_attempts += 1;
+                match self
+                    .build_prompt_too_long_recovery_state(
+                        &request_messages,
+                        &messages,
+                        &[],
+                        &subagent_config.model,
+                    )
+                    .await
+                {
+                    Ok(state) => {
+                        Self::apply_prompt_too_long_recovery_state(
+                            &mut message_window_state,
+                            state,
+                            &mut last_request_tokens,
+                        );
+                        continue;
+                    }
+                    Err(recovery_error) => {
+                        break Err(TaskTermination::Failed(recovery_error));
+                    }
+                }
+            }
 
             if !has_tool_calls && is_truncation_finish_reason(finish_reason) {
                 auto_continue_count += 1;
@@ -1619,6 +2893,21 @@ impl CoreRuntime {
                             tool_call_id: None,
                             parent_id: None,
                         });
+                    }
+                    match self
+                        .compact_messages_for_continuation(&messages, &subagent_config.model)
+                        .await
+                    {
+                        Ok(state) => {
+                            message_window_state =
+                                Some(SessionMessageWindowState::Compacted(state));
+                        }
+                        Err(error) => {
+                            log::warn!(
+                                "[CoreRuntime] Failed to compact subagent session after truncation: {}",
+                                error
+                            );
+                        }
                     }
                     messages.push(Self::create_transient_user_message(
                         &parent_context.session_id,
@@ -2670,6 +3959,1404 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_head_for_ptl_retry_removes_oldest_api_round() {
+        let session_id = "sess_ptl".to_string();
+        let messages = vec![
+            Message {
+                id: "msg_user_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Initial task".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Old assistant round".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_old".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!("old output")),
+                        status: ToolResultStatus::Success,
+                        error_message: None,
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_old".to_string()),
+                parent_id: None,
+            },
+            Message {
+                id: "msg_user_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Follow-up".to_string(),
+                },
+                created_at: 4,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_2".to_string(),
+                session_id,
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Recent assistant round".to_string(),
+                },
+                created_at: 5,
+                tool_call_id: None,
+                parent_id: None,
+            },
+        ];
+
+        let truncated = CoreRuntime::truncate_head_for_ptl_retry(&messages, 5, 3)
+            .expect("ptl retry should remove the oldest assistant round");
+
+        assert_eq!(truncated.len(), 2);
+        assert!(matches!(
+            &truncated[0].content,
+            MessageContent::Text { text } if truncated[0].role == MessageRole::User && text == "Initial task"
+        ));
+        assert!(matches!(
+            &truncated[1].content,
+            MessageContent::Text { text } if truncated[1].role == MessageRole::Assistant && text == "Recent assistant round"
+        ));
+    }
+
+    #[test]
+    fn test_clear_expired_tool_results_replaces_old_compactable_outputs() {
+        let session_id = "sess_micro".to_string();
+        let stale_timestamp =
+            chrono::Utc::now().timestamp() - (MICRO_COMPACT_CACHE_EXPIRY_SECS + 30);
+        let large_output = "x".repeat(MICRO_COMPACT_OUTPUT_CHAR_THRESHOLD + 100);
+
+        let mut messages = vec![Message {
+            id: "msg_user".to_string(),
+            session_id: session_id.clone(),
+            role: MessageRole::User,
+            content: MessageContent::Text {
+                text: "Inspect files".to_string(),
+            },
+            created_at: stale_timestamp,
+            tool_call_id: None,
+            parent_id: None,
+        }];
+
+        for index in 0..5 {
+            let tool_call_id = format!("call_{}", index);
+            messages.push(Message {
+                id: format!("msg_calls_{}", index),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: tool_call_id.clone(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({"file_path": format!("/tmp/file_{}.txt", index)}),
+                    }],
+                },
+                created_at: stale_timestamp,
+                tool_call_id: None,
+                parent_id: None,
+            });
+            messages.push(Message {
+                id: format!("msg_result_{}", index),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: tool_call_id.clone(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(large_output)),
+                        status: ToolResultStatus::Success,
+                        error_message: None,
+                    },
+                },
+                created_at: stale_timestamp,
+                tool_call_id: Some(tool_call_id),
+                parent_id: None,
+            });
+        }
+
+        let compacted = CoreRuntime::clear_expired_tool_results(&messages);
+        let cleared_result = compacted
+            .iter()
+            .find(|message| {
+                matches!(
+                    &message.content,
+                    MessageContent::ToolResult { result } if result.tool_call_id == "call_0"
+                )
+            })
+            .expect("oldest compactable tool result should still exist");
+        let newest_result = compacted
+            .iter()
+            .find(|message| {
+                matches!(
+                    &message.content,
+                    MessageContent::ToolResult { result } if result.tool_call_id == "call_3"
+                )
+            })
+            .expect("newest compactable tool result should still exist");
+
+        assert!(matches!(
+            &cleared_result.content,
+            MessageContent::ToolResult { result }
+                if result.output == Some(serde_json::json!(
+                    "[Old tool result content cleared to free context. Tool: readFile]"
+                ))
+        ));
+        assert!(matches!(
+            &newest_result.content,
+            MessageContent::ToolResult { result }
+                if result.output == Some(serde_json::json!(large_output))
+        ));
+    }
+
+    #[test]
+    fn test_build_session_memory_summary_extracts_paths_and_errors() {
+        let session_id = "sess_memory".to_string();
+        let messages = vec![
+            Message {
+                id: "msg_user".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Fix the failing build in src/core/runtime.rs".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_bash".to_string(),
+                        name: "bash".to_string(),
+                        input: serde_json::json!({
+                            "command": "cargo test --manifest-path src-tauri/core/Cargo.toml",
+                            "cwd": "/Users/a1-6/project/talkcody"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id,
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_bash".to_string(),
+                        tool_name: "bash".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(
+                            "error: failed to read src/core/runtime.rs\nENOENT /Users/a1-6/project/talkcody/src/core/runtime.rs"
+                        )),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("command failed".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_bash".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        let summary = CoreRuntime::build_session_memory_summary(&messages)
+            .expect("session memory summary should be built");
+
+        assert!(summary.contains("2. Task Specification"));
+        assert!(summary.contains("4. Files and Paths"));
+        assert!(summary.contains("runtime.rs"));
+        assert!(summary.contains("6. Errors and Corrections"));
+        assert!(summary.contains("ENOENT"));
+    }
+
+    #[tokio::test]
+    async fn test_compact_messages_for_continuation_falls_back_to_session_memory_summary() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session_id = "sess_compaction_fallback".to_string();
+        let messages = vec![
+            Message {
+                id: "msg_user".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Investigate the repeated cargo test failure in src-tauri/core/src/core/runtime.rs"
+                        .to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_read".to_string(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": "/Users/a1-6/project/talkcody/src-tauri/core/src/core/runtime.rs"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id,
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_read".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_read".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        let state = runtime
+            .compact_messages_for_continuation(&messages, "mock-model@mock-openai")
+            .await
+            .expect("compaction should fall back to session memory summary");
+
+        assert_eq!(state.source_message_count, messages.len());
+        assert!(state.summary_text.contains("Task Specification"));
+        assert!(state.summary_text.contains("Errors and Corrections"));
+        assert!(state.summary_text.contains("runtime.rs"));
+    }
+
+    #[test]
+    fn test_calculate_context_warning_state_matches_ts_thresholds() {
+        let warning = CoreRuntime::calculate_context_warning_state(100_000, 128_000, true);
+        assert_eq!(warning.percent_left, 13);
+        assert!(warning.is_above_warning_threshold);
+        assert!(warning.is_above_error_threshold);
+        assert!(!warning.is_above_auto_compact_threshold);
+        assert!(!warning.is_at_blocking_limit);
+
+        let blocking = CoreRuntime::calculate_context_warning_state(126_000, 128_000, true);
+        assert_eq!(blocking.percent_left, 0);
+        assert!(blocking.is_above_auto_compact_threshold);
+        assert!(blocking.is_at_blocking_limit);
+    }
+
+    #[tokio::test]
+    async fn test_maybe_build_auto_compaction_state_triggers_from_last_request_tokens() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        configure_mock_provider_and_model(&runtime, "https://example.com")
+            .await
+            .expect("mock provider config should be saved");
+        let session_id = "sess_token_auto_compact".to_string();
+        let messages = vec![
+            Message {
+                id: "msg_user".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Investigate the repeated cargo test failure in src-tauri/core/src/core/runtime.rs"
+                        .to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_read".to_string(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": "/Users/a1-6/project/talkcody/src-tauri/core/src/core/runtime.rs"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id,
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_read".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_read".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        let low_usage = runtime
+            .maybe_build_auto_compaction_state(
+                "sess_token_auto_compact",
+                &messages,
+                messages.len(),
+                0,
+                None,
+                90_000,
+                "mock-model@mock-openai",
+            )
+            .await;
+        assert!(low_usage.is_none());
+
+        let high_usage = runtime
+            .maybe_build_auto_compaction_state(
+                "sess_token_auto_compact",
+                &messages,
+                messages.len(),
+                0,
+                None,
+                116_000,
+                "mock-model@mock-openai",
+            )
+            .await
+            .expect("high token usage should trigger auto compaction");
+        let SessionMessageWindowState::Compacted(state) = high_usage else {
+            panic!("expected compacted state");
+        };
+        assert_eq!(state.source_message_count, messages.len());
+        assert_eq!(state.last_request_tokens, 0);
+        assert!(state.summary_text.contains("Task Specification"));
+        assert!(state.summary_text.contains("Errors and Corrections"));
+    }
+
+    #[tokio::test]
+    async fn test_maybe_build_auto_compaction_state_can_compact_rewritten_window() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        configure_mock_provider_and_model(&runtime, "https://example.com")
+            .await
+            .expect("mock provider config should be saved");
+        let session_id = "sess_rewritten_auto_compact".to_string();
+        let persisted_messages = vec![
+            Message {
+                id: "msg_user_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Initial task".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Old assistant round".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_old".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!("stale output")),
+                        status: ToolResultStatus::Success,
+                        error_message: None,
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_old".to_string()),
+                parent_id: None,
+            },
+            Message {
+                id: "msg_user_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Keep the latest debugging context in runtime.rs".to_string(),
+                },
+                created_at: 4,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Recent assistant round".to_string(),
+                },
+                created_at: 5,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_recent".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 6,
+                tool_call_id: Some("call_recent".to_string()),
+                parent_id: None,
+            },
+        ];
+        let transient_messages = vec![CoreRuntime::create_transient_user_message(
+            &session_id,
+            "Continue from where you left off.",
+        )];
+        let rewritten_state = SessionMessageWindowState::Rewritten(SessionMessageRewriteState {
+            rewritten_messages: vec![
+                persisted_messages[0].clone(),
+                persisted_messages[4].clone(),
+                persisted_messages[5].clone(),
+                transient_messages[0].clone(),
+            ],
+            source_message_count: persisted_messages.len(),
+            source_transient_message_count: transient_messages.len(),
+        });
+        let current_messages = CoreRuntime::build_message_window(
+            &session_id,
+            &persisted_messages,
+            &transient_messages,
+            &rewritten_state,
+        );
+
+        let compacted = runtime
+            .maybe_build_auto_compaction_state(
+                &session_id,
+                &current_messages,
+                persisted_messages.len(),
+                transient_messages.len(),
+                Some(&rewritten_state),
+                190_000,
+                "mock-model@mock-openai",
+            )
+            .await
+            .expect("rewritten windows should still be eligible for auto-compaction");
+        let SessionMessageWindowState::Compacted(compacted_state) = compacted else {
+            panic!("expected rewritten state to converge into compacted state");
+        };
+        assert_eq!(
+            compacted_state.source_message_count,
+            persisted_messages.len()
+        );
+        assert_eq!(
+            compacted_state.source_transient_message_count,
+            transient_messages.len()
+        );
+        assert_eq!(compacted_state.last_request_tokens, 0);
+
+        let mut future_persisted_messages = persisted_messages.clone();
+        future_persisted_messages.push(Message {
+            id: "msg_user_3".to_string(),
+            session_id: session_id.clone(),
+            role: MessageRole::User,
+            content: MessageContent::Text {
+                text: "Newest follow-up".to_string(),
+            },
+            created_at: 4,
+            tool_call_id: None,
+            parent_id: None,
+        });
+        let mut future_transient_messages = transient_messages.clone();
+        future_transient_messages.push(CoreRuntime::create_transient_user_message(
+            &session_id,
+            "Latest ephemeral reminder",
+        ));
+        let rebuilt_window = CoreRuntime::build_message_window(
+            &session_id,
+            &future_persisted_messages,
+            &future_transient_messages,
+            &SessionMessageWindowState::Compacted(compacted_state),
+        );
+
+        assert_eq!(rebuilt_window.len(), 3);
+        assert!(matches!(
+            &rebuilt_window[0].content,
+            MessageContent::Text { text } if rebuilt_window[0].role == MessageRole::System
+                && text.contains("Task Specification")
+        ));
+        assert!(matches!(
+            &rebuilt_window[1].content,
+            MessageContent::Text { text } if rebuilt_window[1].role == MessageRole::User
+                && text == "Newest follow-up"
+        ));
+        assert!(matches!(
+            &rebuilt_window[2].content,
+            MessageContent::Text { text } if rebuilt_window[2].role == MessageRole::User
+                && text == "Latest ephemeral reminder"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_auto_compaction_circuit_breaker_trips_after_consecutive_failures() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session_id = "sess_auto_compaction_breaker";
+
+        for expected_failures in 1..=MAX_CONSECUTIVE_COMPACTION_FAILURES {
+            let result = runtime
+                .maybe_build_auto_compaction_state(
+                    session_id,
+                    &[],
+                    0,
+                    0,
+                    None,
+                    190_000,
+                    "missing-model",
+                )
+                .await;
+            assert!(result.is_none());
+            assert_eq!(
+                runtime
+                    .session_compaction_failures
+                    .read()
+                    .await
+                    .get(session_id)
+                    .copied(),
+                Some(expected_failures)
+            );
+        }
+
+        assert!(
+            runtime
+                .is_auto_compaction_circuit_breaker_tripped(session_id)
+                .await
+        );
+
+        let skipped = runtime
+            .maybe_build_auto_compaction_state(
+                session_id,
+                &[],
+                0,
+                0,
+                None,
+                190_000,
+                "missing-model",
+            )
+            .await;
+        assert!(skipped.is_none());
+        assert_eq!(
+            runtime
+                .session_compaction_failures
+                .read()
+                .await
+                .get(session_id)
+                .copied(),
+            Some(MAX_CONSECUTIVE_COMPACTION_FAILURES)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_compaction_circuit_breaker_resets_after_success() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        configure_mock_provider_and_model(&runtime, "https://example.com")
+            .await
+            .expect("mock provider config should be saved");
+        let session_id = "sess_auto_compaction_reset".to_string();
+        runtime
+            .session_compaction_failures
+            .write()
+            .await
+            .insert(session_id.clone(), 2);
+
+        let messages = vec![
+            Message {
+                id: "msg_user".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Investigate the repeated cargo test failure in src-tauri/core/src/core/runtime.rs"
+                        .to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_read".to_string(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": "/Users/a1-6/project/talkcody/src-tauri/core/src/core/runtime.rs"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_read".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_read".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        let result = runtime
+            .maybe_build_auto_compaction_state(
+                &session_id,
+                &messages,
+                messages.len(),
+                0,
+                None,
+                116_000,
+                "mock-model@mock-openai",
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Some(SessionMessageWindowState::Compacted(_))
+        ));
+        assert!(!runtime
+            .session_compaction_failures
+            .read()
+            .await
+            .contains_key(&session_id));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cached_compaction_state_reuses_incremental_history() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session_id = "sess_cache_reuse".to_string();
+        runtime.session_compaction_cache.write().await.insert(
+            session_id.clone(),
+            SessionCompactionState {
+                summary_text: "Cached summary".to_string(),
+                source_message_count: 2,
+                source_transient_message_count: 0,
+                last_request_tokens: 12_345,
+                persist_cache: true,
+            },
+        );
+
+        let persisted_messages = vec![
+            Message {
+                id: "msg_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Old task".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Old answer".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_3".to_string(),
+                session_id,
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "New follow-up".to_string(),
+                },
+                created_at: 3,
+                tool_call_id: None,
+                parent_id: None,
+            },
+        ];
+
+        let cached = runtime
+            .resolve_cached_compaction_state("sess_cache_reuse", &persisted_messages)
+            .await
+            .expect("cache should be reused when message count grows");
+        let messages = CoreRuntime::build_message_window(
+            "sess_cache_reuse",
+            &persisted_messages,
+            &[],
+            &SessionMessageWindowState::Compacted(cached),
+        );
+
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(
+            &messages[0].content,
+            MessageContent::Text { text } if messages[0].role == MessageRole::System
+                && text.contains("Cached summary")
+        ));
+        assert!(matches!(
+            &messages[1].content,
+            MessageContent::Text { text } if messages[1].role == MessageRole::User
+                && text == "New follow-up"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cached_compaction_state_loads_persisted_cache_across_runtime_instances() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path().to_path_buf();
+        let attachments = root.join("attachments");
+        let session_id = "sess_cache_persisted";
+        let cached_state = SessionCompactionState {
+            summary_text: "Persisted summary".to_string(),
+            source_message_count: 2,
+            source_transient_message_count: 0,
+            last_request_tokens: 54_321,
+            persist_cache: true,
+        };
+
+        let storage = Storage::new(root.clone(), attachments.clone())
+            .await
+            .expect("Failed to create storage");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let api_key_manager = ApiKeyManager::new(storage.settings.get_db(), root.clone());
+        let runtime = CoreRuntime::new(storage, tx, ProviderRegistry::default(), api_key_manager)
+            .await
+            .expect("Failed to create runtime");
+
+        runtime
+            .update_cached_compaction_state(
+                session_id,
+                Some(&SessionMessageWindowState::Compacted(cached_state.clone())),
+            )
+            .await;
+
+        let persisted = runtime
+            .load_persisted_compaction_state(session_id)
+            .await
+            .expect("persisted cache should be written to settings");
+        assert_eq!(persisted.summary_text, cached_state.summary_text);
+        assert_eq!(
+            persisted.last_request_tokens,
+            cached_state.last_request_tokens
+        );
+
+        drop(runtime);
+
+        let storage = Storage::new(root.clone(), attachments)
+            .await
+            .expect("Failed to reopen storage");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let api_key_manager = ApiKeyManager::new(storage.settings.get_db(), root);
+        let runtime = CoreRuntime::new(storage, tx, ProviderRegistry::default(), api_key_manager)
+            .await
+            .expect("Failed to recreate runtime");
+
+        assert!(!runtime
+            .session_compaction_cache
+            .read()
+            .await
+            .contains_key(session_id));
+
+        let persisted_messages = vec![
+            Message {
+                id: "msg_1".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Old task".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_2".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Old answer".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_3".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "New follow-up".to_string(),
+                },
+                created_at: 3,
+                tool_call_id: None,
+                parent_id: None,
+            },
+        ];
+
+        let restored = runtime
+            .resolve_cached_compaction_state(session_id, &persisted_messages)
+            .await
+            .expect("persisted cache should be restored for a new runtime instance");
+        assert_eq!(restored.summary_text, cached_state.summary_text);
+        assert_eq!(
+            restored.last_request_tokens,
+            cached_state.last_request_tokens
+        );
+
+        let messages = CoreRuntime::build_message_window(
+            session_id,
+            &persisted_messages,
+            &[],
+            &SessionMessageWindowState::Compacted(restored),
+        );
+        assert_eq!(messages.len(), 2);
+        assert!(matches!(
+            &messages[0].content,
+            MessageContent::Text { text } if messages[0].role == MessageRole::System
+                && text.contains("Persisted summary")
+        ));
+        assert!(matches!(
+            &messages[1].content,
+            MessageContent::Text { text } if messages[1].role == MessageRole::User
+                && text == "New follow-up"
+        ));
+        assert!(runtime
+            .session_compaction_cache
+            .read()
+            .await
+            .contains_key(session_id));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_cached_compaction_state_invalidates_when_message_count_decreases() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        runtime.session_compaction_cache.write().await.insert(
+            "sess_cache_reset".to_string(),
+            SessionCompactionState {
+                summary_text: "Cached summary".to_string(),
+                source_message_count: 3,
+                source_transient_message_count: 0,
+                last_request_tokens: 9_999,
+                persist_cache: true,
+            },
+        );
+
+        let persisted_messages = vec![
+            Message {
+                id: "msg_1".to_string(),
+                session_id: "sess_cache_reset".to_string(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Only one".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_2".to_string(),
+                session_id: "sess_cache_reset".to_string(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Only two".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+        ];
+
+        let resolved = runtime
+            .resolve_cached_compaction_state("sess_cache_reset", &persisted_messages)
+            .await;
+        assert!(resolved.is_none());
+        assert!(!runtime
+            .session_compaction_cache
+            .read()
+            .await
+            .contains_key("sess_cache_reset"));
+    }
+
+    #[tokio::test]
+    async fn test_prompt_too_long_recovery_prefers_head_truncation_state() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session_id = "sess_rewrite".to_string();
+        let persisted_messages = vec![
+            Message {
+                id: "msg_user_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Initial task".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Old assistant round".to_string(),
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool_1".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_old".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!("old output")),
+                        status: ToolResultStatus::Success,
+                        error_message: None,
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_old".to_string()),
+                parent_id: None,
+            },
+            Message {
+                id: "msg_user_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Continue debugging".to_string(),
+                },
+                created_at: 4,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_assistant_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Assistant,
+                content: MessageContent::Text {
+                    text: "Recent assistant round".to_string(),
+                },
+                created_at: 5,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool_2".to_string(),
+                session_id: session_id.clone(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_recent".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!("recent output")),
+                        status: ToolResultStatus::Success,
+                        error_message: None,
+                    },
+                },
+                created_at: 6,
+                tool_call_id: Some("call_recent".to_string()),
+                parent_id: None,
+            },
+        ];
+        let transient_messages = vec![CoreRuntime::create_transient_user_message(
+            &session_id,
+            "Continue from where you left off.",
+        )];
+        let mut current_messages = persisted_messages.clone();
+        current_messages.extend(transient_messages.clone());
+
+        let state = runtime
+            .build_prompt_too_long_recovery_state(
+                &current_messages,
+                &persisted_messages,
+                &transient_messages,
+                "mock-model@mock-openai",
+            )
+            .await
+            .expect("ptl recovery should produce a rewrite state");
+
+        match state {
+            SessionMessageWindowState::Rewritten(rewrite) => {
+                assert_eq!(rewrite.source_message_count, persisted_messages.len());
+                assert_eq!(
+                    rewrite.source_transient_message_count,
+                    transient_messages.len()
+                );
+                assert_eq!(rewrite.rewritten_messages.len(), 4);
+                assert!(matches!(
+                    &rewrite.rewritten_messages[0].content,
+                    MessageContent::Text { text }
+                        if rewrite.rewritten_messages[0].role == MessageRole::User
+                            && text == "Initial task"
+                ));
+                assert!(matches!(
+                    &rewrite.rewritten_messages[1].content,
+                    MessageContent::Text { text }
+                        if rewrite.rewritten_messages[1].role == MessageRole::Assistant
+                            && text == "Recent assistant round"
+                ));
+                assert!(matches!(
+                    &rewrite.rewritten_messages[2].content,
+                    MessageContent::ToolResult { result }
+                        if rewrite.rewritten_messages[2].role == MessageRole::Tool
+                            && result.tool_call_id == "call_recent"
+                ));
+                assert!(matches!(
+                    &rewrite.rewritten_messages[3].content,
+                    MessageContent::Text { text }
+                        if rewrite.rewritten_messages[3].role == MessageRole::User
+                            && text == "Continue from where you left off."
+                ));
+            }
+            SessionMessageWindowState::Compacted(_) => {
+                panic!("ptl recovery should prefer head truncation before full compaction");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prompt_too_long_recovery_compaction_does_not_persist_cache() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        let session_id = "sess_reactive_compacted";
+        let existing_cache = SessionCompactionState {
+            summary_text: "Existing persisted summary".to_string(),
+            source_message_count: 2,
+            source_transient_message_count: 0,
+            last_request_tokens: 54_321,
+            persist_cache: true,
+        };
+        runtime
+            .update_cached_compaction_state(
+                session_id,
+                Some(&SessionMessageWindowState::Compacted(
+                    existing_cache.clone(),
+                )),
+            )
+            .await;
+
+        let persisted_messages = vec![
+            Message {
+                id: "msg_user_1".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Summarize why runtime.rs keeps hitting prompt-too-long.".to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_read".to_string(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": "/Users/a1-6/project/talkcody/src-tauri/core/src/core/runtime.rs"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_read".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_read".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        let recovery_state = runtime
+            .build_prompt_too_long_recovery_state(
+                &persisted_messages,
+                &persisted_messages,
+                &[],
+                "mock-model@mock-openai",
+            )
+            .await
+            .expect("ptl fallback should produce a compacted recovery state");
+
+        let SessionMessageWindowState::Compacted(recovered_cache) = recovery_state else {
+            panic!("expected prompt-too-long fallback to use compacted state");
+        };
+        assert!(!recovered_cache.persist_cache);
+
+        runtime
+            .update_cached_compaction_state(
+                session_id,
+                Some(&SessionMessageWindowState::Compacted(recovered_cache)),
+            )
+            .await;
+
+        let persisted = runtime
+            .load_persisted_compaction_state(session_id)
+            .await
+            .expect("existing persisted cache should remain available");
+        assert_eq!(persisted.summary_text, existing_cache.summary_text);
+        assert_eq!(
+            persisted.last_request_tokens,
+            existing_cache.last_request_tokens
+        );
+        assert_eq!(
+            runtime
+                .session_compaction_cache
+                .read()
+                .await
+                .get(session_id)
+                .map(|state| state.summary_text.as_str()),
+            Some(existing_cache.summary_text.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_post_recovery_usage_updates_compacted_cache_tokens() {
+        let (runtime, _temp, _rx) = create_test_runtime().await;
+        configure_mock_provider_and_model(&runtime, "https://example.com")
+            .await
+            .expect("mock provider config should be saved");
+        let session_id = "sess_post_recovery_usage";
+        let persisted_messages = vec![
+            Message {
+                id: "msg_user".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::User,
+                content: MessageContent::Text {
+                    text: "Investigate the repeated cargo test failure in src-tauri/core/src/core/runtime.rs"
+                        .to_string(),
+                },
+                created_at: 1,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_calls".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Assistant,
+                content: MessageContent::ToolCalls {
+                    calls: vec![ToolCall {
+                        id: "call_read".to_string(),
+                        name: "readFile".to_string(),
+                        input: serde_json::json!({
+                            "file_path": "/Users/a1-6/project/talkcody/src-tauri/core/src/core/runtime.rs"
+                        }),
+                    }],
+                },
+                created_at: 2,
+                tool_call_id: None,
+                parent_id: None,
+            },
+            Message {
+                id: "msg_tool".to_string(),
+                session_id: session_id.to_string(),
+                role: MessageRole::Tool,
+                content: MessageContent::ToolResult {
+                    result: StoredToolResult {
+                        tool_call_id: "call_read".to_string(),
+                        tool_name: "readFile".to_string(),
+                        input: None,
+                        output: Some(serde_json::json!(format!(
+                            "error: timeout while reading runtime.rs\n{}",
+                            "stack frame ".repeat(400)
+                        ))),
+                        status: ToolResultStatus::Error,
+                        error_message: Some("timeout".to_string()),
+                    },
+                },
+                created_at: 3,
+                tool_call_id: Some("call_read".to_string()),
+                parent_id: None,
+            },
+        ];
+
+        // Step 1: PTL recovery produces a compacted state with last_request_tokens = 0
+        let recovery_state = runtime
+            .build_prompt_too_long_recovery_state(
+                &persisted_messages,
+                &persisted_messages,
+                &[],
+                "mock-model@mock-openai",
+            )
+            .await
+            .expect("ptl recovery should succeed");
+
+        let SessionMessageWindowState::Compacted(ref recovered) = recovery_state else {
+            panic!("expected compacted recovery state");
+        };
+        assert_eq!(recovered.last_request_tokens, 0);
+
+        // Step 2: Simulate apply_prompt_too_long_recovery_state resetting stale tokens
+        let mut message_window_state = Some(recovery_state.clone());
+        let mut last_request_tokens = 0usize;
+        CoreRuntime::apply_prompt_too_long_recovery_state(
+            &mut message_window_state,
+            recovery_state,
+            &mut last_request_tokens,
+        );
+        assert_eq!(last_request_tokens, 0);
+
+        // Step 3: Simulate a subsequent normal request that returns last_request_tokens
+        let new_tokens = 80_000usize;
+        if let Some(SessionMessageWindowState::Compacted(state)) = message_window_state.as_mut() {
+            state.last_request_tokens = new_tokens;
+            last_request_tokens = new_tokens;
+            runtime
+                .update_cached_compaction_state(session_id, message_window_state.as_ref())
+                .await;
+        }
+
+        // Step 4: The message_window_state should reflect the updated token count
+        // (reactive compacted state with persist_cache=false skips shared cache,
+        //  but the loop-local message_window_state is still updated)
+        let Some(SessionMessageWindowState::Compacted(state)) = &message_window_state else {
+            panic!("expected compacted state in message_window_state");
+        };
+        assert_eq!(state.last_request_tokens, new_tokens);
+
+        // Step 5: The window should correctly show only the post-compaction tail
+        let window = CoreRuntime::build_message_window(
+            session_id,
+            &persisted_messages,
+            &[],
+            message_window_state.as_ref().unwrap(),
+        );
+        assert!(
+            window.len() < persisted_messages.len(),
+            "compacted window should be shorter than original"
+        );
+        assert!(matches!(
+            &window[0].content,
+            MessageContent::Text { text } if text.contains("Conversation summary")
+        ));
+    }
+
+    #[test]
+    fn test_apply_prompt_too_long_recovery_state_resets_stale_last_request_tokens() {
+        let mut last_request_tokens = 190_000;
+        let mut message_window_state = None;
+        let recovery_state = SessionMessageWindowState::Rewritten(SessionMessageRewriteState {
+            rewritten_messages: vec![],
+            source_message_count: 3,
+            source_transient_message_count: 1,
+        });
+
+        CoreRuntime::apply_prompt_too_long_recovery_state(
+            &mut message_window_state,
+            recovery_state,
+            &mut last_request_tokens,
+        );
+
+        assert_eq!(last_request_tokens, 0);
+        assert!(matches!(
+            message_window_state,
+            Some(SessionMessageWindowState::Rewritten(
+                SessionMessageRewriteState {
+                    source_message_count: 3,
+                    source_transient_message_count: 1,
+                    ..
+                }
+            ))
+        ));
+    }
+
+    #[test]
     fn test_should_auto_approve_respects_task_settings() {
         let edit_settings = TaskSettings {
             auto_approve_edits: Some(true),
@@ -3539,6 +6226,33 @@ mod tests {
                     event: None,
                     data: serde_json::json!({
                         "choices": [{
+                            "delta": {
+                                "content": "<analysis>Captured the partial answer.</analysis><summary>1. Primary Request and Intent:\nContinue the migration summary.\n2. Key Technical Concepts:\nRuntime truncation recovery.\n3. Files and Code Sections:\n- runtime.rs\n4. Errors and fixes:\n- The first response hit the token limit.\n5. Problem Solving:\n- Continue from the partial assistant output.\n6. All user messages:\n- Write the migration summary\n7. Pending Tasks:\n- Finish the response.\n8. Current Work:\n- The assistant already produced Part 1.\n9. Optional Next Step:\n- Resume the answer from the remaining content.</summary>"
+                            }
+                        }]
+                    })
+                    .to_string(),
+                },
+                RecordedSseEvent {
+                    event: None,
+                    data: serde_json::json!({
+                        "choices": [{
+                            "finish_reason": "stop",
+                            "delta": {}
+                        }]
+                    })
+                    .to_string(),
+                },
+                RecordedSseEvent {
+                    event: None,
+                    data: "[DONE]".to_string(),
+                },
+            ],
+            vec![
+                RecordedSseEvent {
+                    event: None,
+                    data: serde_json::json!({
+                        "choices": [{
                             "delta": { "content": "Part 2" }
                         }]
                     })
@@ -3614,12 +6328,32 @@ mod tests {
         assert_eq!(*handle.state.read().await, RuntimeTaskState::Completed);
 
         let requests = server.recorded_requests();
-        assert_eq!(requests.len(), 2);
+        assert_eq!(requests.len(), 3);
+
         let second_messages = requests[1]
             .get("messages")
             .and_then(|value| value.as_array())
-            .expect("second request should contain messages");
-        assert!(second_messages.iter().any(|message| {
+            .expect("compaction request should contain messages");
+        assert_eq!(second_messages.len(), 1);
+        assert_eq!(
+            second_messages[0].get("role"),
+            Some(&serde_json::json!("user"))
+        );
+
+        let third_messages = requests[2]
+            .get("messages")
+            .and_then(|value| value.as_array())
+            .expect("third request should contain messages");
+        assert!(third_messages.iter().any(|message| {
+            message.get("role") == Some(&serde_json::json!("system"))
+                && message
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|content| {
+                        content.contains("Conversation summary for continuation")
+                    })
+        }));
+        assert!(third_messages.iter().any(|message| {
             message.get("role") == Some(&serde_json::json!("user"))
                 && message.get("content")
                     == Some(&serde_json::json!("Continue from where you left off."))

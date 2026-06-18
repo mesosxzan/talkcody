@@ -1,6 +1,6 @@
 import { renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '@/types/task';
+import type { Task } from '../types/task';
 import { useToolbarState } from './use-toolbar-state';
 
 const {
@@ -15,6 +15,7 @@ const {
   const mockTaskStoreState = {
     currentTaskId: 'task-1',
     getTask: vi.fn(),
+    runningTaskUsage: new Map<string, Record<string, unknown>>(),
   };
   const mockUseTaskStore = (selector: (state: typeof mockTaskStoreState) => unknown) =>
     selector(mockTaskStoreState);
@@ -96,6 +97,7 @@ describe('useToolbarState', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockTaskStoreState.currentTaskId = 'task-1';
+    mockTaskStoreState.runningTaskUsage = new Map();
     mockSettingsStoreState.assistantId = 'assistant';
     mockProviderStoreState.availableModels = mockProviderStoreState.availableModels.slice(0, 1);
   });
@@ -123,5 +125,33 @@ describe('useToolbarState', () => {
     const { result } = renderHook(() => useToolbarState());
 
     expect(result.current.inputTokens).toBe(300);
+  });
+
+  it('exposes runtime threshold indicators from running task usage', () => {
+    setTask(
+      createTask({
+        context_usage: 25,
+      })
+    );
+    mockTaskStoreState.runningTaskUsage.set('task-1', {
+      costDelta: 0,
+      inputTokensDelta: 0,
+      outputTokensDelta: 0,
+      requestCountDelta: 0,
+      contextUsage: 25,
+      contextPercentLeft: 63,
+      isAboveWarningThreshold: true,
+      isAboveErrorThreshold: false,
+      isAboveAutoCompactThreshold: false,
+      isAtBlockingLimit: false,
+    });
+
+    const { result } = renderHook(() => useToolbarState());
+
+    expect(result.current.contextUsage).toBe(25);
+    expect(result.current.contextPercentLeft).toBe(63);
+    expect(result.current.isAboveWarningThreshold).toBe(true);
+    expect(result.current.isAboveErrorThreshold).toBe(false);
+    expect(result.current.isAtBlockingLimit).toBe(false);
   });
 });

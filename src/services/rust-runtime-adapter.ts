@@ -31,6 +31,12 @@ interface RuntimeEventPayload {
   totalTokens?: number;
   cachedInputTokens?: number;
   cacheCreationInputTokens?: number;
+  contextUsage?: number;
+  contextPercentLeft?: number;
+  isAboveWarningThreshold?: boolean;
+  isAboveErrorThreshold?: boolean;
+  isAboveAutoCompactThreshold?: boolean;
+  isAtBlockingLimit?: boolean;
   request?: { toolCallId: string; name: string; input: unknown };
   result?: { toolCallId: string; name?: string; success: boolean; output: unknown; error?: string };
   errorMessage?: string;
@@ -79,6 +85,17 @@ export interface AgentLoopCallbacks {
   onComplete?: (fullText: string) => void;
   onError?: (error: Error) => void;
   onStatus?: (status: string) => void;
+  onUsage?: (payload: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens?: number;
+    contextUsage?: number;
+    contextPercentLeft?: number;
+    isAboveWarningThreshold?: boolean;
+    isAboveErrorThreshold?: boolean;
+    isAboveAutoCompactThreshold?: boolean;
+    isAtBlockingLimit?: boolean;
+  }) => void;
   onToolMessage?: (message: UIMessage) => void;
   onReasoningUpdate?: (payload: { reasoningContent: string; isStreaming: boolean }) => void;
 }
@@ -423,8 +440,17 @@ export class RustRuntimeAdapter {
         break;
 
       case 'usage':
-        // Usage tracking is handled by ExecutionService via task store
-        // The Rust runtime persists usage to the database directly
+        callbacks.onUsage?.({
+          inputTokens: payload.inputTokens ?? 0,
+          outputTokens: payload.outputTokens ?? 0,
+          totalTokens: payload.totalTokens,
+          contextUsage: payload.contextUsage,
+          contextPercentLeft: payload.contextPercentLeft,
+          isAboveWarningThreshold: payload.isAboveWarningThreshold,
+          isAboveErrorThreshold: payload.isAboveErrorThreshold,
+          isAboveAutoCompactThreshold: payload.isAboveAutoCompactThreshold,
+          isAtBlockingLimit: payload.isAtBlockingLimit,
+        });
         break;
 
       case 'done':

@@ -15,6 +15,9 @@ const {
   getTaskDetailsMock,
   getTaskSettingsMock,
   updateTaskUsageMock,
+  taskStoreUpdateTaskUsageMock,
+  taskStoreFlushRunningTaskUsageMock,
+  taskStoreUpdateTaskMock,
   clearRunningTaskUsageMock,
   acquireForTaskMock,
   releaseForTaskMock,
@@ -37,6 +40,9 @@ const {
   getTaskDetailsMock: vi.fn(),
   getTaskSettingsMock: vi.fn(),
   updateTaskUsageMock: vi.fn(),
+  taskStoreUpdateTaskUsageMock: vi.fn(),
+  taskStoreFlushRunningTaskUsageMock: vi.fn(),
+  taskStoreUpdateTaskMock: vi.fn(),
   clearRunningTaskUsageMock: vi.fn(),
   acquireForTaskMock: vi.fn(),
   releaseForTaskMock: vi.fn(),
@@ -159,8 +165,10 @@ vi.mock('@/stores/task-store', () => ({
   useTaskStore: {
     getState: () => ({
       runningTaskUsage: new Map(),
+      updateTaskUsage: taskStoreUpdateTaskUsageMock,
+      flushRunningTaskUsage: taskStoreFlushRunningTaskUsageMock,
+      updateTask: taskStoreUpdateTaskMock,
       clearRunningTaskUsage: clearRunningTaskUsageMock,
-      flushRunningTaskUsage: vi.fn(),
       stopStreaming: vi.fn(),
       getMessages: vi.fn(() => []),
     }),
@@ -200,6 +208,9 @@ describe('ExecutionService Rust runtime', () => {
     getTaskDetailsMock.mockResolvedValue(null);
     getTaskSettingsMock.mockResolvedValue(null);
     updateTaskUsageMock.mockResolvedValue(undefined);
+    taskStoreUpdateTaskUsageMock.mockImplementation(() => {});
+    taskStoreFlushRunningTaskUsageMock.mockImplementation(() => {});
+    taskStoreUpdateTaskMock.mockImplementation(() => {});
     addToolMessageMock.mockResolvedValue(undefined);
     clearRunningTaskUsageMock.mockImplementation(() => {});
     createAssistantMessageMock.mockReturnValue('msg-1');
@@ -287,6 +298,48 @@ describe('ExecutionService Rust runtime', () => {
     );
     expect(finalizeMessageMock).toHaveBeenCalledWith('task-1', 'msg-1', 'hello', 'thinking');
     expect(completeExecutionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies Rust runtime usage events to the task store for live toolbar updates', async () => {
+    adapterStartMock.mockImplementation(async (_input, callbacks) => {
+      callbacks.onUsage?.({
+        inputTokens: 1200,
+        outputTokens: 400,
+        totalTokens: 32000,
+        contextUsage: 25,
+        contextPercentLeft: 63,
+        isAboveWarningThreshold: false,
+        isAboveErrorThreshold: false,
+        isAboveAutoCompactThreshold: false,
+        isAtBlockingLimit: false,
+      });
+      callbacks.onComplete?.('done');
+    });
+
+    await executionService.startExecution({
+      taskId: 'task-1',
+      messages: [],
+      model: 'ignored@test',
+      userMessage: 'latest prompt',
+    });
+
+    expect(taskStoreUpdateTaskUsageMock).toHaveBeenCalledWith('task-1', {
+      costDelta: 0,
+      inputTokensDelta: 1200,
+      outputTokensDelta: 400,
+      requestCountDelta: 1,
+      contextUsage: 25,
+      contextPercentLeft: 63,
+      isAboveWarningThreshold: false,
+      isAboveErrorThreshold: false,
+      isAboveAutoCompactThreshold: false,
+      isAtBlockingLimit: false,
+    });
+    expect(taskStoreFlushRunningTaskUsageMock).toHaveBeenCalledWith('task-1');
+    expect(taskStoreUpdateTaskMock).toHaveBeenCalledWith('task-1', {
+      last_request_input_token: 1200,
+    });
+    expect(updateTaskUsageMock).not.toHaveBeenCalled();
   });
 
   it('cancels the Rust runtime adapter when execution is stopped', async () => {
