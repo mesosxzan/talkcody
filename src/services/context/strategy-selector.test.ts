@@ -4,7 +4,7 @@ import { ContextAnalyzer } from './context-analyzer';
 import { StrategySelector } from './strategy-selector';
 
 vi.mock('@/services/code-navigation-service', () => ({
-  estimateTokens: vi.fn().mockResolvedValue(100),
+  estimateTokens: vi.fn().mockReturnValue(100),
 }));
 
 describe('StrategySelector', () => {

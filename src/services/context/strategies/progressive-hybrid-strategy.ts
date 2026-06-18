@@ -148,7 +148,7 @@ export class ProgressiveHybridStrategy {
           return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
         })
         .join('\n');
-      return await estimateTokens(text);
+      return estimateTokens(text);
     } catch {
       return messages.reduce((sum: number, m) => {
         const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);

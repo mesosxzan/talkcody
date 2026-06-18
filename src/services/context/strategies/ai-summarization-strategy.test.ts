@@ -54,7 +54,7 @@ describe('AISummarizationStrategy', () => {
   let strategy: AISummarizationStrategy;
 
   beforeEach(() => {
-    vi.mocked(estimateTokens).mockResolvedValue(100);
+    vi.mocked(estimateTokens).mockReturnValue(100);
     strategy = new AISummarizationStrategy();
   });
 

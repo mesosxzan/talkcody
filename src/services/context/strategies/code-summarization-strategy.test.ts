@@ -3,7 +3,7 @@ import type { Message as ModelMessage } from '@/services/llm/types';
 import type { ContextAnalysis, StrategyContext } from '@/types/agent';
 
 vi.mock('@/services/code-navigation-service', () => ({
-  estimateTokens: vi.fn().mockResolvedValue(100),
+  estimateTokens: vi.fn().mockReturnValue(100),
 }));
 
 vi.mock('@/services/context/context-rewriter', () => {

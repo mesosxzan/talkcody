@@ -526,7 +526,7 @@ export class ContextCompactor {
 
     if (lastTokenCount && lastTokenCount > 0) {
       try {
-        estimatedTokens = await estimateTokens(conversationHistory);
+        estimatedTokens = estimateTokens(conversationHistory);
       } catch (error) {
         logger.warn('Failed to estimate tokens:', error);
       }

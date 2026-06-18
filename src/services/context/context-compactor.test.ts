@@ -96,8 +96,8 @@ This is a test compression analysis.
     mockCompactContext.mockResolvedValue(mockResponse);
 
     // Set default return value for estimateTokens
-    // Individual tests can override with mockResolvedValueOnce
-    mockEstimateTokens.mockResolvedValue(1000);
+    // Individual tests can override with mockReturnValueOnce
+    mockEstimateTokens.mockReturnValue(1000);
 
     messageCompactor = new ContextCompactor();
   });
@@ -1609,7 +1609,7 @@ This is a test compression analysis.
 
       // Mock estimateTokens to return 20% of original (80% reduction)
       // lastTokenCount = 1000, estimated = 200 -> reduction = 80%
-      mockEstimateTokens.mockResolvedValueOnce(200);
+      mockEstimateTokens.mockReturnValueOnce(200);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1637,7 +1637,7 @@ This is a test compression analysis.
 
       // Mock estimateTokens to return exactly 25% of original (75% reduction)
       // lastTokenCount = 1000, estimated = 250 -> reduction = 75%
-      mockEstimateTokens.mockResolvedValueOnce(250);
+      mockEstimateTokens.mockReturnValueOnce(250);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1658,7 +1658,7 @@ This is a test compression analysis.
 
       // Mock estimateTokens to return 50% of original (50% reduction < 75%)
       // lastTokenCount = 1000, estimated = 500 -> reduction = 50%
-      mockEstimateTokens.mockResolvedValueOnce(500);
+      mockEstimateTokens.mockReturnValueOnce(500);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1714,7 +1714,7 @@ This is a test compression analysis.
       const messages = createTestMessages(12);
 
       // Mock estimateTokens to trigger early exit (90% reduction)
-      mockEstimateTokens.mockResolvedValueOnce(100);
+      mockEstimateTokens.mockReturnValueOnce(100);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1742,7 +1742,7 @@ This is a test compression analysis.
       const messages = createTestMessages(12);
 
       // Mock estimateTokens to return very low token count (99% reduction)
-      mockEstimateTokens.mockResolvedValueOnce(10);
+      mockEstimateTokens.mockReturnValueOnce(10);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1762,7 +1762,7 @@ This is a test compression analysis.
       const messages = createTestMessages(12);
 
       // Mock estimateTokens to return 26% of original (74% reduction < 75%)
-      mockEstimateTokens.mockResolvedValueOnce(260);
+      mockEstimateTokens.mockReturnValueOnce(260);
 
       const result = await messageCompactor.compactMessages(
         {
@@ -1787,7 +1787,7 @@ This is a test compression analysis.
       ];
 
       // Mock estimateTokens to trigger early exit
-      mockEstimateTokens.mockResolvedValueOnce(100);
+      mockEstimateTokens.mockReturnValueOnce(100);
 
       const largeTokenCount = 200000; // Large enough to trigger compression
 

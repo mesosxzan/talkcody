@@ -46,7 +46,7 @@ export class ContextAnalyzer {
       const text = messages
         .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
         .join('\n');
-      totalTokens = await estimateTokens(text);
+      totalTokens = estimateTokens(text);
     } catch {
       // Fallback: rough character-based estimate
       const totalChars = messages.reduce((sum, m) => {

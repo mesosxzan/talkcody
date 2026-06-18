@@ -3,7 +3,7 @@ import type { Message as ModelMessage } from '@/services/llm/types';
 
 // Mock estimateTokens
 vi.mock('@/services/code-navigation-service', () => ({
-  estimateTokens: vi.fn().mockResolvedValue(100),
+  estimateTokens: vi.fn().mockReturnValue(100),
 }));
 
 import { ContextAnalyzer } from './context-analyzer';
@@ -261,7 +261,9 @@ describe('ContextAnalyzer', () => {
 
     it('should fallback to character estimate on error', async () => {
       const { estimateTokens } = await import('@/services/code-navigation-service');
-      (estimateTokens as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('fail'));
+      (estimateTokens as ReturnType<typeof vi.fn>).mockImplementationOnce(() => {
+        throw new Error('fail');
+      });
 
       const messages: ModelMessage[] = [makeUserMessage('hello world')];
       const result = await analyzer.analyze(messages);

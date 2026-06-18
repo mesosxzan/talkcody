@@ -119,7 +119,7 @@ export class SelectiveRemovalStrategy {
       const text = messages
         .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
         .join('\n');
-      return await estimateTokens(text);
+      return estimateTokens(text);
     } catch {
       return messages.reduce((sum, m) => {
         const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);

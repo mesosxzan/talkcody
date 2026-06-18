@@ -55,7 +55,7 @@ describe('SelectiveRemovalStrategy', () => {
   let strategy: SelectiveRemovalStrategy;
 
   beforeEach(() => {
-    vi.mocked(estimateTokens).mockResolvedValue(100);
+    vi.mocked(estimateTokens).mockReturnValue(100);
     strategy = new SelectiveRemovalStrategy();
   });
 

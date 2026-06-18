@@ -199,11 +199,40 @@ export async function summarizeCodeContent(
  * This is used to quickly check if tree-sitter compression has reduced
  * tokens enough to skip AI-based compression.
  *
+ * Previously this called Rust via IPC (`invoke('estimate_tokens')`), but
+ * the same algorithm is now inlined as a synchronous function to avoid
+ * the IPC overhead (1-3ms per call). The Rust command remains available
+ * as a fallback for any future algorithm changes.
+ *
  * @param text - The text to estimate tokens for
  * @returns Estimated token count
  */
-export async function estimateTokens(text: string): Promise<number> {
-  return invoke('estimate_tokens', { text });
+export function estimateTokens(text: string): number {
+  let cjkCount = 0;
+  let otherCount = 0;
+  for (const c of text) {
+    if (isCjkChar(c)) {
+      cjkCount += 1;
+    } else {
+      otherCount += 1;
+    }
+  }
+  const otherTokens = otherCount > 0 ? Math.max(1, Math.ceil(otherCount / 4)) : 0;
+  return Math.max(1, cjkCount + otherTokens);
+}
+
+/** Check if a character is a CJK (Chinese/Japanese/Korean) character. */
+function isCjkChar(c: string): boolean {
+  const cp = c.codePointAt(0);
+  if (cp === undefined) return false;
+  return (
+    (cp >= 0x4e00 && cp <= 0x9fff) ||
+    (cp >= 0x3400 && cp <= 0x4dbf) ||
+    (cp >= 0xf900 && cp <= 0xfaff) ||
+    (cp >= 0x3040 && cp <= 0x309f) ||
+    (cp >= 0x30a0 && cp <= 0x30ff) ||
+    (cp >= 0xac00 && cp <= 0xd7af)
+  );
 }
 
 /**

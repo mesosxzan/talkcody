@@ -4,7 +4,7 @@ import type { ContextAnalysis, StrategyContext } from '@/types/agent';
 
 // Mock dependencies
 vi.mock('@/services/code-navigation-service', () => ({
-  estimateTokens: vi.fn().mockResolvedValue(100),
+  estimateTokens: vi.fn().mockReturnValue(100),
 }));
 
 vi.mock('@/services/context/context-filter', () => {
