@@ -1,9 +1,9 @@
-import { exists } from '@tauri-apps/plugin-fs';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { getLocale, type SupportedLocale } from '@/locales';
 import { lspConnectionManager } from '@/services/lsp/lsp-connection-manager';
 import type {
@@ -19,6 +19,7 @@ import {
   hasLspSupport,
 } from '@/services/lsp/lsp-servers';
 import { lspService } from '@/services/lsp/lsp-service';
+import { platformClient } from '@/services/platform-client';
 import { repositoryService } from '@/services/repository-service';
 import { getRelativePath, normalizeFilePath } from '@/services/repository-utils';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
@@ -158,7 +159,9 @@ Provide a file path and a 1-based line/character position as shown in editors.`,
       }
 
       resolvedPath = await normalizeFilePath(rootPath, filePath);
-      const fileExists = await exists(resolvedPath);
+      const fileExists = isTauriRuntime()
+        ? await (await import('@tauri-apps/plugin-fs')).exists(resolvedPath)
+        : await platformClient.checkFileExists(resolvedPath);
       if (!fileExists) {
         return {
           success: false,

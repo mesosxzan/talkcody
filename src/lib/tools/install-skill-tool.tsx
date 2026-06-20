@@ -1,9 +1,9 @@
-import { join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { join } from '@/lib/utils/cross-runtime-path';
 import { getAgentSkillService } from '@/services/skills/agent-skill-service';
 import { importSkillFromGitHub } from '@/services/skills/github-import-service';
 

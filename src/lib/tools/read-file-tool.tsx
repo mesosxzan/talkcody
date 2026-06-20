@@ -1,11 +1,13 @@
-import { exists, readTextFile, stat } from '@tauri-apps/plugin-fs';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
+import { fileExists } from '@/lib/utils/cross-runtime-path';
 import { fileReadStateTracker } from '@/lib/utils/file-read-state';
 
+import { platformClient } from '@/services/platform-client';
 import { repositoryService } from '@/services/repository-service';
 import { normalizeFilePath } from '@/services/repository-utils';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
@@ -161,8 +163,8 @@ You can optionally specify a starting line and number of lines to read a specifi
       file_path = await normalizeFilePath(rootPath, resolvedPath);
 
       // Check if file exists before attempting to read it
-      const fileExists = await exists(file_path);
-      if (!fileExists) {
+      const fileExistsResult = await fileExists(file_path);
+      if (!fileExistsResult) {
         return {
           success: false,
           file_path,
@@ -174,8 +176,9 @@ You can optionally specify a starting line and number of lines to read a specifi
       const fullContent = await repositoryService.readFileWithCache(file_path);
 
       // Record file read state for staleness detection in edit operations
-      if (context?.taskId) {
+      if (context?.taskId && isTauriRuntime()) {
         try {
+          const { stat } = await import('@tauri-apps/plugin-fs');
           const fileStats = await stat(file_path);
           const modifiedTime = fileStats.mtime?.getTime() || 0;
           fileReadStateTracker.recordRead(context.taskId, file_path, modifiedTime, true);

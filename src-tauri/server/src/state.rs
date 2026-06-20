@@ -9,6 +9,7 @@ use talkcody_core::llm::streaming::emitter::BroadcastEvent;
 use talkcody_core::platform::Platform;
 use talkcody_core::storage::Storage;
 use talkcody_core::streaming::StreamingManager;
+use talkcody_core::terminal::PtyManager;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 /// Server state shared across all request handlers
@@ -22,6 +23,7 @@ pub struct ServerState {
     pub event_broadcast: broadcast::Sender<RuntimeEvent>,
     pub event_receiver: Arc<tokio::sync::Mutex<broadcast::Receiver<RuntimeEvent>>>,
     pub stream_event_broadcast: broadcast::Sender<BroadcastEvent>,
+    pub pty_manager: Arc<PtyManager>,
 }
 
 impl ServerState {
@@ -35,6 +37,7 @@ impl ServerState {
         let platform = Platform::new();
         let streaming = Arc::new(RwLock::new(StreamingManager::new()));
         let (stream_event_broadcast, _) = broadcast::channel::<BroadcastEvent>(256);
+        let pty_manager = Arc::new(PtyManager::new());
 
         Self {
             config,
@@ -45,6 +48,7 @@ impl ServerState {
             event_broadcast,
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
             stream_event_broadcast,
+            pty_manager,
         }
     }
 

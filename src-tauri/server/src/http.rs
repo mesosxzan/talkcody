@@ -1,11 +1,14 @@
-use axum::extract::{Path, State};
+use axum::extract::{
+    ws::{Message, WebSocket},
+    Path, State, WebSocketUpgrade,
+};
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
-use futures_util::StreamExt;
+use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -25,7 +28,7 @@ use talkcody_core::scheduler::types::{
     ScheduledTask, ScheduledTaskExecutionPolicy, ScheduledTaskRun, ScheduledTaskSchedule,
     UpdateScheduledTaskRequest,
 };
-use talkcody_core::{directory_tree, file_search, list_files, search};
+use talkcody_core::{directory_tree, file_search, glob, list_files, search, shell_utils};
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
@@ -95,6 +98,14 @@ struct SearchFilesRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SearchFilesByGlobRequest {
+    pattern: String,
+    path: Option<String>,
+    max_results: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SearchFileContentRequest {
     query: String,
     root_path: String,
@@ -126,6 +137,16 @@ struct CheckFileExistsRequest {
 struct GitCommandRequest {
     command: String,
     args: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct ShellResult {
+    stdout: String,
+    stderr: String,
+    code: i32,
+    timed_out: bool,
+    idle_timed_out: bool,
+    pid: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +196,10 @@ pub fn create_router(state: ServerState) -> Router {
             post(invalidate_directory_path),
         )
         .route("/api/platform/list-files", post(list_project_files))
+        .route(
+            "/api/platform/search-files-by-glob",
+            post(search_files_by_glob),
+        )
         .route("/api/platform/search-files", post(search_files))
         .route(
             "/api/platform/search-file-content",
@@ -184,6 +209,8 @@ pub fn create_router(state: ServerState) -> Router {
         .route("/api/platform/write-text-file", post(write_text_file))
         .route("/api/platform/check-file-exists", post(check_file_exists))
         .route("/api/platform/git", post(git_command))
+        // Terminal WebSocket
+        .route("/api/terminal/ws", get(terminal_ws_handler))
         .route("/api/db/execute", post(db_execute))
         .route("/api/db/query", post(db_query))
         .route("/api/db/batch", post(db_batch))
@@ -285,6 +312,233 @@ pub async fn serve(
     axum::serve(listener, create_router(state)).await
 }
 
+// ============== Terminal WebSocket Handler ==============
+
+/// WebSocket endpoint for terminal PTY sessions in web mode.
+///
+/// Protocol (JSON messages):
+///
+/// Client -> Server:
+/// - `{ "type": "spawn", "cwd": "...", "cols": 80, "rows": 24, "preferredShell": null }`
+/// - `{ "type": "write", "ptyId": "uuid", "data": "ls\n" }`
+/// - `{ "type": "resize", "ptyId": "uuid", "cols": 120, "rows": 40 }`
+/// - `{ "type": "kill", "ptyId": "uuid" }`
+///
+/// Server -> Client:
+/// - `{ "type": "spawned", "ptyId": "uuid" }`
+/// - `{ "type": "output", "ptyId": "uuid", "data": "..." }`
+/// - `{ "type": "close", "ptyId": "uuid" }`
+/// - `{ "type": "error", "message": "...", "ptyId?": "uuid" }`
+
+#[derive(Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum TerminalClientMessage {
+    Spawn {
+        request_id: String,
+        cwd: Option<String>,
+        cols: Option<u16>,
+        rows: Option<u16>,
+        preferred_shell: Option<String>,
+    },
+    Write {
+        pty_id: String,
+        data: String,
+    },
+    Resize {
+        pty_id: String,
+        cols: u16,
+        rows: u16,
+    },
+    Kill {
+        pty_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum TerminalServerMessage {
+    Spawned {
+        request_id: String,
+        pty_id: String,
+    },
+    Output {
+        pty_id: String,
+        data: String,
+    },
+    Close {
+        pty_id: String,
+    },
+    Error {
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pty_id: Option<String>,
+    },
+}
+
+async fn terminal_ws_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<Arc<ServerState>>,
+) -> axum::response::Response {
+    ws.on_upgrade(move |socket| handle_terminal_socket(socket, state.pty_manager.clone()))
+}
+
+async fn handle_terminal_socket(
+    socket: WebSocket,
+    pty_manager: Arc<talkcody_core::terminal::PtyManager>,
+) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // Channel for all outgoing messages to be sent over WebSocket
+    let (outgoing_tx, mut outgoing_rx) =
+        tokio::sync::mpsc::unbounded_channel::<TerminalServerMessage>();
+
+    // Track all PTY IDs spawned on this connection for cleanup on disconnect
+    let active_ptys: Arc<tokio::sync::Mutex<Vec<String>>> =
+        Arc::new(tokio::sync::Mutex::new(Vec::new()));
+
+    // Spawn the send loop: forwards all outgoing messages to the WebSocket
+    let send_task = tokio::spawn(async move {
+        while let Some(msg) = outgoing_rx.recv().await {
+            let json = match serde_json::to_string(&msg) {
+                Ok(j) => j,
+                Err(_) => continue,
+            };
+            #[allow(clippy::useless_conversion)]
+            if ws_tx.send(Message::Text(json.into())).await.is_err() {
+                break; // WebSocket closed
+            }
+        }
+    });
+
+    // Receive loop: handle client messages
+    loop {
+        let msg = ws_rx.next().await;
+
+        match msg {
+            Some(Ok(Message::Text(text))) => {
+                handle_client_text_message(&text, &pty_manager, &active_ptys, &outgoing_tx).await;
+            }
+            Some(Ok(Message::Close(_))) | None => {
+                break;
+            }
+            _ => {}
+        }
+    }
+
+    // Clean up all PTY sessions spawned on this connection
+    let ptys_to_kill = active_ptys.lock().await.clone();
+    pty_manager.kill_all(&ptys_to_kill);
+    send_task.abort();
+    log::info!(
+        "[terminal-ws] Cleaned up {} PTY sessions on disconnect",
+        ptys_to_kill.len()
+    );
+}
+
+async fn handle_client_text_message(
+    text: &str,
+    pty_manager: &Arc<talkcody_core::terminal::PtyManager>,
+    active_ptys: &Arc<tokio::sync::Mutex<Vec<String>>>,
+    outgoing_tx: &tokio::sync::mpsc::UnboundedSender<TerminalServerMessage>,
+) {
+    let client_msg = match serde_json::from_str::<TerminalClientMessage>(text) {
+        Ok(msg) => msg,
+        Err(e) => {
+            let _ = outgoing_tx.send(TerminalServerMessage::Error {
+                message: format!("Invalid message: {}", e),
+                pty_id: None,
+            });
+            return;
+        }
+    };
+
+    match client_msg {
+        TerminalClientMessage::Spawn {
+            request_id,
+            cwd,
+            cols,
+            rows,
+            preferred_shell,
+        } => {
+            match pty_manager.spawn(
+                cwd.as_deref(),
+                cols.unwrap_or(80),
+                rows.unwrap_or(24),
+                preferred_shell.as_deref(),
+            ) {
+                Ok((pty_id, mut output_rx)) => {
+                    // Track the pty for cleanup
+                    active_ptys.lock().await.push(pty_id.clone());
+
+                    // Send spawned confirmation with request_id for correlation
+                    let _ = outgoing_tx.send(TerminalServerMessage::Spawned {
+                        request_id,
+                        pty_id: pty_id.clone(),
+                    });
+
+                    // Spawn a task to forward PTY output to the outgoing channel
+                    let fwd_tx = outgoing_tx.clone();
+                    let fwd_pty_id = pty_id.clone();
+                    let fwd_active_ptys = active_ptys.clone();
+                    let fwd_pty_manager = pty_manager.clone();
+                    tokio::spawn(async move {
+                        while let Some(output) = output_rx.recv().await {
+                            if fwd_tx
+                                .send(TerminalServerMessage::Output {
+                                    pty_id: output.pty_id,
+                                    data: output.data,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        // PTY process exited - send close message and clean up
+                        let _ = fwd_tx.send(TerminalServerMessage::Close {
+                            pty_id: fwd_pty_id.clone(),
+                        });
+                        fwd_active_ptys.lock().await.retain(|id| id != &fwd_pty_id);
+                        let _ = fwd_pty_manager.kill(&fwd_pty_id);
+                    });
+                }
+                Err(e) => {
+                    let _ = outgoing_tx.send(TerminalServerMessage::Error {
+                        message: e,
+                        pty_id: None,
+                    });
+                }
+            }
+        }
+        TerminalClientMessage::Write { pty_id, data } => {
+            if let Err(e) = pty_manager.write(&pty_id, &data) {
+                let _ = outgoing_tx.send(TerminalServerMessage::Error {
+                    message: e,
+                    pty_id: Some(pty_id),
+                });
+            }
+        }
+        TerminalClientMessage::Resize { pty_id, cols, rows } => {
+            if let Err(e) = pty_manager.resize(&pty_id, cols, rows) {
+                let _ = outgoing_tx.send(TerminalServerMessage::Error {
+                    message: e,
+                    pty_id: Some(pty_id),
+                });
+            }
+        }
+        TerminalClientMessage::Kill { pty_id } => {
+            let _ = pty_manager.kill(&pty_id);
+            active_ptys.lock().await.retain(|id| id != &pty_id);
+        }
+    }
+}
 fn cors_layer(config: &ServerConfig) -> CorsLayer {
     let layer = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
@@ -862,6 +1116,14 @@ async fn search_files(
         .map_err(ErrorResponse::bad_request)
 }
 
+async fn search_files_by_glob(
+    Json(request): Json<SearchFilesByGlobRequest>,
+) -> Result<Json<Vec<glob::GlobResult>>, ErrorResponse> {
+    glob::search_files_by_glob(request.pattern, request.path, request.max_results)
+        .map(Json)
+        .map_err(ErrorResponse::bad_request)
+}
+
 async fn search_file_content(
     Json(request): Json<SearchFileContentRequest>,
 ) -> Result<Json<Vec<search::SearchResult>>, ErrorResponse> {
@@ -902,10 +1164,97 @@ async fn check_file_exists(Json(request): Json<CheckFileExistsRequest>) -> Json<
     Json(std::path::Path::new(&request.path).exists())
 }
 
+async fn execute_git_command(args: &[String], cwd: Option<&str>) -> Result<ShellResult, String> {
+    let mut command = shell_utils::new_git_async_command();
+    for arg in args {
+        command.arg(arg);
+    }
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+
+    let output = command
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute git: {}", e))?;
+
+    Ok(ShellResult {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code().unwrap_or(-1),
+        timed_out: false,
+        idle_timed_out: false,
+        pid: None,
+    })
+}
+
+async fn execute_shell_command(command: &str, cwd: Option<&str>) -> Result<ShellResult, String> {
+    #[cfg(unix)]
+    let mut shell_command = {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let mut cmd = shell_utils::new_async_command(&shell);
+        cmd.arg("-l").arg("-i").arg("-c").arg(command);
+        cmd
+    };
+
+    #[cfg(windows)]
+    let mut shell_command = {
+        let shell = shell_utils::get_windows_shell();
+        let mut cmd = shell_utils::new_async_command(&shell);
+        if shell_utils::is_powershell(&shell) {
+            cmd.arg("-NoProfile").arg("-Command").arg(command);
+        } else {
+            cmd.arg("/C").arg(command);
+        }
+        cmd
+    };
+
+    if let Some(cwd) = cwd {
+        shell_command.current_dir(cwd);
+    }
+
+    let output = shell_command
+        .output()
+        .await
+        .map_err(|e| format!("Failed to execute shell command: {}", e))?;
+
+    Ok(ShellResult {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        code: output.status.code().unwrap_or(-1),
+        timed_out: false,
+        idle_timed_out: false,
+        pid: None,
+    })
+}
+
 async fn git_command(
     Json(request): Json<GitCommandRequest>,
 ) -> Result<Json<serde_json::Value>, ErrorResponse> {
     let result = match request.command.as_str() {
+        "execute_git" => {
+            let args: Vec<String> = serde_json::from_value(request.args["args"].clone())
+                .map_err(|e| ErrorResponse::bad_request(e.to_string()))?;
+            let cwd = request.args["cwd"].as_str();
+            serde_json::to_value(
+                execute_git_command(&args, cwd)
+                    .await
+                    .map_err(ErrorResponse::bad_request)?,
+            )
+            .map_err(|e| ErrorResponse::bad_request(e.to_string()))?
+        }
+        "execute_user_shell" => {
+            let command = request.args["command"]
+                .as_str()
+                .ok_or_else(|| ErrorResponse::bad_request("command required".into()))?;
+            let cwd = request.args["cwd"].as_str();
+            serde_json::to_value(
+                execute_shell_command(command, cwd)
+                    .await
+                    .map_err(ErrorResponse::bad_request)?,
+            )
+            .map_err(|e| ErrorResponse::bad_request(e.to_string()))?
+        }
         "git_get_status" => {
             let repo_path = request.args["repoPath"]
                 .as_str()
@@ -1721,4 +2070,88 @@ async fn scheduled_validate_cron(
     validate_cron_expr(&req.expr)
         .map(|_| StatusCode::NO_CONTENT)
         .map_err(ErrorResponse::bad_request)
+}
+
+#[cfg(test)]
+mod terminal_ws_tests {
+    use super::*;
+
+    #[test]
+    fn test_client_message_deserialization_spawn() {
+        let json = r#"{"type":"spawn","requestId":"abc123","cwd":"/tmp","cols":80,"rows":24,"preferredShell":"bash"}"#;
+        let msg: TerminalClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            TerminalClientMessage::Spawn {
+                request_id,
+                cwd,
+                cols,
+                rows,
+                preferred_shell,
+            } => {
+                assert_eq!(request_id, "abc123");
+                assert_eq!(cwd, Some("/tmp".to_string()));
+                assert_eq!(cols, Some(80));
+                assert_eq!(rows, Some(24));
+                assert_eq!(preferred_shell, Some("bash".to_string()));
+            }
+            _ => panic!("Expected Spawn message"),
+        }
+    }
+
+    #[test]
+    fn test_client_message_deserialization_write() {
+        let json = r#"{"type":"write","ptyId":"uuid-1","data":"ls\n"}"#;
+        let msg: TerminalClientMessage = serde_json::from_str(json).unwrap();
+        match msg {
+            TerminalClientMessage::Write { pty_id, data } => {
+                assert_eq!(pty_id, "uuid-1");
+                assert_eq!(data, "ls\n");
+            }
+            _ => panic!("Expected Write message"),
+        }
+    }
+
+    #[test]
+    fn test_server_message_serialization_spawned() {
+        let msg = TerminalServerMessage::Spawned {
+            request_id: "abc123".to_string(),
+            pty_id: "uuid-1".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"requestId\":\"abc123\""));
+        assert!(json.contains("\"ptyId\":\"uuid-1\""));
+        assert!(json.contains("\"type\":\"spawned\""));
+    }
+
+    #[test]
+    fn test_server_message_serialization_output() {
+        let msg = TerminalServerMessage::Output {
+            pty_id: "uuid-1".to_string(),
+            data: "hello".to_string(),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"ptyId\":\"uuid-1\""));
+        assert!(json.contains("\"type\":\"output\""));
+    }
+
+    #[test]
+    fn test_server_message_serialization_error_optional_pty_id() {
+        let msg = TerminalServerMessage::Error {
+            message: "something went wrong".to_string(),
+            pty_id: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(!json.contains("ptyId"));
+        assert!(json.contains("\"message\":\"something went wrong\""));
+    }
+
+    #[test]
+    fn test_server_message_serialization_error_with_pty_id() {
+        let msg = TerminalServerMessage::Error {
+            message: "session not found".to_string(),
+            pty_id: Some("uuid-1".to_string()),
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"ptyId\":\"uuid-1\""));
+    }
 }

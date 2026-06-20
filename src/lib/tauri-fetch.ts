@@ -1,6 +1,6 @@
 // src/lib/tauri-fetch.ts
 import { logger } from './logger';
-import { isTauriRuntime, tauriInvoke, tauriListen } from './runtime-env';
+import { getRuntimeApiUrl, isTauriRuntime, tauriInvoke, tauriListen } from './runtime-env';
 
 // Network retry configuration
 const MAX_NETWORK_RETRIES = 3;
@@ -19,6 +19,7 @@ const NETWORK_ERROR_PATTERNS = [
 
 const PRIVATE_IP_HEADER = 'x-talkcody-allow-private-ip';
 const PROXY_URL_HEADER = 'x-talkcody-proxy-url';
+const DEVICE_ID_STORAGE_KEY = 'talkcody-device-id';
 
 /**
  * Check if an error is a network-related error that should trigger retry
@@ -40,6 +41,15 @@ export function isNetworkError(error: unknown): boolean {
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getOrCreateDeviceId(): string {
+  let deviceId = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    localStorage.setItem(DEVICE_ID_STORAGE_KEY, deviceId);
+  }
+  return deviceId;
 }
 
 export interface ProxyRequest {
@@ -168,6 +178,47 @@ function isUnsupportedBodyType(body: BodyInit | null | undefined): boolean {
   );
 }
 
+function createResponseFromProxy(response: ProxyResponse): Response {
+  return new Response(response.body, {
+    status: response.status,
+    headers: new Headers(response.headers),
+  });
+}
+
+async function webProxyFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (isUnsupportedBodyType(init?.body)) {
+    return fetch(input, init);
+  }
+
+  const { url, method, headers, body } = extractRequestParams(input, init);
+  const allowPrivateIp = popAllowPrivateIp(headers);
+  const proxyUrl = popProxyUrl(headers);
+
+  const proxyRequest: ProxyRequest = {
+    url,
+    method,
+    headers,
+    body,
+    allow_private_ip: allowPrivateIp,
+    proxyUrl,
+  };
+
+  const response = await fetch(getRuntimeApiUrl('/api/proxy-fetch'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Device-ID': getOrCreateDeviceId(),
+    },
+    body: JSON.stringify(proxyRequest),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Web proxy fetch failed: ${response.status} ${response.statusText}`);
+  }
+
+  return createResponseFromProxy((await response.json()) as ProxyResponse);
+}
+
 /**
  * Simple HTTP fetch using Tauri's proxy_fetch command
  * Use this for non-streaming requests (GET, POST, etc. that return complete responses)
@@ -181,7 +232,7 @@ function isUnsupportedBodyType(body: BodyInit | null | undefined): boolean {
  */
 export async function simpleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   if (!isTauriRuntime()) {
-    return fetch(input, init);
+    return webProxyFetch(input, init);
   }
 
   // For FormData, Blob, ArrayBuffer etc., use native fetch

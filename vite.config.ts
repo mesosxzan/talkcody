@@ -46,6 +46,11 @@ export default defineConfig(() => ({
     strictPort: true,
     host,
     proxy: {
+      '/api/proxy-fetch': {
+        target: process.env.VITE_API_URL_LOCAL || 'https://api.talkcody.com',
+        changeOrigin: true,
+        secure: true,
+      },
       // Dev proxy to bypass CORS for GitHub MCP
       '/mcp/github': {
         target: 'https://api.githubcopilot.com',

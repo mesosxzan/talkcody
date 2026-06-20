@@ -4,8 +4,8 @@
  * if the file was modified externally between read and edit.
  */
 
-import { stat } from '@tauri-apps/plugin-fs';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 
 interface FileReadState {
   /** Timestamp when the file was last read by the AI */
@@ -62,6 +62,7 @@ class FileReadStateTracker {
     }
 
     try {
+      const { stat } = await import('@tauri-apps/plugin-fs');
       const fileStats = await stat(filePath);
       const currentModifiedTime = fileStats.mtime?.getTime() || 0;
 

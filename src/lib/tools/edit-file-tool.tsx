@@ -1,15 +1,16 @@
-import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import {
   isFileTooLargeForEdit,
   readFileForEdit,
   restoreLineEndings,
 } from '@/lib/utils/file-encoding';
 import { fileReadStateTracker } from '@/lib/utils/file-read-state';
+import { platformClient } from '@/services/platform-client';
 import { findActualString, normalizeQuotes, preserveQuoteStyle } from '@/utils/text-replacement';
 
 /**
@@ -229,20 +230,29 @@ Usage:
 
       // === Atomic Write ===
       // Write the file, preserving encoding
-      await writeTextFile(file_path, contentToWrite);
+      if (isTauriRuntime()) {
+        const { writeTextFile: tauriWriteTextFile } = await import('@tauri-apps/plugin-fs');
+        await tauriWriteTextFile(file_path, contentToWrite);
+      } else {
+        await platformClient.writeTextFile(file_path, contentToWrite);
+      }
 
       // Update file read state to reflect our own modification
       if (context?.taskId) {
-        try {
-          const newStats = await import('@tauri-apps/plugin-fs').then((m) => m.stat(file_path));
-          fileReadStateTracker.recordRead(
-            context.taskId,
-            file_path,
-            newStats.mtime?.getTime() || Date.now(),
-            true
-          );
-        } catch {
-          // Non-critical: just update with current time
+        if (isTauriRuntime()) {
+          try {
+            const newStats = await import('@tauri-apps/plugin-fs').then((m) => m.stat(file_path));
+            fileReadStateTracker.recordRead(
+              context.taskId,
+              file_path,
+              newStats.mtime?.getTime() || Date.now(),
+              true
+            );
+          } catch {
+            // Non-critical: just update with current time
+            fileReadStateTracker.recordRead(context.taskId, file_path, Date.now(), true);
+          }
+        } else {
           fileReadStateTracker.recordRead(context.taskId, file_path, Date.now(), true);
         }
       }

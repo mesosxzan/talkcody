@@ -25,10 +25,284 @@ struct PtySession {
     master: Box<dyn portable_pty::MasterPty + Send>,
 }
 
-type PtyRegistry = Arc<Mutex<HashMap<String, PtySession>>>;
+type PtySessionMap = Arc<Mutex<HashMap<String, PtySession>>>;
 
-lazy_static::lazy_static! {
-    static ref PTY_SESSIONS: PtyRegistry = Arc::new(Mutex::new(HashMap::new()));
+/// Manages PTY sessions, decoupled from Tauri event emission.
+/// Can be used by both Tauri commands and the HTTP server.
+/// Internally uses Arc<Mutex<...>> so it's cheaply cloneable and shareable.
+#[derive(Clone)]
+pub struct PtyManager {
+    sessions: PtySessionMap,
+}
+
+impl Default for PtyManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PtyManager {
+    pub fn new() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Spawn a new PTY session. Returns the pty_id and an mpsc receiver for output.
+    /// The caller is responsible for consuming the receiver (e.g., forwarding to Tauri events or WebSocket).
+    pub fn spawn(
+        &self,
+        cwd: Option<&str>,
+        cols: u16,
+        rows: u16,
+        preferred_shell: Option<&str>,
+    ) -> Result<(String, tokio::sync::mpsc::UnboundedReceiver<PtyOutput>), String> {
+        info!("Spawning new PTY session");
+
+        let pty_system = native_pty_system();
+        let pty_size = PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        };
+
+        let pair = pty_system
+            .openpty(pty_size)
+            .map_err(|e| format!("Failed to open PTY: {}", e))?;
+
+        // Try to spawn shell with fallback mechanism on Windows
+        #[cfg(target_os = "windows")]
+        let (shell, child) = {
+            let preferred = preferred_shell;
+
+            // If user specified a specific shell (not auto), try only that shell
+            if let Some(shell) = preferred {
+                if shell != "auto" {
+                    info!("Attempting user-specified shell: {}", shell);
+                    let mut cmd = CommandBuilder::new(shell);
+                    if let Some(cwd_path) = cwd {
+                        cmd.cwd(cwd_path);
+                    }
+                    // Set TERM environment variable to enable color support
+                    cmd.env("TERM", "xterm-256color");
+                    cmd.env("COLORTERM", "truecolor");
+                    let args = get_shell_args(shell);
+                    if !args.is_empty() {
+                        cmd.args(&args);
+                        info!("Added shell args: {:?}", args);
+                    }
+                    let child = pair.slave.spawn_command(cmd).map_err(|e| {
+                        error!("Failed to spawn user-specified shell '{}': {}", shell, e);
+                        format!("Failed to spawn shell '{}': {}", shell, e)
+                    })?;
+                    (shell.to_string(), child)
+                } else {
+                    // Auto mode: try shells in order with fallback
+                    spawn_with_fallback(&pair.slave, cwd)?
+                }
+            } else {
+                // No preference: auto mode
+                spawn_with_fallback(&pair.slave, cwd)?
+            }
+        };
+
+        #[cfg(not(target_os = "windows"))]
+        let (shell, child) = {
+            let shell = get_default_shell(preferred_shell);
+            info!("Spawning shell: {}", shell);
+            let mut cmd = CommandBuilder::new(&shell);
+
+            if let Some(cwd_path) = cwd {
+                info!("Setting working directory: {}", cwd_path);
+                cmd.cwd(cwd_path);
+            }
+
+            // Set TERM environment variable to enable color support
+            // This is critical for production builds launched from GUI (not terminal)
+            cmd.env("TERM", "xterm-256color");
+            cmd.env("COLORTERM", "truecolor");
+
+            // Check if shell is zsh and disable PROMPT_SP (partial line marker)
+            if shell.contains("zsh") {
+                cmd.args(["-o", "no_prompt_sp", "-l"]);
+            } else {
+                cmd.arg("-l");
+            }
+
+            let child = pair.slave.spawn_command(cmd).map_err(|e| {
+                error!("Failed to spawn shell '{}': {}", shell, e);
+                format!("Failed to spawn shell: {}", e)
+            })?;
+
+            (shell, child)
+        };
+
+        info!("Shell '{}' spawned successfully", shell);
+
+        // Release slave handles after spawning - we don't need it anymore
+        drop(pair.slave);
+
+        // Windows ConPTY and macOS need time to initialize before reading
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        let pty_id = uuid::Uuid::new_v4().to_string();
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| format!("Failed to take writer: {}", e))?;
+        let mut reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| format!("Failed to clone reader: {}", e))?;
+
+        // Create output channel
+        let (output_tx, output_rx) = tokio::sync::mpsc::unbounded_channel::<PtyOutput>();
+
+        // Store the session - keeping child and master alive is critical on Windows
+        {
+            let mut sessions = self.sessions.lock().unwrap();
+            sessions.insert(
+                pty_id.clone(),
+                PtySession {
+                    writer,
+                    child,
+                    master: pair.master,
+                },
+            );
+        }
+
+        // Spawn a blocking task to read output (blocking I/O needs spawn_blocking)
+        let pty_id_clone = pty_id.clone();
+        let output_tx_clone = output_tx;
+        info!("Starting PTY read loop for {}", pty_id);
+        tokio::task::spawn_blocking(move || {
+            let mut buffer = [0u8; 8192];
+            info!("PTY {} read loop started", pty_id_clone);
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => {
+                        info!("PTY {} closed (read returned 0)", pty_id_clone);
+                        // PTY closed
+                        let _ = output_tx_clone.send(PtyOutput {
+                            pty_id: pty_id_clone.clone(),
+                            data: String::new(),
+                        });
+                        break;
+                    }
+                    Ok(n) => {
+                        let data = String::from_utf8_lossy(&buffer[..n]).to_string();
+                        info!("PTY {} read {} bytes", pty_id_clone, n);
+                        let send_result = output_tx_clone.send(PtyOutput {
+                            pty_id: pty_id_clone.clone(),
+                            data,
+                        });
+                        if let Err(e) = send_result {
+                            error!("Failed to send PTY output via channel: {}", e);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error reading from PTY {}: {}", pty_id_clone, e);
+                        break;
+                    }
+                }
+            }
+
+            // Drop the sender to signal channel closure to the consumer
+            drop(output_tx_clone);
+            info!("PTY {} read loop ended", pty_id_clone);
+        });
+
+        Ok((pty_id, output_rx))
+    }
+
+    pub fn write(&self, pty_id: &str, data: &str) -> Result<(), String> {
+        info!(
+            "pty_write called: pty_id={}, data_len={}",
+            pty_id,
+            data.len()
+        );
+        let mut sessions = self.sessions.lock().unwrap();
+
+        if let Some(session) = sessions.get_mut(pty_id) {
+            session.writer.write_all(data.as_bytes()).map_err(|e| {
+                error!("Failed to write to PTY {}: {}", pty_id, e);
+                format!("Failed to write to PTY: {}", e)
+            })?;
+            session.writer.flush().map_err(|e| {
+                error!("Failed to flush PTY {}: {}", pty_id, e);
+                format!("Failed to flush PTY: {}", e)
+            })?;
+            info!("pty_write successful for {}", pty_id);
+            Ok(())
+        } else {
+            error!("PTY session {} not found", pty_id);
+            Err(format!("PTY session {} not found", pty_id))
+        }
+    }
+
+    pub fn resize(&self, pty_id: &str, cols: u16, rows: u16) -> Result<(), String> {
+        info!("Resizing PTY {} to {}x{}", pty_id, cols, rows);
+
+        let sessions = self.sessions.lock().unwrap();
+
+        if let Some(session) = sessions.get(pty_id) {
+            session
+                .master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|e| {
+                    error!("Failed to resize PTY {}: {}", pty_id, e);
+                    format!("Failed to resize PTY: {}", e)
+                })?;
+            info!("PTY {} resized successfully to {}x{}", pty_id, cols, rows);
+            Ok(())
+        } else {
+            error!("PTY session {} not found for resize", pty_id);
+            Err(format!("PTY session {} not found", pty_id))
+        }
+    }
+
+    pub fn kill(&self, pty_id: &str) -> Result<(), String> {
+        info!("Killing PTY session {}", pty_id);
+        let mut sessions = self.sessions.lock().unwrap();
+
+        if let Some(mut session) = sessions.remove(pty_id) {
+            // Kill the child process if it's still running
+            if let Err(e) = session.child.kill() {
+                warn!("Failed to kill PTY child process {}: {}", pty_id, e);
+                // Continue anyway - the process may have already exited
+            }
+            info!("PTY session {} killed successfully", pty_id);
+            Ok(())
+        } else {
+            error!("PTY session {} not found for kill", pty_id);
+            Err(format!("PTY session {} not found", pty_id))
+        }
+    }
+
+    /// Check if a session exists
+    pub fn session_exists(&self, pty_id: &str) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.contains_key(pty_id)
+    }
+
+    /// Kill all sessions (used for cleanup on WebSocket disconnect)
+    pub fn kill_all(&self, pty_ids: &[String]) {
+        for pty_id in pty_ids {
+            if let Err(e) = self.kill(pty_id) {
+                warn!("Failed to kill PTY {} during cleanup: {}", pty_id, e);
+            }
+        }
+    }
 }
 
 /// Windows shell configurations: (command, version_args, shell_args)
@@ -179,254 +453,72 @@ fn spawn_with_fallback(
     ))
 }
 
+// ============== Tauri Commands ==============
+// These commands use PtyManager internally and forward output via app.emit()
+
 #[tauri::command]
 pub async fn pty_spawn(
     app: AppHandle,
+    pty_manager: tauri::State<'_, Arc<PtyManager>>,
     cwd: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
     preferred_shell: Option<String>,
 ) -> Result<PtySpawnResult, String> {
-    info!("Spawning new PTY session");
+    let (pty_id, mut output_rx) = pty_manager.spawn(
+        cwd.as_deref(),
+        cols.unwrap_or(24),
+        rows.unwrap_or(80),
+        preferred_shell.as_deref(),
+    )?;
 
-    let pty_system = native_pty_system();
-    let pty_size = PtySize {
-        rows: rows.unwrap_or(24),
-        cols: cols.unwrap_or(80),
-        pixel_width: 0,
-        pixel_height: 0,
-    };
-
-    let pair = pty_system
-        .openpty(pty_size)
-        .map_err(|e| format!("Failed to open PTY: {}", e))?;
-
-    // Try to spawn shell with fallback mechanism on Windows
-    #[cfg(target_os = "windows")]
-    let (shell, child) = {
-        let preferred = preferred_shell.as_deref();
-
-        // If user specified a specific shell (not auto), try only that shell
-        if let Some(shell) = preferred {
-            if shell != "auto" {
-                info!("Attempting user-specified shell: {}", shell);
-                let mut cmd = CommandBuilder::new(shell);
-                if let Some(ref cwd_path) = cwd {
-                    cmd.cwd(cwd_path);
-                }
-                // Set TERM environment variable to enable color support
-                cmd.env("TERM", "xterm-256color");
-                cmd.env("COLORTERM", "truecolor");
-                let args = get_shell_args(shell);
-                if !args.is_empty() {
-                    cmd.args(&args);
-                    info!("Added shell args: {:?}", args);
-                }
-                let child = pair.slave.spawn_command(cmd).map_err(|e| {
-                    error!("Failed to spawn user-specified shell '{}': {}", shell, e);
-                    format!("Failed to spawn shell '{}': {}", shell, e)
-                })?;
-                (shell.to_string(), child)
-            } else {
-                // Auto mode: try shells in order with fallback
-                spawn_with_fallback(&pair.slave, cwd.as_deref())?
-            }
-        } else {
-            // No preference: auto mode
-            spawn_with_fallback(&pair.slave, cwd.as_deref())?
-        }
-    };
-
-    #[cfg(not(target_os = "windows"))]
-    let (shell, child) = {
-        let shell = get_default_shell(preferred_shell.as_deref());
-        info!("Spawning shell: {}", shell);
-        let mut cmd = CommandBuilder::new(&shell);
-
-        if let Some(ref cwd_path) = cwd {
-            info!("Setting working directory: {}", cwd_path);
-            cmd.cwd(cwd_path);
-        }
-
-        // Set TERM environment variable to enable color support
-        // This is critical for production builds launched from GUI (not terminal)
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
-
-        // Check if shell is zsh and disable PROMPT_SP (partial line marker)
-        if shell.contains("zsh") {
-            cmd.args(["-o", "no_prompt_sp", "-l"]);
-        } else {
-            cmd.arg("-l");
-        }
-
-        let child = pair.slave.spawn_command(cmd).map_err(|e| {
-            error!("Failed to spawn shell '{}': {}", shell, e);
-            format!("Failed to spawn shell: {}", e)
-        })?;
-
-        (shell, child)
-    };
-
-    info!("Shell '{}' spawned successfully", shell);
-
-    // Release slave handles after spawning - we don't need it anymore
-    drop(pair.slave);
-
-    // Windows ConPTY and macOS need time to initialize before reading
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    let pty_id = uuid::Uuid::new_v4().to_string();
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| format!("Failed to take writer: {}", e))?;
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("Failed to clone reader: {}", e))?;
-
-    // Store the session - keeping child and master alive is critical on Windows
-    {
-        let mut sessions = PTY_SESSIONS.lock().unwrap();
-        sessions.insert(
-            pty_id.clone(),
-            PtySession {
-                writer,
-                child,
-                master: pair.master,
-            },
-        );
-    }
-
-    // Spawn a blocking task to read output (blocking I/O needs spawn_blocking)
-    let pty_id_clone = pty_id.clone();
+    // Forward output from the channel to Tauri events
     let app_clone = app.clone();
-    info!("Starting PTY read loop for {}", pty_id);
-    tokio::task::spawn_blocking(move || {
-        let mut buffer = [0u8; 8192];
-        info!("PTY {} read loop started", pty_id_clone);
-        loop {
-            match reader.read(&mut buffer) {
-                Ok(0) => {
-                    info!("PTY {} closed (read returned 0)", pty_id_clone);
-                    // PTY closed
-                    let _ = app_clone.emit(
-                        "pty-output",
-                        PtyOutput {
-                            pty_id: pty_id_clone.clone(),
-                            data: String::new(),
-                        },
-                    );
-                    break;
-                }
-                Ok(n) => {
-                    let data = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    info!("PTY {} read {} bytes", pty_id_clone, n);
-                    let emit_result = app_clone.emit(
-                        "pty-output",
-                        PtyOutput {
-                            pty_id: pty_id_clone.clone(),
-                            data,
-                        },
-                    );
-                    if let Err(e) = emit_result {
-                        error!("Failed to emit pty-output event: {}", e);
-                    }
-                }
-                Err(e) => {
-                    error!("Error reading from PTY {}: {}", pty_id_clone, e);
-                    break;
-                }
+    let pty_id_clone = pty_id.clone();
+    let manager = (**pty_manager).clone();
+    tokio::spawn(async move {
+        while let Some(output) = output_rx.recv().await {
+            let emit_result = app_clone.emit("pty-output", &output);
+            if let Err(e) = emit_result {
+                error!("Failed to emit pty-output event: {}", e);
             }
         }
-
-        // Clean up session
-        let mut sessions = PTY_SESSIONS.lock().unwrap();
-        sessions.remove(&pty_id_clone);
-
-        // Emit close event
+        // Channel closed = PTY process exited
         let _ = app_clone.emit("pty-close", serde_json::json!({ "pty_id": pty_id_clone }));
+        // Clean up the session from PtyManager
+        if let Err(e) = manager.kill(&pty_id_clone) {
+            warn!("Failed to clean up PTY session {}: {}", pty_id_clone, e);
+        }
     });
-
-    // Child is now stored in the session, not dropped here
 
     Ok(PtySpawnResult { pty_id })
 }
 
 #[tauri::command]
-pub fn pty_write(pty_id: String, data: String) -> Result<(), String> {
-    info!(
-        "pty_write called: pty_id={}, data_len={}",
-        pty_id,
-        data.len()
-    );
-    let mut sessions = PTY_SESSIONS.lock().unwrap();
-
-    if let Some(session) = sessions.get_mut(&pty_id) {
-        session.writer.write_all(data.as_bytes()).map_err(|e| {
-            error!("Failed to write to PTY {}: {}", pty_id, e);
-            format!("Failed to write to PTY: {}", e)
-        })?;
-        session.writer.flush().map_err(|e| {
-            error!("Failed to flush PTY {}: {}", pty_id, e);
-            format!("Failed to flush PTY: {}", e)
-        })?;
-        info!("pty_write successful for {}", pty_id);
-        Ok(())
-    } else {
-        error!("PTY session {} not found", pty_id);
-        Err(format!("PTY session {} not found", pty_id))
-    }
+pub fn pty_write(
+    pty_manager: tauri::State<'_, Arc<PtyManager>>,
+    pty_id: String,
+    data: String,
+) -> Result<(), String> {
+    pty_manager.write(&pty_id, &data)
 }
 
 #[tauri::command]
-pub fn pty_resize(pty_id: String, cols: u16, rows: u16) -> Result<(), String> {
-    info!("Resizing PTY {} to {}x{}", pty_id, cols, rows);
-
-    let sessions = PTY_SESSIONS.lock().unwrap();
-
-    if let Some(session) = sessions.get(&pty_id) {
-        session
-            .master
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|e| {
-                error!("Failed to resize PTY {}: {}", pty_id, e);
-                format!("Failed to resize PTY: {}", e)
-            })?;
-        info!("PTY {} resized successfully to {}x{}", pty_id, cols, rows);
-        Ok(())
-    } else {
-        error!("PTY session {} not found for resize", pty_id);
-        Err(format!("PTY session {} not found", pty_id))
-    }
+pub fn pty_resize(
+    pty_manager: tauri::State<'_, Arc<PtyManager>>,
+    pty_id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    pty_manager.resize(&pty_id, cols, rows)
 }
 
 #[tauri::command]
-pub fn pty_kill(pty_id: String) -> Result<(), String> {
-    info!("Killing PTY session {}", pty_id);
-    let mut sessions = PTY_SESSIONS.lock().unwrap();
-
-    if let Some(mut session) = sessions.remove(&pty_id) {
-        // Kill the child process if it's still running
-        if let Err(e) = session.child.kill() {
-            warn!("Failed to kill PTY child process {}: {}", pty_id, e);
-            // Continue anyway - the process may have already exited
-        }
-        info!("PTY session {} killed successfully", pty_id);
-        Ok(())
-    } else {
-        error!("PTY session {} not found for kill", pty_id);
-        Err(format!("PTY session {} not found", pty_id))
-    }
+pub fn pty_kill(
+    pty_manager: tauri::State<'_, Arc<PtyManager>>,
+    pty_id: String,
+) -> Result<(), String> {
+    pty_manager.kill(&pty_id)
 }
 
 #[cfg(test)]
@@ -477,6 +569,32 @@ mod tests {
         assert_ne!(shell, "auto", "Should not return 'auto' as shell name");
     }
 
+    /// Test PtyManager creation
+    #[test]
+    fn test_pty_manager_new() {
+        let _manager = PtyManager::new();
+    }
+
+    /// Test PtyManager write/resize/kill on non-existent session
+    #[test]
+    fn test_pty_manager_nonexistent_session() {
+        let manager = PtyManager::new();
+        assert!(manager.write("nonexistent", "test").is_err());
+        assert!(manager.resize("nonexistent", 80, 24).is_err());
+        assert!(manager.kill("nonexistent").is_err());
+        assert!(!manager.session_exists("nonexistent"));
+    }
+
+    /// Test PtyManager clone shares state
+    #[test]
+    fn test_pty_manager_clone_shares_state() {
+        let manager = PtyManager::new();
+        let manager2 = manager.clone();
+        // Both should share the same sessions map
+        assert!(!manager.session_exists("test"));
+        assert!(!manager2.session_exists("test"));
+    }
+
     /// Windows-specific tests
     #[cfg(target_os = "windows")]
     mod windows_tests {
@@ -485,8 +603,6 @@ mod tests {
         /// Test that check_shell_available correctly identifies available shells
         #[test]
         fn test_check_shell_available_cmd() {
-            // cmd.exe should always be available on Windows
-            // Note: cmd.exe /? returns exit code 1, so we use /c exit 0
             let available = check_shell_available("cmd.exe", &["/c", "exit", "0"]);
             assert!(available, "cmd.exe should be available on Windows");
         }
@@ -520,7 +636,6 @@ mod tests {
                 "WINDOWS_SHELLS should not be empty"
             );
 
-            // Verify expected shells are in the list
             let shell_names: Vec<&str> = WINDOWS_SHELLS.iter().map(|(cmd, _, _)| *cmd).collect();
             assert!(shell_names.contains(&"pwsh"), "Should include pwsh");
             assert!(
@@ -529,562 +644,88 @@ mod tests {
             );
             assert!(shell_names.contains(&"cmd.exe"), "Should include cmd.exe");
         }
+    }
 
-        /// Integration test: spawn a shell and verify it works
+    /// Cross-platform PTY tests using PtyManager
+    mod pty_manager_tests {
+        use super::*;
+        use std::thread;
+        use std::time::Duration;
+
+        /// Test basic PTY creation via PtyManager
         #[test]
-        fn test_spawn_with_fallback() {
-            use portable_pty::native_pty_system;
+        fn test_pty_manager_spawn_and_kill() {
+            let manager = PtyManager::new();
 
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
+            let (pty_id, _output_rx) = manager
+                .spawn(None, 80, 24, None)
+                .expect("Failed to spawn PTY");
 
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-            // spawn_with_fallback should succeed with at least one shell
-            let result = spawn_with_fallback(&pair.slave, None);
-            assert!(
-                result.is_ok(),
-                "spawn_with_fallback should succeed: {:?}",
-                result.err()
-            );
-
-            let (shell, _child) = result.unwrap();
-            println!("Successfully spawned shell: {}", shell);
-
-            // Verify shell is one of the expected ones
-            let valid_shells = ["pwsh", "powershell", "cmd.exe"];
-            assert!(
-                valid_shells.iter().any(|s| shell.contains(s)),
-                "Spawned shell '{}' should be a valid Windows shell",
-                shell
-            );
-        }
-
-        /// Test PTY lifecycle: spawn, keep alive, and cleanup
-        /// This tests the core fix for the Windows terminal bug where
-        /// child and master handles were dropped prematurely
-        #[test]
-        fn test_pty_session_lifecycle() {
-            use portable_pty::native_pty_system;
-            use std::thread;
-            use std::time::Duration;
-
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-            // Spawn shell
-            let (shell, child) =
-                spawn_with_fallback(&pair.slave, None).expect("Failed to spawn shell");
-            println!("Spawned shell: {}", shell);
-
-            // Drop slave after spawn (as we do in pty_spawn)
-            drop(pair.slave);
-
-            // Get writer and reader
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            // Store session with all handles
-            let pty_id = "test-session-1".to_string();
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
-
-            // Verify session exists
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                assert!(
-                    sessions.contains_key(&pty_id),
-                    "Session should exist after creation"
-                );
-            }
-
-            // Wait a bit to ensure the shell is running
-            thread::sleep(Duration::from_millis(100));
-
-            // Session should still exist (the bug was that it would be gone by now)
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                assert!(
-                    sessions.contains_key(&pty_id),
-                    "Session should still exist after 100ms - child handle must be kept alive"
-                );
-            }
-
-            // Clean up: properly kill the session
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                if let Some(mut session) = sessions.remove(&pty_id) {
-                    let _ = session.child.kill();
-                }
-            }
-
-            // Drop reader to avoid blocking
-            drop(reader);
-        }
-
-        /// Test that resize works when master is stored in session
-        #[test]
-        fn test_pty_resize_with_stored_master() {
-            use portable_pty::native_pty_system;
-
-            let pty_system = native_pty_system();
-            let initial_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            let pair = pty_system
-                .openpty(initial_size)
-                .expect("Failed to open PTY");
-
-            // Spawn shell
-            let (_shell, child) =
-                spawn_with_fallback(&pair.slave, None).expect("Failed to spawn shell");
-
-            drop(pair.slave);
-
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let _reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            // Store session
-            let pty_id = "test-resize-session".to_string();
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
-
-            // Test resize through stored master
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                let session = sessions.get(&pty_id).expect("Session should exist");
-
-                let new_size = PtySize {
-                    rows: 40,
-                    cols: 120,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                };
-
-                let result = session.master.resize(new_size);
-                assert!(result.is_ok(), "Resize should succeed: {:?}", result.err());
-            }
-
-            // Clean up
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                if let Some(mut session) = sessions.remove(&pty_id) {
-                    let _ = session.child.kill();
-                }
-            }
-        }
-
-        /// Test that child kill works properly
-        #[test]
-        fn test_pty_kill_child_process() {
-            use portable_pty::native_pty_system;
-
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-            let (_shell, child) =
-                spawn_with_fallback(&pair.slave, None).expect("Failed to spawn shell");
-
-            drop(pair.slave);
-
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let _reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            let pty_id = "test-kill-session".to_string();
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
-
-            // Kill the session
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                let mut session = sessions.remove(&pty_id).expect("Session should exist");
-
-                // Kill should succeed (or process may have already exited)
-                let kill_result = session.child.kill();
-                // We don't assert success because the process might have already exited
-                println!("Kill result: {:?}", kill_result);
-            }
-
-            // Verify session is removed
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                assert!(
-                    !sessions.contains_key(&pty_id),
-                    "Session should be removed after kill"
-                );
-            }
-        }
-
-        /// Test that writer works after session is stored
-        #[test]
-        fn test_pty_write_after_session_stored() {
-            use portable_pty::native_pty_system;
-            use std::thread;
-            use std::time::Duration;
-
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-            let (_shell, child) =
-                spawn_with_fallback(&pair.slave, None).expect("Failed to spawn shell");
-
-            drop(pair.slave);
-
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let _reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            let pty_id = "test-write-session".to_string();
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
+            assert!(manager.session_exists(&pty_id));
 
             // Wait for shell to initialize
             thread::sleep(Duration::from_millis(100));
 
-            // Write to session
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                let session = sessions.get_mut(&pty_id).expect("Session should exist");
-
-                // Write a simple command
-                let write_result = session.writer.write_all(b"echo test\r\n");
-                assert!(
-                    write_result.is_ok(),
-                    "Write should succeed: {:?}",
-                    write_result.err()
-                );
-
-                let flush_result = session.writer.flush();
-                assert!(
-                    flush_result.is_ok(),
-                    "Flush should succeed: {:?}",
-                    flush_result.err()
-                );
-            }
+            // Session should still exist
+            assert!(
+                manager.session_exists(&pty_id),
+                "Session should still exist after 100ms"
+            );
 
             // Clean up
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                if let Some(mut session) = sessions.remove(&pty_id) {
-                    let _ = session.child.kill();
-                }
-            }
+            manager.kill(&pty_id).expect("Failed to kill");
+            assert!(!manager.session_exists(&pty_id));
         }
-    }
 
-    /// Cross-platform PTY tests
-    mod pty_tests {
-        use super::*;
-        use portable_pty::native_pty_system;
-        use std::thread;
-        use std::time::Duration;
-
-        /// Test basic PTY creation and shell spawn
+        /// Test that kill removes session
         #[test]
-        fn test_pty_spawn_and_keep_alive() {
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
+        fn test_pty_manager_kill() {
+            let manager = PtyManager::new();
 
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
+            let (pty_id, _output_rx) = manager
+                .spawn(None, 80, 24, None)
+                .expect("Failed to spawn PTY");
 
-            #[cfg(target_os = "windows")]
-            let shell = "cmd.exe";
-            #[cfg(not(target_os = "windows"))]
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
-            #[cfg(target_os = "windows")]
-            let cmd = portable_pty::CommandBuilder::new(&shell);
-            #[cfg(not(target_os = "windows"))]
-            let cmd = {
-                let mut c = portable_pty::CommandBuilder::new(&shell);
-                c.arg("-l");
-                c
-            };
-
-            let child = pair
-                .slave
-                .spawn_command(cmd)
-                .expect("Failed to spawn shell");
-
-            // Drop slave after spawn
-            drop(pair.slave);
-
-            // Get writer and reader
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let _reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            // Store all handles in session
-            let pty_id = "test-cross-platform".to_string();
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
-
-            // Wait and verify session is still alive
-            thread::sleep(Duration::from_millis(200));
-
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                assert!(
-                    sessions.contains_key(&pty_id),
-                    "Session must remain alive - this is the core bug fix verification"
-                );
-            }
-
-            // Clean up
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                if let Some(mut session) = sessions.remove(&pty_id) {
-                    let _ = session.child.kill();
-                }
-            }
+            assert!(manager.session_exists(&pty_id));
+            manager.kill(&pty_id).expect("Failed to kill");
+            assert!(!manager.session_exists(&pty_id));
         }
 
-        /// Test that multiple PTY sessions can coexist
+        /// Test kill_all
+        #[test]
+        fn test_pty_manager_kill_all() {
+            let manager = PtyManager::new();
+
+            let (id1, _) = manager.spawn(None, 80, 24, None).expect("Failed to spawn");
+            let (id2, _) = manager.spawn(None, 80, 24, None).expect("Failed to spawn");
+
+            manager.kill_all(&[id1.clone(), id2.clone()]);
+
+            assert!(!manager.session_exists(&id1));
+            assert!(!manager.session_exists(&id2));
+        }
+
+        /// Test multiple PTY sessions
         #[test]
         fn test_multiple_pty_sessions() {
-            let pty_system = native_pty_system();
+            let manager = PtyManager::new();
+            let mut ids = Vec::new();
 
-            let mut pty_ids = Vec::new();
-
-            // Create 3 PTY sessions
-            for i in 0..3 {
-                let pty_size = PtySize {
-                    rows: 24,
-                    cols: 80,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                };
-
-                let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-                #[cfg(target_os = "windows")]
-                let shell = "cmd.exe";
-                #[cfg(not(target_os = "windows"))]
-                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
-                #[cfg(target_os = "windows")]
-                let cmd = portable_pty::CommandBuilder::new(&shell);
-                #[cfg(not(target_os = "windows"))]
-                let cmd = {
-                    let mut c = portable_pty::CommandBuilder::new(&shell);
-                    c.arg("-l");
-                    c
-                };
-
-                let child = pair
-                    .slave
-                    .spawn_command(cmd)
-                    .expect("Failed to spawn shell");
-                drop(pair.slave);
-
-                let writer = pair.master.take_writer().expect("Failed to take writer");
-                let _reader = pair
-                    .master
-                    .try_clone_reader()
-                    .expect("Failed to clone reader");
-
-                let pty_id = format!("test-multi-session-{}", i);
-                {
-                    let mut sessions = PTY_SESSIONS.lock().unwrap();
-                    sessions.insert(
-                        pty_id.clone(),
-                        PtySession {
-                            writer,
-                            child,
-                            master: pair.master,
-                        },
-                    );
-                }
-                pty_ids.push(pty_id);
+            for _ in 0..3 {
+                let (id, _) = manager.spawn(None, 80, 24, None).expect("Failed to spawn");
+                ids.push(id);
             }
 
-            // Wait a bit
             thread::sleep(Duration::from_millis(100));
 
-            // Verify all sessions exist
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                for pty_id in &pty_ids {
-                    assert!(
-                        sessions.contains_key(pty_id),
-                        "Session {} should exist",
-                        pty_id
-                    );
-                }
+            for id in &ids {
+                assert!(manager.session_exists(id));
             }
 
-            // Clean up all sessions
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                for pty_id in pty_ids {
-                    if let Some(mut session) = sessions.remove(&pty_id) {
-                        let _ = session.child.kill();
-                    }
-                }
-            }
-        }
+            manager.kill_all(&ids);
 
-        /// Test session registry cleanup
-        #[test]
-        fn test_session_registry_cleanup() {
-            // Ensure registry is empty before test
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                // Just check the registry exists and is accessible
-                let _ = sessions.len();
-            }
-
-            let pty_system = native_pty_system();
-            let pty_size = PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            };
-
-            let pair = pty_system.openpty(pty_size).expect("Failed to open PTY");
-
-            #[cfg(target_os = "windows")]
-            let shell = "cmd.exe";
-            #[cfg(not(target_os = "windows"))]
-            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-
-            let cmd = portable_pty::CommandBuilder::new(&shell);
-            let child = pair
-                .slave
-                .spawn_command(cmd)
-                .expect("Failed to spawn shell");
-            drop(pair.slave);
-
-            let writer = pair.master.take_writer().expect("Failed to take writer");
-            let _reader = pair
-                .master
-                .try_clone_reader()
-                .expect("Failed to clone reader");
-
-            let pty_id = "test-cleanup-session".to_string();
-
-            // Add session
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                sessions.insert(
-                    pty_id.clone(),
-                    PtySession {
-                        writer,
-                        child,
-                        master: pair.master,
-                    },
-                );
-            }
-
-            // Remove and kill session
-            {
-                let mut sessions = PTY_SESSIONS.lock().unwrap();
-                if let Some(mut session) = sessions.remove(&pty_id) {
-                    let _ = session.child.kill();
-                }
-            }
-
-            // Verify session is removed
-            {
-                let sessions = PTY_SESSIONS.lock().unwrap();
-                assert!(
-                    !sessions.contains_key(&pty_id),
-                    "Session should be removed after cleanup"
-                );
+            for id in &ids {
+                assert!(!manager.session_exists(id));
             }
         }
     }

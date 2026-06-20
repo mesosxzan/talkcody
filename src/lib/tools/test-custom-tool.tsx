@@ -1,10 +1,10 @@
-import { dirname, normalize } from '@tauri-apps/api/path';
-import { exists, readTextFile } from '@tauri-apps/plugin-fs';
 import { isValidElement } from 'react';
 import { z } from 'zod';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
+import { platformClient } from '@/services/platform-client';
 import {
   compileCustomTool,
   createCustomToolModuleUrl,
@@ -94,17 +94,23 @@ export const testCustomTool = createTool({
   canConcurrent: false,
   hidden: true,
   execute: async ({ file_path, params = {} }, context: ToolExecuteContext) => {
-    const normalizedPath = await normalize(file_path);
+    const normalizedPath = file_path;
 
     try {
-      const fileExists = await exists(normalizedPath);
+      const fileExists = isTauriRuntime()
+        ? await (await import('@tauri-apps/plugin-fs')).exists(normalizedPath)
+        : await platformClient.checkFileExists(normalizedPath);
       if (!fileExists) {
         return buildError('compile', normalizedPath, `File not found: ${normalizedPath}`);
       }
 
-      const source = await readTextFile(normalizedPath);
+      const source = isTauriRuntime()
+        ? await (await import('@tauri-apps/plugin-fs')).readTextFile(normalizedPath)
+        : await platformClient.readTextFile(normalizedPath);
       const fileName = getFileName(normalizedPath);
-      const fileDir = await dirname(normalizedPath);
+      const fileDir = isTauriRuntime()
+        ? await (await import('@tauri-apps/api/path')).dirname(normalizedPath)
+        : normalizedPath.substring(0, normalizedPath.lastIndexOf('/'));
 
       const compiled = await compileCustomTool(source, { filename: fileName });
       await registerCustomToolModuleResolver(fileDir);

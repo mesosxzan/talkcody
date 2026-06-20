@@ -3,8 +3,9 @@
  * Handles UTF-8, UTF-16LE (with BOM), and line ending preservation.
  */
 
-import { readFile as readFileBytes, stat } from '@tauri-apps/plugin-fs';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
+import { platformClient } from '@/services/platform-client';
 
 export type FileEncoding = 'utf-8' | 'utf-16le';
 export type LineEnding = 'lf' | 'crlf' | 'cr';
@@ -61,6 +62,19 @@ export async function readFileForEdit(filePath: string): Promise<{
   fileExists: boolean;
 }> {
   try {
+    if (!isTauriRuntime()) {
+      // Web mode: use platformClient (no raw byte access, assume UTF-8)
+      const content = await platformClient.readTextFile(filePath);
+      const lineEnding = detectLineEnding(content);
+      return {
+        content: content.replace(/\r\n/g, '\n').replace(/\r/g, '\n'),
+        encodingInfo: { encoding: 'utf-8', lineEnding, hasBOM: false },
+        modifiedTime: Date.now(),
+        fileExists: true,
+      };
+    }
+
+    const { stat, readFile: readFileBytes } = await import('@tauri-apps/plugin-fs');
     const fileStats = await stat(filePath);
     const modifiedTime = fileStats.mtime?.getTime() || 0;
 
@@ -129,6 +143,11 @@ export const MAX_EDIT_FILE_SIZE = 1024 * 1024 * 1024;
  */
 export async function isFileTooLargeForEdit(filePath: string): Promise<boolean> {
   try {
+    if (!isTauriRuntime()) {
+      // Web mode: no stat available, skip size check
+      return false;
+    }
+    const { stat } = await import('@tauri-apps/plugin-fs');
     const fileStats = await stat(filePath);
     return (fileStats.size ?? 0) > MAX_EDIT_FILE_SIZE;
   } catch {

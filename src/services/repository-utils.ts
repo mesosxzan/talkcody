@@ -1,5 +1,5 @@
 // src/services/repository-utils.ts
-import { join, normalize } from '@tauri-apps/api/path';
+import { join, normalize } from '@/lib/utils/cross-runtime-path';
 
 const WINDOWS_PATH_REGEX = /^[a-zA-Z]:[\\/]/;
 

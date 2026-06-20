@@ -1,10 +1,10 @@
-import { isAbsolute, join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { GlobDoing } from '@/components/tools/glob-doing';
 import { GlobResult } from '@/components/tools/glob-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
-import { tauriInvoke } from '@/lib/runtime-env';
+import { isAbsolute, join } from '@/lib/utils/cross-runtime-path';
+import { platformClient } from '@/services/platform-client';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 
 const inputSchema = z.strictObject({
@@ -21,12 +21,6 @@ export const DESCRIPTION = `- Fast file pattern matching tool that works with an
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
 - Returns matching file paths sorted by modification time
 - Use this tool when you need to find files by name patterns`;
-
-interface GlobResultType {
-  path: string;
-  is_directory: boolean;
-  modified_time: number;
-}
 
 export const globTool = createTool({
   name: 'glob',
@@ -62,10 +56,7 @@ export const globTool = createTool({
       }
       logger.info(`Searching files with pattern "${pattern}" in path: ${searchPath}`);
 
-      const results: GlobResultType[] = await tauriInvoke('search_files_by_glob', {
-        pattern,
-        path: searchPath,
-      });
+      const results = await platformClient.searchFilesByGlob(pattern, searchPath);
 
       // Format results for display
       if (results.length === 0) {

@@ -1,10 +1,10 @@
-import { isAbsolute, join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { ListFilesDoing } from '@/components/tools/list-files-doing';
 import { ListFilesResult } from '@/components/tools/list-files-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
-import { tauriInvoke } from '@/lib/runtime-env';
+import { isAbsolute, join } from '@/lib/utils/cross-runtime-path';
+import { platformClient } from '@/services/platform-client';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 
 export const listFiles = createTool({
@@ -34,11 +34,7 @@ The directory path must be absolute.`,
       }
       logger.info(`Listing files in directory: ${absolutePath} with max depth: ${max_depth}`);
 
-      const result: string = await tauriInvoke('list_project_files', {
-        directoryPath: absolutePath,
-        recursive: true,
-        maxDepth: max_depth,
-      });
+      const result = await platformClient.listProjectFiles(absolutePath, true, max_depth);
       return result;
     } catch (error) {
       logger.error('Error listing directory via Rust:', error);

@@ -1,6 +1,7 @@
 // src/lib/utils/path-security.ts
-import { normalize } from '@tauri-apps/api/path';
+
 import { logger } from '@/lib/logger';
+import { normalize } from '@/lib/utils/cross-runtime-path';
 
 /**
  * Check if a path is within the allowed project directory

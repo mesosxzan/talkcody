@@ -1,10 +1,10 @@
-import { isAbsolute, join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
-import { tauriInvoke } from '@/lib/runtime-env';
+import { isAbsolute, join } from '@/lib/utils/cross-runtime-path';
+import { platformClient } from '@/services/platform-client';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 
 export interface CodeSearchResult {
@@ -65,18 +65,11 @@ Use this to find code patterns, function definitions, variable usage, or any tex
       });
 
       // Use Rust RipgrepSearch via Tauri command with new optional parameters
-      const searchResults: Array<{
-        file_path: string;
-        matches: Array<{
-          line_number: number;
-          line_content: string;
-          byte_offset: number;
-        }>;
-      }> = await tauriInvoke('search_file_content', {
-        query: pattern,
-        rootPath: searchPath,
-        fileTypes: normalizedFileTypes,
-      });
+      const searchResults = await platformClient.searchFileContent(
+        pattern,
+        searchPath,
+        normalizedFileTypes
+      );
 
       if (searchResults && searchResults.length > 0) {
         // Format results for better readability

@@ -831,6 +831,7 @@ pub fn run() {
             window_registry: WindowRegistry::new(),
         })
         .manage(keep_awake::KeepAwakeStateWrapper::new())
+        .manage(Arc::new(terminal::PtyManager::new()))
         .manage(AnalyticsState::new())
         .manage(telegram_gateway::default_state())
         .manage(feishu_gateway::default_state())

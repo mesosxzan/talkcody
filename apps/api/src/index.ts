@@ -34,11 +34,16 @@ const isDevelopment = typeof Bun !== 'undefined' ? Bun.env.NODE_ENV !== 'product
 // CORS origins based on environment
 const corsOrigins: string[] = [
   'tauri://localhost', // Tauri app always needs access
+  'http://localhost:1420',
+  'http://localhost:1421',
+  'http://localhost:5173',
+  'https://talkcody.com',
+  'https://www.talkcody.com',
 ];
 
-// Only allow localhost origins in development
+// Only allow additional localhost origins in development
 if (isDevelopment) {
-  corsOrigins.push('http://localhost:1420', 'http://localhost:5173');
+  corsOrigins.push('http://127.0.0.1:1420', 'http://127.0.0.1:1421', 'http://127.0.0.1:5173');
 }
 
 // Global middlewares
