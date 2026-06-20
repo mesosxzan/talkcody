@@ -1,7 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import type React from 'react';
 import { createContext, useContext, useEffect, useState } from 'react';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { WindowStateStore } from '@/lib/window-state-store';
 
 interface WindowContextType {
@@ -23,11 +23,16 @@ export function WindowProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Get current window label on mount
-    invoke<string>('get_current_window_label')
-      .then(async (label) => {
+    if (!isTauriRuntime()) {
+      setWindowLabel('main');
+      return;
+    }
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => invoke<string>('get_current_window_label'))
+      .then((label: string) => {
         setWindowLabel(label);
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         logger.error('Failed to get window label:', error);
         // Fallback to main window
         setWindowLabel('main');

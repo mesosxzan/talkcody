@@ -1,18 +1,23 @@
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { activeSkillsConfigService } from '@/services/active-skills-config-service';
-import {
-  type AgentSkill,
-  getAgentSkillService,
-  getSkillService,
-  type Skill,
-  type SkillFilter,
-  type SkillSortOption,
-} from '@/services/skills';
+import type { AgentSkill, Skill, SkillFilter, SkillSortOption } from '@/services/skills';
+import { getSkillService } from '@/services/skills/skill-service';
 
 /**
  * Convert AgentSkill to Skill format for UI compatibility
  */
+async function loadAgentSkills(): Promise<AgentSkill[]> {
+  if (!isTauriRuntime()) {
+    return [];
+  }
+
+  const { getAgentSkillService } = await import('@/services/skills/agent-skill-service');
+  const agentService = await getAgentSkillService();
+  return agentService.listSkills();
+}
+
 function convertAgentSkillToSkill(agentSkill: AgentSkill): Skill {
   const now = Date.now();
   const metadata = agentSkill.frontmatter.metadata || {};
@@ -91,9 +96,7 @@ export const useSkillsStore = create<SkillsStore>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // Load Agent Skills (new format - Agent Skills Specification)
-      const agentService = await getAgentSkillService();
-      const agentSkills = await agentService.listSkills();
+      const agentSkills = await loadAgentSkills();
       const convertedAgentSkills = agentSkills.map(convertAgentSkillToSkill);
 
       // Load database skills (marketplace)
@@ -136,9 +139,7 @@ export const useSkillsStore = create<SkillsStore>((set, get) => ({
     try {
       set({ isLoading: true, error: null });
 
-      // Load Agent Skills (new format - Agent Skills Specification)
-      const agentService = await getAgentSkillService();
-      const agentSkills = await agentService.listSkills();
+      const agentSkills = await loadAgentSkills();
       const convertedAgentSkills = agentSkills.map(convertAgentSkillToSkill);
 
       // Load database skills (marketplace)

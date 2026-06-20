@@ -1,8 +1,8 @@
 // src/services/openai-usage-service.ts
 // Service for fetching OpenAI ChatGPT subscription usage data via OAuth API
 
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import {
   getRemainingPercentage,
   getTimeUntilReset,
@@ -91,7 +91,7 @@ export async function fetchOpenAIUsage(): Promise<OpenAIUsageData> {
   try {
     logger.info('[OpenAIUsage] Fetching usage data');
 
-    const apiData = await invoke<OpenAIApiResponse>(OPENAI_USAGE_COMMAND);
+    const apiData = await tauriInvoke<OpenAIApiResponse>(OPENAI_USAGE_COMMAND);
 
     // Log full response for debugging
     logger.info('[OpenAIUsage] Raw API response:', JSON.stringify(apiData, null, 2));

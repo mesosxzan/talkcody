@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { FolderOpen, GitBranch } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -9,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useLocale } from '@/hooks/use-locale';
 import { getDocLinks } from '@/lib/doc-links';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { useSettingsStore } from '@/stores/settings-store';
 
 export function WorktreeSettings() {
@@ -18,7 +18,7 @@ export function WorktreeSettings() {
   const setWorktreeRootPath = useSettingsStore((state) => state.setWorktreeRootPath);
 
   useEffect(() => {
-    invoke<string>('git_get_default_worktree_root')
+    tauriInvoke<string>('git_get_default_worktree_root')
       .then(setDefaultWorktreeRoot)
       .catch(console.error);
   }, []);

@@ -1,8 +1,8 @@
 import { Readability } from '@mozilla/readability';
-import { invoke } from '@tauri-apps/api/core';
 import TurndownService from 'turndown';
 import { API_BASE_URL } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import { simpleFetch } from '@/lib/tauri-fetch';
 import { fetchWithTimeout } from '@/lib/utils';
 import { secureStorage } from '@/services/secure-storage';
@@ -39,7 +39,10 @@ const WEB_FETCH_API_URL = `${API_BASE_URL}/api/web-fetch`;
  */
 async function getDeviceId(): Promise<string> {
   try {
-    return await invoke<string>('get_device_id');
+    if (!isTauriRuntime()) {
+      throw new Error('Device ID not available in web mode');
+    }
+    return await tauriInvoke<string>('get_device_id');
   } catch (error) {
     logger.error('[ReadabilityExtractor] Failed to get device ID:', error);
     throw new Error('Failed to get device ID');

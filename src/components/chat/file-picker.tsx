@@ -1,8 +1,8 @@
 // src/components/chat/file-picker.tsx
 
-import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { logger } from '@/lib/logger';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { cn } from '@/lib/utils';
 import { repositoryService } from '@/services/repository-service';
 import type { FileNode } from '@/types/file-system';
@@ -64,7 +64,7 @@ export function FilePicker({
       }
 
       try {
-        const results: FileSearchResult[] = await invoke('search_files_fast', {
+        const results: FileSearchResult[] = await tauriInvoke('search_files_fast', {
           query,
           rootPath: repositoryPath,
           maxResults: 20,

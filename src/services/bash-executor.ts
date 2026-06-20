@@ -1,9 +1,26 @@
-import { invoke } from '@tauri-apps/api/core';
-import { isAbsolute, join } from '@tauri-apps/api/path';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import { isPathWithinProjectDirectory } from '@/lib/utils/path-security';
 import { taskFileService } from '@/services/task-file-service';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
+
+// Platform path utilities - dynamically loaded for Tauri, fallback for web
+async function pathIsAbsolute(p: string): Promise<boolean> {
+  if (isTauriRuntime()) {
+    const { isAbsolute } = await import('@tauri-apps/api/path');
+    return isAbsolute(p);
+  }
+  return p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p);
+}
+
+async function pathJoin(...paths: string[]): Promise<string> {
+  if (isTauriRuntime()) {
+    const { join } = await import('@tauri-apps/api/path');
+    return join(...paths);
+  }
+  // Simple fallback: join with /
+  return paths.join('/').replace(/\/+/g, '/');
+}
 
 // Result from Rust backend execute_user_shell command
 interface TauriShellResult {
@@ -363,10 +380,10 @@ export class BashExecutor {
     }
 
     // If the path is relative, it's relative to the workspace
-    const isAbs = await isAbsolute(targetPath);
+    const isAbs = await pathIsAbsolute(targetPath);
     if (!isAbs) {
       // Relative paths are allowed, but we need to resolve them first to check for ../ escapes
-      const resolvedPath = await join(workspaceRoot, targetPath);
+      const resolvedPath = await pathJoin(workspaceRoot, targetPath);
       return await isPathWithinProjectDirectory(resolvedPath, workspaceRoot);
     }
 
@@ -451,7 +468,7 @@ export class BashExecutor {
    * Throws on error to fail closed (security principle)
    */
   private async expandWildcards(pattern: string, workspaceRoot: string): Promise<string[]> {
-    const results = await invoke<GlobResult[]>('search_files_by_glob', {
+    const results = await tauriInvoke<GlobResult[]>('search_files_by_glob', {
       pattern,
       path: workspaceRoot,
       maxResults: 10000, // Safety limit
@@ -495,8 +512,8 @@ export class BashExecutor {
     // Expand all wildcards and validate each expanded path
     for (const pattern of extracted.wildcardPaths) {
       // Resolve relative patterns against workspace root
-      const isAbs = await isAbsolute(pattern);
-      const fullPattern = isAbs ? pattern : await join(workspaceRoot, pattern);
+      const isAbs = await pathIsAbsolute(pattern);
+      const fullPattern = isAbs ? pattern : await pathJoin(workspaceRoot, pattern);
 
       let expandedPaths: string[];
       try {
@@ -566,7 +583,7 @@ export class BashExecutor {
 
     // Check if workspace is a git repository by checking for .git directory
     try {
-      const result = await invoke<TauriShellResult>('execute_git', {
+      const result = await tauriInvoke<TauriShellResult>('execute_git', {
         args: ['rev-parse', '--is-inside-work-tree'],
         cwd: workspaceRoot,
         timeoutMs: 5000,
@@ -703,7 +720,7 @@ export class BashExecutor {
     timeoutMs?: number,
     idleTimeoutMs?: number
   ): Promise<TauriShellResult> {
-    return await invoke<TauriShellResult>('execute_user_shell', {
+    return await tauriInvoke<TauriShellResult>('execute_user_shell', {
       command,
       cwd,
       timeoutMs,

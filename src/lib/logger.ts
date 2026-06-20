@@ -1,14 +1,22 @@
-// Direct re-exports to preserve original stack trace behavior
-export { debug, error, info, trace, warn } from '@tauri-apps/plugin-log';
+import { isTauriRuntime } from '@/lib/runtime-env';
 
-// Import the original functions
-import {
-  debug as tauriDebug,
-  error as tauriError,
-  info as tauriInfo,
-  trace as tauriTrace,
-  warn as tauriWarn,
-} from '@tauri-apps/plugin-log';
+// Console fallback for web mode
+const consoleLogger = {
+  trace: (msg: string) => console.debug(msg),
+  debug: (msg: string) => console.debug(msg),
+  info: (msg: string) => console.info(msg),
+  warn: (msg: string) => console.warn(msg),
+  error: (msg: string) => console.error(msg),
+};
+
+// Lazy-loaded Tauri log functions
+let tauriLog: typeof import('@tauri-apps/plugin-log') | null = null;
+async function getTauriLog() {
+  if (!tauriLog) {
+    tauriLog = await import('@tauri-apps/plugin-log');
+  }
+  return tauriLog;
+}
 
 export const logger = {
   trace: (message: string, ...args: any[]) => {
@@ -16,7 +24,10 @@ export const logger = {
       args.length > 0
         ? `${message} ${args.map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, '\t') : String(arg))).join(' ')}`
         : message;
-    return tauriTrace(formattedMessage);
+    if (isTauriRuntime()) {
+      return getTauriLog().then((m) => m.trace(formattedMessage));
+    }
+    consoleLogger.trace(formattedMessage);
   },
 
   debug: (message: string, ...args: any[]) => {
@@ -24,7 +35,10 @@ export const logger = {
       args.length > 0
         ? `${message} ${args.map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, '\t') : String(arg))).join(' ')}`
         : message;
-    return tauriDebug(formattedMessage);
+    if (isTauriRuntime()) {
+      return getTauriLog().then((m) => m.debug(formattedMessage));
+    }
+    consoleLogger.debug(formattedMessage);
   },
 
   info: (message: string, ...args: any[]) => {
@@ -32,7 +46,10 @@ export const logger = {
       args.length > 0
         ? `${message} ${args.map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, '\t') : String(arg))).join(' ')}`
         : message;
-    return tauriInfo(formattedMessage);
+    if (isTauriRuntime()) {
+      return getTauriLog().then((m) => m.info(formattedMessage));
+    }
+    consoleLogger.info(formattedMessage);
   },
 
   warn: (message: string, ...args: any[]) => {
@@ -40,7 +57,10 @@ export const logger = {
       args.length > 0
         ? `${message} ${args.map((arg) => (typeof arg === 'object' ? JSON.stringify(arg, null, '\t') : String(arg))).join(' ')}`
         : message;
-    return tauriWarn(formattedMessage);
+    if (isTauriRuntime()) {
+      return getTauriLog().then((m) => m.warn(formattedMessage));
+    }
+    consoleLogger.warn(formattedMessage);
   },
 
   error: (message: string, ...args: any[]) => {
@@ -58,6 +78,9 @@ export const logger = {
             })
             .join(' ')}`
         : message;
-    return tauriError(formattedMessage);
+    if (isTauriRuntime()) {
+      return getTauriLog().then((m) => m.error(formattedMessage));
+    }
+    consoleLogger.error(formattedMessage);
   },
 };

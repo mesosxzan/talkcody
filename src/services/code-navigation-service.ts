@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 
 export interface SymbolInfo {
   name: string;
@@ -40,7 +40,7 @@ export function getLangFamily(langId: string): string {
  * Index a file for code navigation
  */
 export async function indexFile(filePath: string, content: string, langId: string): Promise<void> {
-  await invoke('code_nav_index_file', {
+  await tauriInvoke('code_nav_index_file', {
     filePath,
     content,
     langId,
@@ -54,7 +54,7 @@ export async function findDefinition(
   symbolName: string,
   langFamily: string
 ): Promise<SymbolInfo[]> {
-  return invoke('code_nav_find_definition', { symbolName, langFamily });
+  return tauriInvoke('code_nav_find_definition', { symbolName, langFamily });
 }
 
 /**
@@ -67,21 +67,21 @@ export async function findReferencesHybrid(
   langFamily: string,
   rootPath: string
 ): Promise<SymbolInfo[]> {
-  return invoke('code_nav_find_references_hybrid', { symbolName, langFamily, rootPath });
+  return tauriInvoke('code_nav_find_references_hybrid', { symbolName, langFamily, rootPath });
 }
 
 /**
  * Clear index for a specific file
  */
 export async function clearFileIndex(filePath: string): Promise<void> {
-  await invoke('code_nav_clear_file', { filePath });
+  await tauriInvoke('code_nav_clear_file', { filePath });
 }
 
 /**
  * Clear all indexed files
  */
 export async function clearAllIndex(): Promise<void> {
-  await invoke('code_nav_clear_all');
+  await tauriInvoke('code_nav_clear_all');
 }
 
 /**
@@ -90,7 +90,7 @@ export async function clearAllIndex(): Promise<void> {
 export async function indexFilesBatch(
   files: Array<[string, string, string]> // [filePath, content, langId]
 ): Promise<void> {
-  await invoke('code_nav_index_files_batch', { files });
+  await tauriInvoke('code_nav_index_files_batch', { files });
 }
 
 // ============================================================================
@@ -117,7 +117,7 @@ export async function saveIndex(
   rootPath: string,
   fileTimestamps: Record<string, number>
 ): Promise<void> {
-  await invoke('code_nav_save_index', { rootPath, fileTimestamps });
+  await tauriInvoke('code_nav_save_index', { rootPath, fileTimestamps });
 }
 
 /**
@@ -125,7 +125,7 @@ export async function saveIndex(
  * Returns true if index was loaded successfully, false if no index exists
  */
 export async function loadIndex(rootPath: string): Promise<boolean> {
-  return invoke('code_nav_load_index', { rootPath });
+  return tauriInvoke('code_nav_load_index', { rootPath });
 }
 
 /**
@@ -133,21 +133,21 @@ export async function loadIndex(rootPath: string): Promise<boolean> {
  * Returns null if no index exists or index is incompatible
  */
 export async function getIndexMetadata(rootPath: string): Promise<IndexMetadata | null> {
-  return invoke('code_nav_get_index_metadata', { rootPath });
+  return tauriInvoke('code_nav_get_index_metadata', { rootPath });
 }
 
 /**
  * Delete a persisted index
  */
 export async function deleteIndex(rootPath: string): Promise<void> {
-  await invoke('code_nav_delete_index', { rootPath });
+  await tauriInvoke('code_nav_delete_index', { rootPath });
 }
 
 /**
  * Get list of indexed files from the current in-memory index
  */
 export async function getIndexedFiles(): Promise<string[]> {
-  return invoke('code_nav_get_indexed_files');
+  return tauriInvoke('code_nav_get_indexed_files');
 }
 
 // ============================================================================
@@ -184,7 +184,7 @@ export async function summarizeCodeContent(
   langId: string,
   filePath: string
 ): Promise<CodeSummary> {
-  return invoke('summarize_code_content', { content, langId, filePath });
+  return tauriInvoke('summarize_code_content', { content, langId, filePath });
 }
 
 // ============================================================================
@@ -199,7 +199,7 @@ export async function summarizeCodeContent(
  * This is used to quickly check if tree-sitter compression has reduced
  * tokens enough to skip AI-based compression.
  *
- * Previously this called Rust via IPC (`invoke('estimate_tokens')`), but
+ * Previously this called Rust via IPC (`tauriInvoke('estimate_tokens')`), but
  * the same algorithm is now inlined as a synchronous function to avoid
  * the IPC overhead (1-3ms per call). The Rust command remains available
  * as a fallback for any future algorithm changes.

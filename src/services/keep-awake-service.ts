@@ -5,10 +5,9 @@
 // - Sleep is prevented while any task is active
 // - Sleep is allowed when all tasks complete (refcount reaches 0)
 
-import { invoke } from '@tauri-apps/api/core';
-import { platform } from '@tauri-apps/plugin-os';
 import { toast } from 'sonner';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import { getLocale, type SupportedLocale } from '@/locales';
 
 // Platform check - only enable on desktop platforms
@@ -56,6 +55,7 @@ export class KeepAwakeService {
       return;
     }
     try {
+      const { platform } = await import('@tauri-apps/plugin-os');
       this.currentPlatform = await platform();
       this.platformDetected = true;
       logger.info(`[KeepAwakeService] Platform detected: ${this.currentPlatform}`);
@@ -112,6 +112,7 @@ export class KeepAwakeService {
       }
 
       // Call Rust backend to increment reference count
+      const { invoke } = await import('@tauri-apps/api/core');
       const wasFirst = await invoke<boolean>('keep_awake_acquire');
       if (typeof wasFirst !== 'boolean') {
         throw new Error('Invalid keep_awake_acquire response');
@@ -160,6 +161,7 @@ export class KeepAwakeService {
       }
 
       // Call Rust backend to decrement reference count
+      const { invoke } = await import('@tauri-apps/api/core');
       const wasLast = await invoke<boolean>('keep_awake_release');
       if (typeof wasLast !== 'boolean') {
         throw new Error('Invalid keep_awake_release response');
@@ -205,6 +207,7 @@ export class KeepAwakeService {
       if (!(await this.isSupported())) {
         return this.refCount;
       }
+      const { invoke } = await import('@tauri-apps/api/core');
       const count = await invoke<number>('keep_awake_get_ref_count');
       this.refCount = count;
       this.isPreventing = count > 0;
@@ -223,6 +226,7 @@ export class KeepAwakeService {
       if (!(await this.isSupported())) {
         return false;
       }
+      const { invoke } = await import('@tauri-apps/api/core');
       const preventing = await invoke<boolean>('keep_awake_is_preventing');
       this.isPreventing = preventing;
       return preventing;

@@ -1,6 +1,5 @@
 // src/services/repository-service.ts
 
-import { invoke } from '@tauri-apps/api/core';
 import { dirname, join } from '@tauri-apps/api/path';
 import { open } from '@tauri-apps/plugin-dialog';
 import {
@@ -15,8 +14,10 @@ import {
   writeTextFile,
 } from '@tauri-apps/plugin-fs';
 import { logger } from '@/lib/logger';
+import { isWebMode } from '@/lib/web-platform';
 import type { FileNode } from '@/types/file-system';
 import { fastDirectoryTreeService } from './fast-directory-tree-service';
+import { platformClient } from './platform-client';
 import {
   getFileExtension,
   getFileNameFromPath,
@@ -47,6 +48,10 @@ export class RepositoryService {
   private maxCacheSize = 50;
 
   async selectRepositoryFolder(): Promise<string | null> {
+    if (isWebMode()) {
+      return window.prompt('Enter repository path on the server:');
+    }
+
     const path = await open({
       directory: true,
       multiple: false,
@@ -120,12 +125,36 @@ export class RepositoryService {
   }
 
   async readFile(rootPath: string, filePath: string): Promise<string> {
+    if (isWebMode()) {
+      const fullPath = filePath.startsWith('/')
+        ? filePath
+        : `${rootPath.replace(/\/$/, '')}/${filePath}`;
+      return await this.readFileWithCache(fullPath);
+    }
+
     const fullPath = await join(rootPath, filePath);
     return await this.readFileWithCache(fullPath);
   }
 
   async readFileWithCache(filePath: string): Promise<string> {
     try {
+      if (isWebMode()) {
+        const cachedFile = this.fileCache.get(filePath);
+        if (cachedFile) {
+          return cachedFile.content;
+        }
+
+        const content = await platformClient.readTextFile(filePath);
+        if (this.fileCache.size >= this.maxCacheSize) {
+          const firstKey = this.fileCache.keys().next().value;
+          if (firstKey) {
+            this.fileCache.delete(firstKey);
+          }
+        }
+        this.fileCache.set(filePath, { content, modifiedTime: Date.now() });
+        return content;
+      }
+
       // Get current file stats
       const fileStats = await stat(filePath);
       const currentModifiedTime = fileStats.mtime?.getTime() || 0;
@@ -186,11 +215,7 @@ export class RepositoryService {
         path: string;
         is_directory: boolean;
         score: number;
-      }> = await invoke('search_files_fast', {
-        query: query.trim(),
-        rootPath: rootPath,
-        maxResults: 20,
-      });
+      }> = await platformClient.searchFiles(rootPath, query.trim(), 20);
 
       // Convert to FileNode format
       return results.map((result) => ({
@@ -370,10 +395,10 @@ export class RepositoryService {
 
     try {
       const startTime = Date.now();
-      const results: SearchResult[] = await invoke('search_file_content', {
-        query: query.trim(),
-        rootPath,
-      });
+      const results: SearchResult[] = await platformClient.searchFileContent(
+        query.trim(),
+        rootPath
+      );
       const endTime = Date.now();
       logger.info(`searchFileContent took ${endTime - startTime}ms`);
 

@@ -13,6 +13,7 @@ import analyticsRoutes from './routes/analytics';
 import authRoutes from './routes/auth';
 import marketplaceRoutes from './routes/marketplace';
 import modelsRoutes from './routes/models';
+import proxyFetchRoutes from './routes/proxy-fetch';
 import remoteAgentsRoutes from './routes/remote-agents';
 import remoteSkillsRoutes from './routes/remote-skills';
 import searchRoutes from './routes/search';
@@ -105,6 +106,7 @@ app.route('/api/talkcody', talkcodyProviderRoutes);
 app.route('/api/search', searchRoutes);
 app.route('/api/shares', shareRoutes);
 app.route('/api/web-fetch', webFetchRoutes);
+app.route('/api/proxy-fetch', proxyFetchRoutes);
 
 // 404 handler
 app.notFound((c) => {

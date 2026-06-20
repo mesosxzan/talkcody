@@ -270,12 +270,14 @@ function createRepositoryStore() {
             }
             logger.info('[openRepository] Project tracked as recently opened');
             // Refresh dock menu to show updated recent projects list
-            try {
-              const { invoke } = await import('@tauri-apps/api/core');
-              await invoke('refresh_dock_menu');
-              logger.info('[openRepository] Dock menu refreshed');
-            } catch (error) {
-              logger.error('Failed to refresh dock menu:', error);
+            if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+              try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                await invoke('refresh_dock_menu');
+                logger.info('[openRepository] Dock menu refreshed');
+              } catch (error) {
+                logger.error('Failed to refresh dock menu:', error);
+              }
             }
           })
           .catch((error) => {

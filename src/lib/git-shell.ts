@@ -12,7 +12,8 @@
  * which falls back to `execute_user_shell` (bash -c on Unix, cmd /C on Windows).
  */
 
-import { invoke } from '@tauri-apps/api/core';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
+import { postJson } from '@/lib/web-platform';
 
 /** Result of a git command execution */
 export interface GitShellResult {
@@ -57,10 +58,19 @@ export async function runGitCommand(
 ): Promise<GitShellResult> {
   const { cwd, shellCommand } = options ?? {};
 
+  if (!isTauriRuntime()) {
+    const commandString = ['git', ...args].join(' ');
+    const result = await postJson<GitShellResult>('/api/platform/git', {
+      command: shellCommand ? 'execute_user_shell' : 'execute_git',
+      args: { command: commandString, args, cwd: cwd ?? null },
+    });
+    return result;
+  }
+
   if (shellCommand) {
     // Complex shell command — fall back to execute_user_shell for shell features
     const commandString = ['git', ...args].join(' ');
-    const result = await invoke<TauriShellResult>('execute_user_shell', {
+    const result = await tauriInvoke<TauriShellResult>('execute_user_shell', {
       command: commandString,
       cwd: cwd ?? null,
       timeoutMs: 30000,
@@ -74,7 +84,7 @@ export async function runGitCommand(
   }
 
   // Simple git command — invoke git binary directly (no shell wrapper)
-  const result = await invoke<TauriShellResult>('execute_git', {
+  const result = await tauriInvoke<TauriShellResult>('execute_git', {
     args,
     cwd: cwd ?? null,
     timeoutMs: 30000,

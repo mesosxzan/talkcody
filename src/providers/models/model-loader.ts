@@ -1,8 +1,8 @@
 // src/providers/models/model-loader.ts
 
 import modelsDefault from '@talkcody/shared/data/models-config.json';
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { customModelService } from '@/providers/custom/custom-model-service';
 import type { ModelsConfiguration } from '@/types/models';
 
@@ -58,6 +58,10 @@ class ModelLoader {
    * Load models configuration from Rust backend
    */
   private async loadFromRust(): Promise<ModelsConfiguration> {
+    if (!isTauriRuntime()) {
+      throw new Error('Rust backend not available in web mode');
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
     const config = await invoke<ModelsConfiguration>('llm_get_models_config');
 
     // Validate structure

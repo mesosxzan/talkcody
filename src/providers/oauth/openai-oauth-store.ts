@@ -1,10 +1,9 @@
 // src/providers/oauth/openai-oauth-store.ts
 // Zustand store for OpenAI ChatGPT OAuth state management
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { llmClient } from '@/services/llm/llm-client';
 import { exchangeCode, startOAuthFlow } from './openai-oauth-service';
 
@@ -38,7 +37,7 @@ interface OpenAIOAuthState {
 
   // Callback server state
   callbackServerPort: number | null;
-  callbackUnlisten: UnlistenFn | null;
+  callbackUnlisten: (() => void) | null;
 }
 
 interface OpenAIOAuthActions {
@@ -145,10 +144,17 @@ export const useOpenAIOAuthStore = create<OpenAIOAuthStore>((set, get) => ({
     // Cleanup any previous listener
     get().cleanupCallbackListener();
 
+    if (!isTauriRuntime()) {
+      // Web mode: fall back to manual OAuth flow
+      return get().startOAuth();
+    }
+
     set({ isLoading: true, error: null });
 
     try {
       // Start the callback server first to determine the actual port
+      const { invoke } = await import('@tauri-apps/api/core');
+      const { listen } = await import('@tauri-apps/api/event');
       const port = await invoke<number>('start_oauth_callback_server', {
         expectedState: undefined,
       });
@@ -165,46 +171,49 @@ export const useOpenAIOAuthStore = create<OpenAIOAuthStore>((set, get) => ({
       const oauthResult = await startOAuthFlow(redirectUri);
 
       // Listen for callback event
-      const unlisten = await listen<OAuthCallbackResult>('openai-oauth-callback', async (event) => {
-        const result = event.payload;
-        logger.info('[OpenAIOAuth] Callback received:', result);
+      const unlisten = await listen<OAuthCallbackResult>(
+        'openai-oauth-callback',
+        async (event: { payload: OAuthCallbackResult }) => {
+          const result = event.payload;
+          logger.info('[OpenAIOAuth] Callback received:', result);
 
-        if (result.success && result.code) {
-          if (result.state !== oauthResult.state) {
-            logger.error('[OpenAIOAuth] OAuth state mismatch on callback', {
-              expected: oauthResult.state,
-              received: result.state,
-            });
+          if (result.success && result.code) {
+            if (result.state !== oauthResult.state) {
+              logger.error('[OpenAIOAuth] OAuth state mismatch on callback', {
+                expected: oauthResult.state,
+                received: result.state,
+              });
+              set({
+                error: 'OAuth state mismatch',
+                isLoading: false,
+              });
+              get().cleanupCallbackListener();
+              return;
+            }
+
+            // Auto-complete OAuth flow
+            try {
+              await get().completeOAuth(result.code);
+              logger.info('[OpenAIOAuth] Auto OAuth completed successfully');
+            } catch (err) {
+              logger.error('[OpenAIOAuth] Failed to complete auto OAuth:', err);
+              set({
+                error: err instanceof Error ? err.message : 'Failed to complete OAuth',
+                isLoading: false,
+              });
+            }
+          } else if (result.error) {
+            logger.error('[OpenAIOAuth] Callback error:', result.error);
             set({
-              error: 'OAuth state mismatch',
+              error: result.error,
               isLoading: false,
             });
-            get().cleanupCallbackListener();
-            return;
           }
 
-          // Auto-complete OAuth flow
-          try {
-            await get().completeOAuth(result.code);
-            logger.info('[OpenAIOAuth] Auto OAuth completed successfully');
-          } catch (err) {
-            logger.error('[OpenAIOAuth] Failed to complete auto OAuth:', err);
-            set({
-              error: err instanceof Error ? err.message : 'Failed to complete OAuth',
-              isLoading: false,
-            });
-          }
-        } else if (result.error) {
-          logger.error('[OpenAIOAuth] Callback error:', result.error);
-          set({
-            error: result.error,
-            isLoading: false,
-          });
+          // Cleanup listener after receiving callback
+          get().cleanupCallbackListener();
         }
-
-        // Cleanup listener after receiving callback
-        get().cleanupCallbackListener();
-      });
+      );
 
       set({
         verifier: oauthResult.verifier,

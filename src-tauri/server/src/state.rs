@@ -5,6 +5,7 @@ use talkcody_core::core::types::{EventSender, RuntimeEvent};
 use talkcody_core::core::CoreRuntime;
 use talkcody_core::llm::auth::api_key_manager::ApiKeyManager;
 use talkcody_core::llm::providers::provider_registry::ProviderRegistry;
+use talkcody_core::llm::streaming::emitter::BroadcastEvent;
 use talkcody_core::platform::Platform;
 use talkcody_core::storage::Storage;
 use talkcody_core::streaming::StreamingManager;
@@ -20,6 +21,7 @@ pub struct ServerState {
     pub streaming: Arc<RwLock<StreamingManager>>,
     pub event_broadcast: broadcast::Sender<RuntimeEvent>,
     pub event_receiver: Arc<tokio::sync::Mutex<broadcast::Receiver<RuntimeEvent>>>,
+    pub stream_event_broadcast: broadcast::Sender<BroadcastEvent>,
 }
 
 impl ServerState {
@@ -32,6 +34,7 @@ impl ServerState {
     ) -> Self {
         let platform = Platform::new();
         let streaming = Arc::new(RwLock::new(StreamingManager::new()));
+        let (stream_event_broadcast, _) = broadcast::channel::<BroadcastEvent>(256);
 
         Self {
             config,
@@ -41,6 +44,7 @@ impl ServerState {
             streaming,
             event_broadcast,
             event_receiver: Arc::new(tokio::sync::Mutex::new(event_receiver)),
+            stream_event_broadcast,
         }
     }
 

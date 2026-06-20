@@ -1,7 +1,6 @@
 // src/lib/tauri-fetch.ts
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from './logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from './runtime-env';
 
 // Network retry configuration
 const MAX_NETWORK_RETRIES = 3;
@@ -181,6 +180,10 @@ function isUnsupportedBodyType(body: BodyInit | null | undefined): boolean {
  * only supports string bodies.
  */
 export async function simpleFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (!isTauriRuntime()) {
+    return fetch(input, init);
+  }
+
   // For FormData, Blob, ArrayBuffer etc., use native fetch
   // These types cannot be serialized to string and require proper multipart encoding
   if (isUnsupportedBodyType(init?.body)) {
@@ -205,7 +208,7 @@ export async function simpleFetch(input: RequestInfo | URL, init?: RequestInit):
 
   for (let attempt = 0; attempt <= MAX_NETWORK_RETRIES; attempt++) {
     try {
-      const response = await invoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
+      const response = await tauriInvoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
 
       return new Response(response.body, {
         status: response.status,
@@ -268,7 +271,7 @@ function createStreamFetch(): TauriFetchFunction {
       };
 
       // Setup streaming infrastructure (fresh for each attempt)
-      let unlisten: UnlistenFn | undefined;
+      let unlisten: (() => void) | undefined;
 
       const ts = new TransformStream();
       const writer = ts.writable.getWriter();
@@ -349,12 +352,14 @@ function createStreamFetch(): TauriFetchFunction {
       try {
         // Register listener BEFORE invoking the command to avoid race conditions
         const eventName = `stream-response-${requestId}`;
-        unlisten = await listen<StreamEvent>(eventName, (event) => {
-          processEvent(event.payload);
+        unlisten = await tauriListen<StreamEvent>(eventName, (payload) => {
+          processEvent(payload);
         });
 
         // Invoke stream_fetch with the pre-generated request_id
-        const response = await invoke<StreamResponse>('stream_fetch', { request: proxyRequest });
+        const response = await tauriInvoke<StreamResponse>('stream_fetch', {
+          request: proxyRequest,
+        });
         const { status, headers: responseHeaders } = response;
 
         // Start the stream timeout
@@ -398,7 +403,12 @@ function createStreamFetch(): TauriFetchFunction {
   };
 }
 
-export const streamFetch = createStreamFetch();
+export const streamFetch: TauriFetchFunction = (...args) => {
+  if (!isTauriRuntime()) {
+    return fetch(...args);
+  }
+  return createStreamFetch()(...args);
+};
 
 /**
  * Header name for specifying a custom proxy URL in fetch requests

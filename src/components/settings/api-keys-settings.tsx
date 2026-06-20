@@ -15,6 +15,7 @@ import { useLocale } from '@/hooks/use-locale';
 import { useOAuthStatus } from '@/hooks/use-oauth-status';
 import { getDocLinks } from '@/lib/doc-links';
 import { logger } from '@/lib/logger';
+import { getRuntimeApiUrl } from '@/lib/runtime-env';
 import { simpleFetch } from '@/lib/tauri-fetch';
 import { cn } from '@/lib/utils';
 import {
@@ -355,14 +356,24 @@ export function ApiKeysSettings() {
               ? 'http://localhost:11434/api/tags'
               : 'http://localhost:1234/v1/models';
 
-          // Use Tauri fetch to go through the HTTP proxy (native fetch is blocked in webview)
-          const response = await simpleFetch(testedUrl);
+          // Use backend proxy to bypass CORS in web mode
+          const proxyRequest = {
+            url: testedUrl,
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+          };
+          const response = await simpleFetch(getRuntimeApiUrl('/api/proxy-fetch'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(proxyRequest),
+          });
           if (!response.ok) {
             throw new Error(
               `${PROVIDER_CONFIGS[providerId]?.name} API returned status: ${response.status}`
             );
           }
-          const data = await response.json();
+          const responseData = await response.json();
+          const data = JSON.parse(responseData.body);
 
           if (providerId === 'ollama') {
             logger.info(

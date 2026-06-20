@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { AlertCircle, AlertTriangle, ExternalLink, Info } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { LINT_SUPPORTED_LANGUAGES_DISPLAY } from '@/constants/lint';
 import { useLocale } from '@/hooks/use-locale';
 import { getDocLinks } from '@/lib/doc-links';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { useLintStore } from '@/stores/lint-store';
 
 interface RuntimeStatus {
@@ -25,7 +25,7 @@ export function LintSettings() {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
 
   useEffect(() => {
-    invoke<RuntimeStatus>('check_lint_runtime')
+    tauriInvoke<RuntimeStatus>('check_lint_runtime')
       .then(setRuntimeStatus)
       .catch(() => {
         setRuntimeStatus({ bun_available: false, node_available: false });

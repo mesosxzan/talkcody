@@ -1,6 +1,6 @@
-import { error as logError, info as logInfo } from '@tauri-apps/plugin-log';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { check, type DownloadEvent, type Update } from '@tauri-apps/plugin-updater';
+import { logger } from '@/lib/logger';
 
 export interface UpdateInfo {
   version: string;
@@ -36,25 +36,25 @@ export class UpdateService {
    */
   async checkForUpdate(): Promise<Update | null> {
     if (this.checkingForUpdate) {
-      logInfo('Update check already in progress');
+      logger.info('Update check already in progress');
       return null;
     }
 
     try {
       this.checkingForUpdate = true;
-      logInfo('Checking for updates...');
+      logger.info('Checking for updates...');
 
       const update = await check();
 
       if (update) {
-        logInfo(`Update available: ${update.version} (current: ${update.currentVersion})`);
+        logger.info(`Update available: ${update.version} (current: ${update.currentVersion})`);
         return update;
       } else {
-        logInfo('No update available');
+        logger.info('No update available');
         return null;
       }
     } catch (error) {
-      logError(`Failed to check for updates: ${error}`);
+      logger.error(`Failed to check for updates: ${error}`);
       throw new Error(`Failed to check for updates: ${error}`);
     } finally {
       this.checkingForUpdate = false;
@@ -71,7 +71,7 @@ export class UpdateService {
 
     try {
       this.downloadingUpdate = true;
-      logInfo(`Starting update download: ${update.version}`);
+      logger.info(`Starting update download: ${update.version}`);
 
       let downloaded = 0;
       let total: number | undefined;
@@ -80,7 +80,7 @@ export class UpdateService {
         switch (event.event) {
           case 'Started':
             total = event.data.contentLength;
-            logInfo(`Download started: ${total ? `${total} bytes` : 'unknown size'}`);
+            logger.info(`Download started: ${total ? `${total} bytes` : 'unknown size'}`);
             if (onProgress && total) {
               onProgress({
                 downloaded: 0,
@@ -92,7 +92,7 @@ export class UpdateService {
 
           case 'Progress':
             downloaded += event.data.chunkLength;
-            logInfo(`Downloaded: ${downloaded} bytes`);
+            logger.info(`Downloaded: ${downloaded} bytes`);
             if (onProgress) {
               onProgress({
                 downloaded,
@@ -103,7 +103,7 @@ export class UpdateService {
             break;
 
           case 'Finished':
-            logInfo('Download complete');
+            logger.info('Download complete');
             if (onProgress && total) {
               onProgress({
                 downloaded: total,
@@ -115,9 +115,9 @@ export class UpdateService {
         }
       });
 
-      logInfo('Update installed successfully');
+      logger.info('Update installed successfully');
     } catch (error) {
-      logError(`Failed to download and install update: ${error}`);
+      logger.error(`Failed to download and install update: ${error}`);
       throw new Error(`Failed to download and install update: ${error}`);
     } finally {
       this.downloadingUpdate = false;
@@ -138,7 +138,7 @@ export class UpdateService {
       await this.downloadAndInstall(update, onProgress);
       return true;
     } catch (error) {
-      logError(`Auto-update failed: ${error}`);
+      logger.error(`Auto-update failed: ${error}`);
       throw error;
     }
   }
@@ -148,10 +148,10 @@ export class UpdateService {
    */
   async restartApp(): Promise<void> {
     try {
-      logInfo('Restarting application...');
+      logger.info('Restarting application...');
       await relaunch();
     } catch (error) {
-      logError(`Failed to restart application: ${error}`);
+      logger.error(`Failed to restart application: ${error}`);
       throw new Error(`Failed to restart application: ${error}`);
     }
   }

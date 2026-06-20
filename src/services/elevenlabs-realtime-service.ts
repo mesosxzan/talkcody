@@ -1,8 +1,7 @@
 // Real-time speech-to-text service using Eleven Labs Scribe V2 Realtime API
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 
 type PartialTranscriptCallback = (text: string) => void;
 type FinalTranscriptCallback = (text: string) => void;
@@ -44,10 +43,10 @@ export class ElevenLabsRealtimeService {
   private errorCallback?: ErrorCallback;
   private connectedCallback?: ConnectedCallback;
   private isConnected = false;
-  private unlistenMessage?: UnlistenFn;
-  private unlistenClosed?: UnlistenFn;
-  private unlistenError?: UnlistenFn;
-  private unlistenConnected?: UnlistenFn;
+  private unlistenMessage?: () => void;
+  private unlistenClosed?: () => void;
+  private unlistenError?: () => void;
+  private unlistenConnected?: () => void;
 
   /**
    * Connect to Eleven Labs real-time transcription service
@@ -66,23 +65,23 @@ export class ElevenLabsRealtimeService {
 
       // Set up event listeners
       Promise.all([
-        listen<{ data: string }>('ws-message', (event) => {
-          this.handleMessage(event.payload.data);
+        tauriListen<{ data: string }>('ws-message', (data) => {
+          this.handleMessage(data.data);
         }),
-        listen('ws-closed', () => {
+        tauriListen('ws-closed', () => {
           logger.info('[ElevenLabs Realtime] WebSocket closed');
           this.isConnected = false;
         }),
-        listen<string>('ws-error', (event) => {
-          logger.error('[ElevenLabs Realtime] WebSocket error:', event.payload);
-          const error = new Error(event.payload);
+        tauriListen<string>('ws-error', (payload) => {
+          logger.error('[ElevenLabs Realtime] WebSocket error:', payload);
+          const error = new Error(payload);
           this.errorCallback?.(error);
           if (!this.isConnected) {
             clearTimeout(timeout);
             reject(error);
           }
         }),
-        listen('ws-connected', () => {
+        tauriListen('ws-connected', () => {
           logger.info('[ElevenLabs Realtime] Connected successfully');
           this.isConnected = true;
           this.connectedCallback?.();
@@ -113,7 +112,7 @@ export class ElevenLabsRealtimeService {
           });
 
           // Connect using Tauri command with API key header
-          return invoke<void>('ws_connect', { url, apiKey });
+          return tauriInvoke<void>('ws_connect', { url, apiKey });
         })
         .catch((error) => {
           clearTimeout(timeout);
@@ -142,7 +141,7 @@ export class ElevenLabsRealtimeService {
         sample_rate: 16000,
       });
 
-      invoke<void>('ws_send', { message }).catch((error) => {
+      tauriInvoke<void>('ws_send', { message }).catch((error) => {
         logger.error('[ElevenLabs Realtime] Error sending audio:', error);
         this.errorCallback?.(error instanceof Error ? error : new Error(String(error)));
       });
@@ -172,7 +171,7 @@ export class ElevenLabsRealtimeService {
         sample_rate: 16000,
       });
 
-      invoke<void>('ws_send', { message }).catch((error) => {
+      tauriInvoke<void>('ws_send', { message }).catch((error) => {
         logger.error('[ElevenLabs Realtime] Error committing:', error);
         this.errorCallback?.(error instanceof Error ? error : new Error(String(error)));
       });
@@ -195,7 +194,7 @@ export class ElevenLabsRealtimeService {
     this.unlistenConnected?.();
 
     // Disconnect WebSocket
-    invoke<void>('ws_disconnect').catch((error) => {
+    tauriInvoke<void>('ws_disconnect').catch((error) => {
       logger.error('[ElevenLabs Realtime] Error disconnecting:', error);
     });
 

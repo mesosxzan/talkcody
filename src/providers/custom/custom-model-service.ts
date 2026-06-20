@@ -1,9 +1,10 @@
 // src/providers/custom/custom-model-service.ts
 
-import { invoke } from '@tauri-apps/api/core';
-import { BaseDirectory, exists, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+import { crossStorageRead, crossStorageWrite } from '@/lib/cross-storage';
 import { logger } from '@/lib/logger';
+import { getRuntimeApiUrl, isTauriRuntime } from '@/lib/runtime-env';
 import type { ProxyRequest, ProxyResponse } from '@/lib/tauri-fetch';
+import { simpleFetch } from '@/lib/tauri-fetch';
 import { PROVIDER_CONFIGS, PROVIDERS_WITH_INTERNATIONAL } from '@/providers/config/provider-config';
 import { customProviderService } from '@/providers/custom/custom-provider-service';
 import { normalizeCustomProviderBaseUrl } from '@/providers/custom/custom-provider-url';
@@ -85,22 +86,10 @@ class CustomModelService {
     }
 
     try {
-      const fileExists = await exists(CUSTOM_MODELS_FILENAME, {
-        baseDir: BaseDirectory.AppData,
-      });
-
-      if (!fileExists) {
-        // Return empty config if file doesn't exist
-        const emptyConfig: ModelsConfiguration = {
-          version: 'custom',
-          models: {},
-        };
-        return emptyConfig;
+      const content = await crossStorageRead(CUSTOM_MODELS_FILENAME);
+      if (!content) {
+        return { version: 'custom', models: {} };
       }
-
-      const content = await readTextFile(CUSTOM_MODELS_FILENAME, {
-        baseDir: BaseDirectory.AppData,
-      });
       const config = JSON.parse(content) as ModelsConfiguration;
       this.memoryCache = config;
       return config;
@@ -116,10 +105,23 @@ class CustomModelService {
   private async saveCustomModels(config: ModelsConfiguration): Promise<void> {
     try {
       const content = JSON.stringify(config, null, 2);
-      await writeTextFile(CUSTOM_MODELS_FILENAME, content, {
-        baseDir: BaseDirectory.AppData,
-      });
+      await crossStorageWrite(CUSTOM_MODELS_FILENAME, content);
       this.memoryCache = config;
+
+      // In web mode, also sync custom models to Rust backend via HTTP API
+      // so that llm_list_available_models can read them from filesystem
+      if (!isTauriRuntime()) {
+        try {
+          await simpleFetch(getRuntimeApiUrl('/api/llm/llm_save_custom_models'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config }),
+          });
+        } catch (syncError) {
+          logger.warn('[CustomModelService] Failed to sync custom models to backend:', syncError);
+        }
+      }
+
       logger.info('Custom models saved successfully');
     } catch (error) {
       logger.error('Failed to save custom models:', error);
@@ -357,7 +359,20 @@ class CustomModelService {
         allow_private_ip: isCustomProvider,
       };
 
-      const response = await invoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
+      let response: ProxyResponse;
+      if (isTauriRuntime()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        response = await invoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
+      } else {
+        // Web mode: send request through Rust backend proxy to bypass CORS
+        const res = await simpleFetch(getRuntimeApiUrl('/api/proxy-fetch'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(proxyRequest),
+        });
+        const resBody: ProxyResponse = await res.json();
+        response = resBody;
+      }
 
       if (response.status >= 400) {
         throw new Error(`Failed to fetch models: ${response.status}`);

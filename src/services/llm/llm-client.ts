@@ -1,6 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { getRuntimeApiUrl, isTauriRuntime } from '@/lib/runtime-env';
 import { generateId } from '@/lib/utils';
+import { postJson } from '@/lib/web-platform';
 import {
   createEventQueue,
   isTerminalEvent,
@@ -39,6 +40,15 @@ export type StreamTextResult = {
   requestId: string;
   events: AsyncGenerator<StreamEvent, void, unknown>;
 };
+
+async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauriRuntime()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<T>(cmd, args);
+  }
+  // Web mode: route through HTTP API
+  return postJson<T>(`/api/llm/${cmd}`, args);
+}
 
 export class LlmClient {
   async streamText(
@@ -80,16 +90,63 @@ export class LlmClient {
     }
 
     // Set up event listener BEFORE invoking Rust command
-    await stream.listen(eventName, (event) => {
-      logger.debug(`[LLM Client ${requestId}] Received event: ${event.type}`);
-      const normalized = normalizeStreamEvent(event);
-      logStreamEvent(normalized, requestId);
-      queue.push(normalized);
-      if (isTerminalEvent(normalized)) {
-        logger.info(`[LLM Client ${requestId}] Terminal event received: ${event.type}`);
+    if (isTauriRuntime()) {
+      await stream.listen(eventName, (event) => {
+        logger.debug(`[LLM Client ${requestId}] Received event: ${event.type}`);
+        const normalized = normalizeStreamEvent(event);
+        logStreamEvent(normalized, requestId);
+        queue.push(normalized);
+        if (isTerminalEvent(normalized)) {
+          logger.info(`[LLM Client ${requestId}] Terminal event received: ${event.type}`);
+          stop();
+        }
+      });
+    } else {
+      // Web mode: connect to SSE endpoint to receive stream events
+      const sseUrl = getRuntimeApiUrl(`/api/llm/stream-events/${requestId}`);
+      const eventSource = new EventSource(sseUrl);
+
+      eventSource.onmessage = (e) => {
+        try {
+          const event = JSON.parse(e.data) as StreamEvent;
+          logger.debug(`[LLM Client ${requestId}] Received SSE event: ${event.type}`);
+          const normalized = normalizeStreamEvent(event);
+          logStreamEvent(normalized, requestId);
+          queue.push(normalized);
+          if (isTerminalEvent(normalized)) {
+            logger.info(`[LLM Client ${requestId}] Terminal SSE event received: ${event.type}`);
+            eventSource.close();
+            stop();
+          }
+        } catch (err) {
+          logger.warn(`[LLM Client ${requestId}] Failed to parse SSE event:`, err);
+        }
+      };
+
+      eventSource.onerror = () => {
+        logger.info(`[LLM Client ${requestId}] SSE connection closed`);
+        eventSource.close();
         stop();
+      };
+
+      // Clean up EventSource on abort
+      const originalStop = stop;
+      const stopWithSse = () => {
+        eventSource.close();
+        originalStop();
+      };
+      // Replace stop to also close SSE
+      onAbort = abortSignal
+        ? () => {
+            logger.info(`[LLM Client ${requestId}] Abort signal received, stopping`);
+            stopWithSse();
+          }
+        : null;
+      if (abortSignal && onAbort) {
+        abortSignal.removeEventListener('abort', onAbort);
+        abortSignal.addEventListener('abort', onAbort, { once: true });
       }
-    });
+    }
     logger.info(
       `[LLM Client ${requestId}] Event listener setup complete, now invoking Rust command`
     );
@@ -113,7 +170,7 @@ export class LlmClient {
 
     let response: StreamResponse;
     try {
-      response = await invoke<StreamResponse>('llm_stream_text', {
+      response = await tauriInvoke<StreamResponse>('llm_stream_text', {
         request: requestPayload,
       });
     } catch (error) {
@@ -140,7 +197,7 @@ export class LlmClient {
     if (!sessionId.trim()) {
       return;
     }
-    await invoke('llm_close_responses_session', { sessionId });
+    await tauriInvoke('llm_close_responses_session', { sessionId });
   }
 
   async collectText(
@@ -169,57 +226,57 @@ export class LlmClient {
   }
 
   async checkModelUpdates(): Promise<boolean> {
-    return invoke<boolean>('llm_check_model_updates');
+    return tauriInvoke<boolean>('llm_check_model_updates');
   }
 
   async listAvailableModels(): Promise<AvailableModel[]> {
-    return invoke<AvailableModel[]>('llm_list_available_models');
+    return tauriInvoke<AvailableModel[]>('llm_list_available_models');
   }
 
   async getProviderConfigs(): Promise<ProviderConfig[]> {
-    return invoke<ProviderConfig[]>('llm_get_provider_configs');
+    return tauriInvoke<ProviderConfig[]>('llm_get_provider_configs');
   }
 
   async isModelAvailable(modelIdentifier: string): Promise<boolean> {
-    return invoke<boolean>('llm_is_model_available', { modelIdentifier });
+    return tauriInvoke<boolean>('llm_is_model_available', { modelIdentifier });
   }
 
   async transcribeAudio(request: TranscriptionRequest): Promise<TranscriptionResponse> {
-    return invoke<TranscriptionResponse>('llm_transcribe_audio', { request });
+    return tauriInvoke<TranscriptionResponse>('llm_transcribe_audio', { request });
   }
 
   // AI Services Commands
 
   async calculateCost(request: CalculateCostRequest): Promise<CalculateCostResult> {
-    return invoke<CalculateCostResult>('llm_calculate_cost', { request });
+    return tauriInvoke<CalculateCostResult>('llm_calculate_cost', { request });
   }
 
   async getCompletion(context: CompletionContext): Promise<CompletionResult> {
-    return invoke<CompletionResult>('llm_get_completion', { context });
+    return tauriInvoke<CompletionResult>('llm_get_completion', { context });
   }
 
   async generateCommitMessage(context: GitMessageContext): Promise<GitMessageResult> {
-    return invoke<GitMessageResult>('llm_generate_commit_message', { context });
+    return tauriInvoke<GitMessageResult>('llm_generate_commit_message', { context });
   }
 
   async generateTitle(request: TitleGenerationRequest): Promise<TitleGenerationResult> {
-    return invoke<TitleGenerationResult>('llm_generate_title', { request });
+    return tauriInvoke<TitleGenerationResult>('llm_generate_title', { request });
   }
 
   async compactContext(request: ContextCompactionRequest): Promise<ContextCompactionResult> {
-    return invoke<ContextCompactionResult>('llm_compact_context', { request });
+    return tauriInvoke<ContextCompactionResult>('llm_compact_context', { request });
   }
 
   async enhancePrompt(request: PromptEnhancementRequest): Promise<PromptEnhancementResult> {
-    return invoke<PromptEnhancementResult>('llm_enhance_prompt', { request });
+    return tauriInvoke<PromptEnhancementResult>('llm_enhance_prompt', { request });
   }
 
   async generateImage(request: ImageGenerationRequest): Promise<ImageGenerationResponse> {
-    return invoke<ImageGenerationResponse>('llm_generate_image', { request });
+    return tauriInvoke<ImageGenerationResponse>('llm_generate_image', { request });
   }
 
   async downloadImage(request: ImageDownloadRequest): Promise<ImageDownloadResponse> {
-    return invoke<ImageDownloadResponse>('llm_download_image', { request });
+    return tauriInvoke<ImageDownloadResponse>('llm_download_image', { request });
   }
 
   async registerCustomProvider(config: {
@@ -231,15 +288,15 @@ export class LlmClient {
     enabled: boolean;
     description?: string;
   }): Promise<void> {
-    await invoke('llm_register_custom_provider', { config });
+    await tauriInvoke('llm_register_custom_provider', { config });
   }
 
   async setSetting(key: string, value: string): Promise<void> {
-    await invoke('llm_set_setting', { key, value });
+    await tauriInvoke('llm_set_setting', { key, value });
   }
 
   async startClaudeOAuth(): Promise<{ url: string; verifier: string; state: string }> {
-    return invoke('llm_claude_oauth_start');
+    return tauriInvoke('llm_claude_oauth_start');
   }
 
   async completeClaudeOAuth(params: { code: string; verifier: string; state: string }): Promise<{
@@ -247,7 +304,7 @@ export class LlmClient {
     refreshToken: string;
     expiresAt: number;
   }> {
-    return invoke('llm_claude_oauth_complete', { request: params });
+    return tauriInvoke('llm_claude_oauth_complete', { request: params });
   }
 
   async refreshClaudeOAuth(params: { refreshToken: string }): Promise<{
@@ -255,7 +312,7 @@ export class LlmClient {
     refreshToken: string;
     expiresAt: number;
   }> {
-    return invoke('llm_claude_oauth_refresh', { request: params });
+    return tauriInvoke('llm_claude_oauth_refresh', { request: params });
   }
 
   async startOpenAIOAuth(params?: { redirectUri?: string }): Promise<{
@@ -263,7 +320,7 @@ export class LlmClient {
     verifier: string;
     state: string;
   }> {
-    return invoke('llm_openai_oauth_start', { request: params ?? {} });
+    return tauriInvoke('llm_openai_oauth_start', { request: params ?? {} });
   }
 
   async completeOpenAIOAuth(params: {
@@ -280,7 +337,7 @@ export class LlmClient {
     if (!params.expectedState) {
       throw new Error('Missing expectedState for OpenAI OAuth');
     }
-    return invoke('llm_openai_oauth_complete', { payload: { request: params } });
+    return tauriInvoke('llm_openai_oauth_complete', { payload: { request: params } });
   }
 
   async refreshOpenAIOAuth(params: { refreshToken: string }): Promise<{
@@ -289,7 +346,7 @@ export class LlmClient {
     expiresAt: number;
     accountId?: string;
   }> {
-    return invoke('llm_openai_oauth_refresh', { request: params });
+    return tauriInvoke('llm_openai_oauth_refresh', { request: params });
   }
 
   async refreshOpenAIOAuthFromStore(): Promise<{
@@ -298,15 +355,15 @@ export class LlmClient {
     expiresAt: number;
     accountId?: string;
   }> {
-    return invoke('llm_openai_oauth_refresh_from_store');
+    return tauriInvoke('llm_openai_oauth_refresh_from_store');
   }
 
   async disconnectClaudeOAuth(): Promise<void> {
-    await invoke('llm_claude_oauth_disconnect');
+    await tauriInvoke('llm_claude_oauth_disconnect');
   }
 
   async disconnectOpenAIOAuth(): Promise<void> {
-    await invoke('llm_openai_oauth_disconnect');
+    await tauriInvoke('llm_openai_oauth_disconnect');
   }
 
   async startGitHubCopilotOAuthDeviceCode(params: { enterpriseUrl?: string }): Promise<{
@@ -316,7 +373,7 @@ export class LlmClient {
     expiresIn: number;
     interval: number;
   }> {
-    return invoke('llm_github_copilot_oauth_start_device_code', { request: params ?? {} });
+    return tauriInvoke('llm_github_copilot_oauth_start_device_code', { request: params ?? {} });
   }
 
   async pollGitHubCopilotOAuthDeviceCode(params: {
@@ -332,7 +389,7 @@ export class LlmClient {
     };
     error?: string;
   }> {
-    return invoke('llm_github_copilot_oauth_poll_device_code', { request: params });
+    return tauriInvoke('llm_github_copilot_oauth_poll_device_code', { request: params });
   }
 
   async refreshGitHubCopilotOAuthToken(): Promise<{
@@ -341,11 +398,11 @@ export class LlmClient {
     expiresAt: number;
     enterpriseUrl?: string;
   }> {
-    return invoke('llm_github_copilot_oauth_refresh');
+    return tauriInvoke('llm_github_copilot_oauth_refresh');
   }
 
   async disconnectGitHubCopilotOAuth(): Promise<void> {
-    await invoke('llm_github_copilot_oauth_disconnect');
+    await tauriInvoke('llm_github_copilot_oauth_disconnect');
   }
 
   async getGitHubCopilotOAuthTokens(): Promise<{
@@ -354,7 +411,7 @@ export class LlmClient {
     expiresAt?: number | null;
     enterpriseUrl?: string | null;
   }> {
-    return invoke('llm_github_copilot_oauth_tokens');
+    return tauriInvoke('llm_github_copilot_oauth_tokens');
   }
 
   async getOAuthStatus(): Promise<{
@@ -372,7 +429,7 @@ export class LlmClient {
       isConnected?: boolean | null;
     } | null;
   } | null> {
-    return invoke('llm_oauth_status');
+    return tauriInvoke('llm_oauth_status');
   }
 
   async listMcpTools(): Promise<

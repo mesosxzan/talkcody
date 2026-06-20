@@ -278,6 +278,27 @@ impl ApiKeyManager {
         Ok(())
     }
 
+    pub async fn save_custom_models(&self, config: &ModelsConfiguration) -> Result<(), String> {
+        let path = self.custom_models_path();
+
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| format!("Failed to create directory for custom models: {}", e))?;
+        }
+
+        let raw = serde_json::to_string_pretty(config)
+            .map_err(|e| format!("Failed to serialize custom models: {}", e))?;
+
+        tokio::fs::write(&path, raw)
+            .await
+            .map_err(|e| format!("Failed to write custom models file: {}", e))?;
+
+        self.clear_models_cache().await;
+
+        Ok(())
+    }
+
     pub async fn get_credentials(
         &self,
         provider: &ProviderConfig,

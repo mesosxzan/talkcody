@@ -1,7 +1,7 @@
 // src/services/fast-directory-tree-service.ts
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
 import type { FileNode } from '@/types/file-system';
+import { platformClient } from './platform-client';
 
 export interface DirectoryTreeOptions {
   maxImmediateDepth?: number; // How deep to load immediately (default: 2)
@@ -28,10 +28,7 @@ export class FastDirectoryTreeService {
   ): Promise<FileNode> {
     const { maxImmediateDepth = 2 } = options;
     try {
-      const result = await invoke<FileNode>('build_directory_tree', {
-        rootPath,
-        maxImmediateDepth,
-      });
+      const result = await platformClient.buildDirectoryTree(rootPath, maxImmediateDepth);
       return result;
     } catch (error) {
       logger.error('Failed to build directory tree:', error);
@@ -46,9 +43,7 @@ export class FastDirectoryTreeService {
   async loadDirectoryChildren(dirPath: string): Promise<FileNode[]> {
     try {
       logger.info(`Starting Rust loadDirectoryChildren: ${dirPath}`);
-      const result = await invoke<FileNode[]>('load_directory_children', {
-        dirPath,
-      });
+      const result = await platformClient.loadDirectoryChildren(dirPath);
       logger.info(`Completed Rust loadDirectoryChildren: ${dirPath}`);
 
       return result;
@@ -64,7 +59,7 @@ export class FastDirectoryTreeService {
    */
   async clearCache(): Promise<void> {
     try {
-      await invoke('clear_directory_cache');
+      await platformClient.clearDirectoryCache();
       // logger.info('Directory cache cleared');
     } catch (error) {
       logger.error('Failed to clear directory cache:', error);
@@ -77,7 +72,7 @@ export class FastDirectoryTreeService {
    */
   invalidatePath(path: string): void {
     try {
-      invoke('invalidate_directory_path', { path });
+      platformClient.invalidateDirectoryPath(path);
       logger.debug(`Cache invalidated for path: ${path}`);
     } catch (error) {
       logger.error('Failed to invalidate path cache:', error);

@@ -1,5 +1,4 @@
 // src/components/scheduled-tasks/scheduled-task-form-modal.tsx
-import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -23,6 +22,8 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
+import { postJson } from '@/lib/web-platform';
 import { agentService } from '@/services/database/agent-service';
 import { scheduledTaskNlpService } from '@/services/scheduled-tasks/scheduled-task-nlp-service';
 import { useAgentStore } from '@/stores/agent-store';
@@ -317,7 +318,14 @@ export function ScheduledTaskFormModal({ open, onClose, task }: Props) {
     }
     if (scheduleKind === 'cron') {
       try {
-        await invoke<void>('validate_scheduled_task_cron', { expr: cronExpr });
+        if (isTauriRuntime()) {
+          const { invoke } = await import('@tauri-apps/api/core');
+          await invoke<void>('validate_scheduled_task_cron', { expr: cronExpr });
+        } else {
+          await postJson<void>('/api/scheduled-tasks/validate_scheduled_task_cron', {
+            expr: cronExpr,
+          });
+        }
         setCronError('');
       } catch (error) {
         setCronError(String(error));

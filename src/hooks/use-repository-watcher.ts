@@ -1,6 +1,6 @@
-import { listen } from '@tauri-apps/api/event';
 import { useCallback, useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriListen } from '@/lib/runtime-env';
 import { fastDirectoryTreeService } from '@/services/fast-directory-tree-service';
 import { WindowManagerService } from '@/services/window-manager-service';
 import { useGitStore } from '@/stores/git-store';
@@ -121,8 +121,8 @@ export function useRepositoryWatcher() {
     startWatching();
 
     // Listen for file structure changes (Create/Remove/Rename) - these require file tree refresh
-    const unlistenFileStructure = listen('file-structure-changed', (event) => {
-      const changedPaths = normalizeFileSystemPaths(event.payload);
+    const unlistenFileStructure = tauriListen<string[]>('file-structure-changed', (payload) => {
+      const changedPaths = normalizeFileSystemPaths(payload);
 
       if (changedPaths.length > 0) {
         // Invalidate cache for changed paths
@@ -136,8 +136,8 @@ export function useRepositoryWatcher() {
     });
 
     // Listen for file content changes (Data modification) - these do NOT require file tree refresh
-    const unlistenFileContent = listen('file-content-changed', (event) => {
-      const changedPaths = normalizeFileSystemPaths(event.payload);
+    const unlistenFileContent = tauriListen<string[]>('file-content-changed', (payload) => {
+      const changedPaths = normalizeFileSystemPaths(payload);
 
       if (changedPaths.length > 0) {
         const uniquePaths = Array.from(new Set(changedPaths));
@@ -162,7 +162,7 @@ export function useRepositoryWatcher() {
     });
 
     // Listen for git status changes (from .git directory watcher)
-    const unlistenGitStatus = listen('git-status-changed', () => {
+    const unlistenGitStatus = tauriListen('git-status-changed', () => {
       debouncedRefreshGitStatus();
     });
 
@@ -181,9 +181,9 @@ export function useRepositoryWatcher() {
         fileChangeGitTimeoutRef.current = null;
       }
 
-      unlistenFileStructure.then((fn) => fn());
-      unlistenFileContent.then((fn) => fn());
-      unlistenGitStatus.then((fn) => fn());
+      unlistenFileStructure.then((fn: () => void) => fn());
+      unlistenFileContent.then((fn: () => void) => fn());
+      unlistenGitStatus.then((fn: () => void) => fn());
 
       // Stop window-specific file watching
       if (windowLabelRef.current) {

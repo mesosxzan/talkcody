@@ -1,10 +1,10 @@
-import { invoke } from '@tauri-apps/api/core';
 import { isAbsolute, join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { GenericToolDoing } from '@/components/tools/generic-tool-doing';
 import { GenericToolResult } from '@/components/tools/generic-tool-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 
 export interface CodeSearchResult {
@@ -72,7 +72,7 @@ Use this to find code patterns, function definitions, variable usage, or any tex
           line_content: string;
           byte_offset: number;
         }>;
-      }> = await invoke('search_file_content', {
+      }> = await tauriInvoke('search_file_content', {
         query: pattern,
         rootPath: searchPath,
         fileTypes: normalizedFileTypes,

@@ -3,6 +3,7 @@ use crate::llm::protocols::openai_responses_protocol::classify_continuation_reje
 use crate::llm::protocols::stream_parser::StreamParseState;
 use crate::llm::providers::provider::{ProviderContext, ProviderRoute, ProviderTransport};
 use crate::llm::providers::provider_registry::ProviderRegistry;
+use crate::llm::streaming::emitter::BoxedEmitter;
 use crate::llm::streaming::openai_responses_ws::{self, OpenAiResponsesWsOutcome};
 use crate::llm::testing::fixtures::FixtureInput;
 use crate::llm::testing::{Recorder, RecordingContext, TestConfig, TestMode};
@@ -15,7 +16,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
-use tauri::{Emitter, Manager};
 use tokio::time::timeout;
 
 static REQUEST_COUNTER: AtomicU32 = AtomicU32::new(1000);
@@ -64,7 +64,8 @@ impl StreamHandler {
 
     pub async fn stream_completion(
         &self,
-        window: tauri::Window,
+        emitter: BoxedEmitter,
+        trace_writer: Option<Arc<TraceWriter>>,
         request: StreamTextRequest,
         request_id: String,
     ) -> Result<String, String> {
@@ -143,8 +144,8 @@ impl StreamHandler {
         //     request.trace_context
         // );
 
-        if let Some(ref trace_context) = request.trace_context {
-            let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+        if let (Some(ref trace_context), Some(ref tw)) = (&request.trace_context, &trace_writer) {
+            let trace_writer = tw;
             // log::info!("[LLM Stream {}] Received trace_context - trace_id: {:?}, span_name: {:?}, parent_span_id: {:?}",
             //     request_id, trace_context.trace_id, trace_context.span_name, trace_context.parent_span_id);
             let trace_id = trace_context.trace_id.clone().unwrap_or_else(|| {
@@ -355,7 +356,8 @@ impl StreamHandler {
                 &built_request,
                 |event| {
                     self.handle_stream_event(
-                        &window,
+                        &emitter,
+                        &trace_writer,
                         &event_name,
                         &request_id,
                         &event,
@@ -378,7 +380,8 @@ impl StreamHandler {
                     state.response_metadata_transport =
                         Some(crate::llm::types::ResponseTransport::HttpSse);
                     self.execute_http_sse_stream(
-                        &window,
+                        &emitter,
+                        &trace_writer,
                         &event_name,
                         &request_id,
                         &provider_ctx,
@@ -402,8 +405,10 @@ impl StreamHandler {
                     .await?;
                 }
                 Err(err) => {
-                    if let Some(ref span_id) = trace_span_id {
-                        let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                    if let (Some(ref span_id), Some(ref tw)) =
+                        (trace_span_id, trace_writer.as_ref())
+                    {
+                        let trace_writer = tw;
                         trace_writer.add_event(
                             span_id.clone(),
                             crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -413,18 +418,22 @@ impl StreamHandler {
                             })),
                         );
                     }
-                    let _ = window.emit(
-                        &event_name,
-                        &StreamEvent::Error {
-                            message: err.clone(),
-                        },
-                    );
+                    let _ = emitter
+                        .emit(
+                            &event_name,
+                            serde_json::to_value(&StreamEvent::Error {
+                                message: err.clone(),
+                            })
+                            .unwrap_or_default(),
+                        )
+                        .await;
                     return Err(err);
                 }
             }
         } else {
             self.execute_http_sse_stream(
-                &window,
+                &emitter,
+                &trace_writer,
                 &event_name,
                 &request_id,
                 &provider_ctx,
@@ -449,8 +458,8 @@ impl StreamHandler {
         }
 
         // Record response event and usage for tracing
-        if let Some(ref span_id) = trace_span_id {
-            let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+        if let (Some(ref span_id), Some(ref tw)) = (trace_span_id, trace_writer.as_ref()) {
+            let trace_writer = tw;
             // Add usage attributes if available
             if let Some((
                 input_tokens,
@@ -522,12 +531,15 @@ impl StreamHandler {
         }
 
         if !done_emitted {
-            let _ = window.emit(
-                &event_name,
-                &StreamEvent::Done {
-                    finish_reason: state.finish_reason.clone(),
-                },
-            );
+            let _ = emitter
+                .emit(
+                    &event_name,
+                    serde_json::to_value(&StreamEvent::Done {
+                        finish_reason: state.finish_reason.clone(),
+                    })
+                    .unwrap_or_default(),
+                )
+                .await;
         }
 
         log::info!(
@@ -540,7 +552,8 @@ impl StreamHandler {
     #[allow(clippy::too_many_arguments)]
     async fn execute_http_sse_stream(
         &self,
-        window: &tauri::Window,
+        emitter: &BoxedEmitter,
+        trace_writer: &Option<Arc<TraceWriter>>,
         event_name: &str,
         request_id: &str,
         provider_ctx: &ProviderContext<'_>,
@@ -649,11 +662,17 @@ impl StreamHandler {
                             from: crate::llm::types::TransportFallbackSource::ResponsesChained,
                             to: crate::llm::types::TransportFallbackTarget::Stateless,
                         };
-                        self.emit_stream_event(window, event_name, request_id, &fallback_event);
+                        self.emit_stream_event(
+                            emitter,
+                            trace_writer,
+                            event_name,
+                            request_id,
+                            &fallback_event,
+                        );
                     }
                 }
-                if let Some(span_id) = trace_span_id {
-                    let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                if let (Some(span_id), Some(ref tw)) = (trace_span_id, trace_writer.as_ref()) {
+                    let trace_writer = tw;
                     trace_writer.add_event(
                         span_id.clone(),
                         crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -667,7 +686,12 @@ impl StreamHandler {
                 let error_event = StreamEvent::Error {
                     message: format!("HTTP {}: {}", status, text),
                 };
-                let _ = window.emit(event_name, &error_event);
+                let _ = emitter
+                    .emit(
+                        event_name,
+                        serde_json::to_value(&error_event).unwrap_or_default(),
+                    )
+                    .await;
                 return Err(format!("HTTP error {}", status));
             }
 
@@ -709,8 +733,8 @@ impl StreamHandler {
                         request_id,
                         stream_timeout.as_secs()
                     );
-                    if let Some(span_id) = trace_span_id {
-                        let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                    if let (Some(span_id), Some(ref tw)) = (trace_span_id, trace_writer.as_ref()) {
+                        let trace_writer = tw;
                         trace_writer.add_event(
                             span_id.clone(),
                             crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -727,7 +751,12 @@ impl StreamHandler {
                             stream_timeout.as_secs()
                         ),
                     };
-                    let _ = window.emit(event_name, &error_event);
+                    let _ = emitter
+                        .emit(
+                            event_name,
+                            serde_json::to_value(&error_event).unwrap_or_default(),
+                        )
+                        .await;
                     return Err(format!(
                         "Stream timeout - no data received for {} seconds",
                         stream_timeout.as_secs()
@@ -764,8 +793,8 @@ impl StreamHandler {
                         chunk_count,
                         err_msg
                     );
-                    if let Some(span_id) = trace_span_id {
-                        let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                    if let (Some(span_id), Some(ref tw)) = (trace_span_id, trace_writer.as_ref()) {
+                        let trace_writer = tw;
                         trace_writer.add_event(
                             span_id.clone(),
                             crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -779,7 +808,12 @@ impl StreamHandler {
                     let error_event = StreamEvent::Error {
                         message: format!("Stream error: {}", err_msg),
                     };
-                    let _ = window.emit(event_name, &error_event);
+                    let _ = emitter
+                        .emit(
+                            event_name,
+                            serde_json::to_value(&error_event).unwrap_or_default(),
+                        )
+                        .await;
                     return Err(format!("Stream error: {}", err_msg));
                 }
             };
@@ -805,8 +839,10 @@ impl StreamHandler {
                             request_id,
                             err
                         );
-                        if let Some(span_id) = trace_span_id {
-                            let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                        if let (Some(span_id), Some(ref tw)) =
+                            (trace_span_id, trace_writer.as_ref())
+                        {
+                            let trace_writer = tw;
                             trace_writer.add_event(
                                 span_id.clone(),
                                 crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -819,7 +855,12 @@ impl StreamHandler {
                         let error_event = StreamEvent::Error {
                             message: format!("Invalid UTF-8 in SSE event: {}", err),
                         };
-                        let _ = window.emit(event_name, &error_event);
+                        let _ = emitter
+                            .emit(
+                                event_name,
+                                serde_json::to_value(&error_event).unwrap_or_default(),
+                            )
+                            .await;
                         return Err(format!("Invalid UTF-8 in SSE event: {}", err));
                     }
                 };
@@ -839,7 +880,8 @@ impl StreamHandler {
                     match parsed_result {
                         Ok(Some(event)) => {
                             self.handle_stream_event(
-                                window,
+                                emitter,
+                                trace_writer,
                                 event_name,
                                 request_id,
                                 &event,
@@ -859,7 +901,8 @@ impl StreamHandler {
                         }
                         Ok(None) => {
                             self.emit_pending_events(
-                                window,
+                                emitter,
+                                trace_writer,
                                 event_name,
                                 request_id,
                                 state,
@@ -882,8 +925,10 @@ impl StreamHandler {
                                 request_id,
                                 err
                             );
-                            if let Some(span_id) = trace_span_id {
-                                let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
+                            if let (Some(span_id), Some(ref tw)) =
+                                (trace_span_id, trace_writer.as_ref())
+                            {
+                                let trace_writer = tw;
                                 trace_writer.add_event(
                                     span_id.clone(),
                                     crate::llm::tracing::types::attributes::ERROR_TYPE.to_string(),
@@ -893,12 +938,15 @@ impl StreamHandler {
                                     })),
                                 );
                             }
-                            let _ = window.emit(
-                                event_name,
-                                &StreamEvent::Error {
-                                    message: err.clone(),
-                                },
-                            );
+                            let _ = emitter
+                                .emit(
+                                    event_name,
+                                    serde_json::to_value(&StreamEvent::Error {
+                                        message: err.clone(),
+                                    })
+                                    .unwrap_or_default(),
+                                )
+                                .await;
                             return Err(err);
                         }
                     }
@@ -921,7 +969,8 @@ impl StreamHandler {
     #[allow(clippy::too_many_arguments)]
     fn handle_stream_event(
         &self,
-        window: &tauri::Window,
+        emitter: &BoxedEmitter,
+        trace_writer: &Option<Arc<TraceWriter>>,
         event_name: &str,
         request_id: &str,
         event: &StreamEvent,
@@ -940,15 +989,17 @@ impl StreamHandler {
             recorder.record_expected_event(event);
         }
         Self::append_text_delta(response_text, event);
-        self.emit_stream_event(window, event_name, request_id, event);
+        self.emit_stream_event(emitter, trace_writer, event_name, request_id, event);
         Self::emit_ttft_if_needed(
-            window,
+            emitter,
+            trace_writer,
             trace_span_id,
             trace_client_start_ms,
             trace_ttft_emitted,
         );
         self.emit_pending_events(
-            window,
+            emitter,
+            trace_writer,
             event_name,
             request_id,
             state,
@@ -973,7 +1024,8 @@ impl StreamHandler {
     #[allow(clippy::too_many_arguments)]
     fn emit_pending_events(
         &self,
-        window: &tauri::Window,
+        emitter: &BoxedEmitter,
+        trace_writer: &Option<Arc<TraceWriter>>,
         event_name: &str,
         request_id: &str,
         state: &mut StreamParseState,
@@ -993,9 +1045,10 @@ impl StreamHandler {
                 recorder.record_expected_event(&pending);
             }
             Self::append_text_delta(response_text, &pending);
-            self.emit_stream_event(window, event_name, request_id, &pending);
+            self.emit_stream_event(emitter, trace_writer, event_name, request_id, &pending);
             Self::emit_ttft_if_needed(
-                window,
+                emitter,
+                trace_writer,
                 trace_span_id,
                 trace_client_start_ms,
                 trace_ttft_emitted,
@@ -1035,7 +1088,8 @@ impl StreamHandler {
     }
 
     fn emit_ttft_if_needed(
-        window: &tauri::Window,
+        _emitter: &BoxedEmitter,
+        trace_writer: &Option<Arc<TraceWriter>>,
         trace_span_id: Option<&String>,
         trace_client_start_ms: Option<i64>,
         trace_ttft_emitted: &mut bool,
@@ -1047,12 +1101,13 @@ impl StreamHandler {
             let now_ms = chrono::Utc::now().timestamp_millis();
             if now_ms >= client_start_ms {
                 let ttft_ms = now_ms - client_start_ms;
-                let trace_writer = window.app_handle().state::<Arc<TraceWriter>>();
-                trace_writer.add_event(
-                    span_id.to_string(),
-                    crate::llm::tracing::types::attributes::GEN_AI_TTFT_MS.to_string(),
-                    Some(serde_json::json!({ "ttft_ms": ttft_ms })),
-                );
+                if let Some(ref tw) = trace_writer {
+                    tw.add_event(
+                        span_id.to_string(),
+                        crate::llm::tracing::types::attributes::GEN_AI_TTFT_MS.to_string(),
+                        Some(serde_json::json!({ "ttft_ms": ttft_ms })),
+                    );
+                }
             }
         }
         *trace_ttft_emitted = true;
@@ -1137,13 +1192,19 @@ impl StreamHandler {
 
     fn emit_stream_event(
         &self,
-        window: &tauri::Window,
+        emitter: &BoxedEmitter,
+        _trace_writer: &Option<Arc<TraceWriter>>,
         event_name: &str,
         _request_id: &str,
         event: &StreamEvent,
     ) {
         // log::info!("[LLM Stream {}] Emitting event: {:?}", request_id, event);
-        let _ = window.emit(event_name, event);
+        let emitter = emitter.clone();
+        let event_name = event_name.to_string();
+        let payload = serde_json::to_value(event).unwrap_or_default();
+        tokio::spawn(async move {
+            let _ = emitter.emit(&event_name, payload).await;
+        });
     }
 
     fn build_response_payload(

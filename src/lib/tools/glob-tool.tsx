@@ -1,10 +1,10 @@
-import { invoke } from '@tauri-apps/api/core';
 import { isAbsolute, join } from '@tauri-apps/api/path';
 import { z } from 'zod';
 import { GlobDoing } from '@/components/tools/glob-doing';
 import { GlobResult } from '@/components/tools/glob-result';
 import { createTool } from '@/lib/create-tool';
 import { logger } from '@/lib/logger';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { getEffectiveWorkspaceRoot } from '@/services/workspace-root-service';
 
 const inputSchema = z.strictObject({
@@ -62,7 +62,7 @@ export const globTool = createTool({
       }
       logger.info(`Searching files with pattern "${pattern}" in path: ${searchPath}`);
 
-      const results: GlobResultType[] = await invoke('search_files_by_glob', {
+      const results: GlobResultType[] = await tauriInvoke('search_files_by_glob', {
         pattern,
         path: searchPath,
       });

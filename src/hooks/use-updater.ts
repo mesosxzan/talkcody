@@ -1,6 +1,6 @@
-import { error as logError, info as logInfo } from '@tauri-apps/plugin-log';
 import type { Update } from '@tauri-apps/plugin-updater';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { logger } from '@/lib/logger';
 import { type DownloadProgress, updateService } from '../services/update-service';
 
 export interface UpdateState {
@@ -68,7 +68,7 @@ export function useUpdater(options?: {
     }));
 
     try {
-      logInfo('User initiated update check');
+      logger.info('User initiated update check');
       const update = await updateService.checkForUpdate();
 
       if (update) {
@@ -90,7 +90,7 @@ export function useUpdater(options?: {
       updateLastCheckTime();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logError(`Update check failed: ${errorMessage}`);
+      logger.error(`Update check failed: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
         checking: false,
@@ -126,7 +126,7 @@ export function useUpdater(options?: {
     }));
 
     try {
-      logInfo('Starting update download and installation');
+      logger.info('Starting update download and installation');
       await updateService.downloadAndInstall(currentUpdate, (progress) => {
         setState((prev) => ({
           ...prev,
@@ -140,10 +140,10 @@ export function useUpdater(options?: {
         downloaded: true,
       }));
 
-      logInfo('Update downloaded and installed successfully');
+      logger.info('Update downloaded and installed successfully');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      logError(`Update download/install failed: ${errorMessage}`);
+      logger.error(`Update download/install failed: ${errorMessage}`);
       setState((prev) => ({
         ...prev,
         downloading: false,
@@ -203,7 +203,7 @@ export function useUpdater(options?: {
         !lastCheck || Date.now() - parseInt(lastCheck, 10) >= PERIODIC_CHECK_INTERVAL;
 
       if (periodicCheck && shouldCheck) {
-        logInfo('Performing periodic update check');
+        logger.info('Performing periodic update check');
         await checkForUpdateRef.current();
       }
     };

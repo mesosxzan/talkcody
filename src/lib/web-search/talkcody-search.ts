@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
 import { getApiUrl } from '@/lib/config';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { fetchWithTimeout } from '@/lib/utils';
 import { secureStorage } from '@/services/secure-storage';
 import type { SearchOptions, WebSearchResult, WebSearchSource } from './types';
@@ -31,6 +31,10 @@ interface TalkCodySearchError {
  */
 async function getDeviceId(): Promise<string> {
   try {
+    if (!isTauriRuntime()) {
+      throw new Error('Device ID not available in web mode');
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
     return await invoke<string>('get_device_id');
   } catch (error) {
     logger.error('[TalkCody Search] Failed to get device ID:', error);

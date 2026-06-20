@@ -1,8 +1,10 @@
 // src/services/custom-provider-service.ts
-import { invoke } from '@tauri-apps/api/core';
-import { BaseDirectory, exists, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
+
+import { crossStorageRead, crossStorageWrite } from '@/lib/cross-storage';
 import { logger } from '@/lib/logger';
+import { getRuntimeApiUrl, isTauriRuntime } from '@/lib/runtime-env';
 import type { ProxyRequest, ProxyResponse } from '@/lib/tauri-fetch';
+import { simpleFetch } from '@/lib/tauri-fetch';
 import { normalizeCustomProviderBaseUrl } from '@/providers/custom/custom-provider-url';
 import type {
   CustomProviderConfig,
@@ -28,22 +30,10 @@ class CustomProviderService {
     }
 
     try {
-      const fileExists = await exists(CUSTOM_PROVIDERS_FILENAME, {
-        baseDir: BaseDirectory.AppData,
-      });
-
-      if (!fileExists) {
-        // Return empty config if file doesn't exist
-        const emptyConfig: CustomProvidersConfiguration = {
-          version: new Date().toISOString(),
-          providers: {},
-        };
-        return emptyConfig;
+      const content = await crossStorageRead(CUSTOM_PROVIDERS_FILENAME);
+      if (!content) {
+        return { version: new Date().toISOString(), providers: {} };
       }
-
-      const content = await readTextFile(CUSTOM_PROVIDERS_FILENAME, {
-        baseDir: BaseDirectory.AppData,
-      });
       const config = JSON.parse(content) as CustomProvidersConfiguration;
       this.memoryCache = config;
       return config;
@@ -59,10 +49,26 @@ class CustomProviderService {
   private async saveCustomProviders(config: CustomProvidersConfiguration): Promise<void> {
     try {
       const content = JSON.stringify(config, null, 2);
-      await writeTextFile(CUSTOM_PROVIDERS_FILENAME, content, {
-        baseDir: BaseDirectory.AppData,
-      });
+      await crossStorageWrite(CUSTOM_PROVIDERS_FILENAME, content);
       this.memoryCache = config;
+
+      // In web mode, also sync custom providers to Rust backend via HTTP API
+      // so that llm_get_provider_configs and llm_list_available_models can read them
+      if (!isTauriRuntime()) {
+        try {
+          await simpleFetch(getRuntimeApiUrl('/api/llm/llm_save_custom_providers'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config }),
+          });
+        } catch (syncError) {
+          logger.warn(
+            '[CustomProviderService] Failed to sync custom providers to backend:',
+            syncError
+          );
+        }
+      }
+
       logger.info('Custom providers saved successfully');
     } catch (error) {
       logger.error('Failed to save custom providers:', error);
@@ -283,7 +289,21 @@ class CustomProviderService {
         allow_private_ip: true,
       };
 
-      const response = await invoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
+      let response: ProxyResponse;
+      if (isTauriRuntime()) {
+        const { invoke } = await import('@tauri-apps/api/core');
+        response = await invoke<ProxyResponse>('proxy_fetch', { request: proxyRequest });
+      } else {
+        // Web mode: send request through Rust backend proxy to bypass CORS
+        const res = await simpleFetch(getRuntimeApiUrl('/api/proxy-fetch'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(proxyRequest),
+        });
+        const resBody: ProxyResponse = await res.json();
+        response = resBody;
+      }
+
       const responseTime = Date.now() - startTime;
 
       if (response.status >= 400) {

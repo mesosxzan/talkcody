@@ -1,9 +1,10 @@
 // src/stores/background-task-store.ts
 // Background task state management using Zustand
 
-import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
+import { postJson } from '@/lib/web-platform';
 import {
   type BackgroundTask,
   type GetIncrementalOutputResponse,
@@ -113,7 +114,12 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
       );
     }
 
+    if (!isTauriRuntime()) {
+      throw new Error('Background tasks are not available in web mode');
+    }
+
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const result = await invoke<SpawnBackgroundTaskResponse>('spawn_background_task', {
         request: {
           command,
@@ -156,7 +162,12 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
   killTask: async (taskId) => {
     logger.info('Killing background task:', taskId);
 
+    if (!isTauriRuntime()) {
+      return false;
+    }
+
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const success = await invoke<boolean>('kill_background_task', { taskId });
 
       if (success) {
@@ -176,10 +187,15 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
       throw new Error(`Task not found: ${taskId}`);
     }
 
+    if (!isTauriRuntime()) {
+      throw new Error('Background tasks are not available in web mode');
+    }
+
     try {
       // Get last read position from task state
       const lastOutput = task.lastOutput || { stdoutBytesRead: 0, stderrBytesRead: 0 };
 
+      const { invoke } = await import('@tauri-apps/api/core');
       const response = await invoke<GetIncrementalOutputResponse>('get_background_task_output', {
         taskId,
         stdoutBytesRead: lastOutput.stdoutBytesRead,
@@ -202,7 +218,12 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
   },
 
   refreshTaskStatus: async (taskId) => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const status = await invoke<GetTaskStatusResponse>('get_background_task_status', { taskId });
 
       const updateData: Partial<BackgroundTask> = {
@@ -221,7 +242,12 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
   },
 
   refreshAllTasks: async () => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const listResponse = await invoke<ListTasksResponse>('list_background_tasks');
 
       // Use batch update to avoid race conditions
@@ -272,7 +298,7 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
         }
 
         // Remove tasks that are no longer in the list (cleanup)
-        const activeTaskIds = new Set(listResponse.tasks.map((t) => t.taskId));
+        const activeTaskIds = new Set(listResponse.tasks.map((t: { taskId: string }) => t.taskId));
         for (const id of newTasks.keys()) {
           if (!activeTaskIds.has(id)) {
             newTasks.delete(id);
@@ -287,7 +313,12 @@ export const useBackgroundTaskStore = create<BackgroundTaskState>((set, get) => 
   },
 
   cleanupOldTasks: async () => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
     try {
+      const { invoke } = await import('@tauri-apps/api/core');
       const cleanedCount = await invoke<number>('cleanup_background_tasks');
       logger.info(`Cleaned up ${cleanedCount} old background tasks`);
     } catch (error) {

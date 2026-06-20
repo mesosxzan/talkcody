@@ -433,6 +433,16 @@ impl CoreRuntime {
         &self.tasks
     }
 
+    /// Get the API key manager (for LLM command bridge)
+    pub fn api_key_manager(&self) -> &ApiKeyManager {
+        &self.api_key_manager
+    }
+
+    /// Get the provider registry (for LLM command bridge)
+    pub fn provider_registry(&self) -> &ProviderRegistry {
+        &self.provider_registry
+    }
+
     /// Cancel a task
     pub async fn cancel_task(&self, task_id: &str) -> Result<(), String> {
         let handle = self

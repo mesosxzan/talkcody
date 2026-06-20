@@ -1,9 +1,8 @@
 // src/services/lsp/lsp-service.ts
 // LSP (Language Server Protocol) client service
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 import {
   type CallHierarchyIncomingCall,
   type CallHierarchyItem,
@@ -93,7 +92,7 @@ class LspService {
   private servers: Map<string, ServerConnection> = new Map();
   private pendingRequests: Map<number, PendingRequest> = new Map();
   private messageId = 0;
-  private unlistenFn: UnlistenFn | null = null;
+  private unlistenFn: (() => void) | null = null;
   private initialized = false;
 
   private diagnosticsCallbacks: Set<DiagnosticsCallback> = new Set();
@@ -120,8 +119,8 @@ class LspService {
     logger.info('[LSP] Initializing LSP service');
 
     // Listen for LSP messages from the backend
-    this.unlistenFn = await listen<LspMessageEvent>('lsp-message', (event) => {
-      this.handleMessage(event.payload);
+    this.unlistenFn = await tauriListen<LspMessageEvent>('lsp-message', (payload) => {
+      this.handleMessage(payload);
     });
 
     this.initialized = true;
@@ -159,7 +158,7 @@ class LspService {
    * Get the status of an LSP server for a language
    */
   async getServerStatus(language: string): Promise<LspServerStatus> {
-    return invoke<LspServerStatus>('lsp_get_server_status', { language });
+    return tauriInvoke<LspServerStatus>('lsp_get_server_status', { language });
   }
 
   /**
@@ -167,15 +166,15 @@ class LspService {
    */
   async downloadServer(language: string): Promise<string> {
     logger.info(`[LSP] Downloading server for ${language}`);
-    return invoke<string>('lsp_download_server', { language });
+    return tauriInvoke<string>('lsp_download_server', { language });
   }
 
   /**
    * Listen for download progress events
    */
   async onDownloadProgress(callback: (progress: LspDownloadProgress) => void): Promise<() => void> {
-    const unlisten = await listen<LspDownloadProgress>('lsp-download-progress', (event) => {
-      callback(event.payload);
+    const unlisten = await tauriListen<LspDownloadProgress>('lsp-download-progress', (payload) => {
+      callback(payload);
     });
     return unlisten;
   }
@@ -209,7 +208,7 @@ class LspService {
     logger.info(`[LSP] Starting server for ${language} in ${rootPath}`);
 
     // Check if server is available
-    const isAvailable = await invoke<boolean>('lsp_check_server_available', { language });
+    const isAvailable = await tauriInvoke<boolean>('lsp_check_server_available', { language });
     if (!isAvailable) {
       // Check if we can auto-download
       const status = await this.getServerStatus(language);
@@ -227,7 +226,7 @@ class LspService {
     const MAX_ATTEMPTS = 3;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const response = await invoke<LspStartResponse>('lsp_start_server', {
+        const response = await tauriInvoke<LspStartResponse>('lsp_start_server', {
           language,
           rootPath,
         });
@@ -309,7 +308,7 @@ class LspService {
     }
 
     // Stop the server process
-    await invoke('lsp_stop_server', { serverId });
+    await tauriInvoke('lsp_stop_server', { serverId });
 
     // Remove from registry
     this.servers.delete(serverId);
@@ -941,7 +940,7 @@ class LspService {
         timeout,
       });
 
-      invoke('lsp_send_message', { serverId, message }).catch((e) => {
+      tauriInvoke('lsp_send_message', { serverId, message }).catch((e: unknown) => {
         this.pendingRequests.delete(id);
         clearTimeout(timeout);
         reject(e);
@@ -960,7 +959,7 @@ class LspService {
     };
 
     const message = JSON.stringify(notification);
-    await invoke('lsp_send_message', { serverId, message });
+    await tauriInvoke('lsp_send_message', { serverId, message });
   }
 
   /**

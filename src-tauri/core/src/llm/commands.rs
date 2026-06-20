@@ -67,8 +67,20 @@ pub async fn llm_stream_text(
     let request_id_clone = request_id.clone();
     // Spawn the streaming process in a background task so the command returns immediately
     tauri::async_runtime::spawn(async move {
+        // Get trace_writer from app state before moving window into emitter
+        let trace_writer: Option<std::sync::Arc<crate::llm::tracing::TraceWriter>> = {
+            use tauri::Manager;
+            window
+                .app_handle()
+                .state::<std::sync::Arc<crate::llm::tracing::TraceWriter>>()
+                .inner()
+                .clone()
+                .into()
+        };
+        let emitter: crate::llm::streaming::emitter::BoxedEmitter =
+            std::sync::Arc::new(crate::llm::streaming::emitter::TauriEmitter::new(window));
         if let Err(e) = handler
-            .stream_completion(window, request, request_id_clone)
+            .stream_completion(emitter, trace_writer, request, request_id_clone)
             .await
         {
             log::error!("[llm_stream_text] Stream error: {}", e);

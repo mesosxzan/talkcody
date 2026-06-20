@@ -878,7 +878,7 @@ pub fn run() {
                 match ServerStateFactory::create(server_config_clone, event_tx).await {
                     Ok(server_state) => {
                         // Save server state so Storage is not dropped
-                        server_handle.manage(server_state);
+                        server_handle.manage(server_state.clone());
 
                         // Start server with the configured state
                         let bind_addr = std::net::SocketAddr::from(([127, 0, 0, 1], 0));
@@ -887,6 +887,9 @@ pub fn run() {
                                 let addr = listener.local_addr().unwrap_or(bind_addr);
                                 log::info!("Cloud backend server started on {}", addr);
                                 server_handle.manage(ServerInfo { addr });
+                                if let Err(error) = talkcody_server::http::serve(listener, server_state).await {
+                                    log::error!("Cloud backend server stopped: {}", error);
+                                }
                             }
                             Err(e) => {
                                 log::error!("Failed to bind server: {}", e);

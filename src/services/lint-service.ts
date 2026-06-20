@@ -1,7 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { editor } from 'monaco-editor';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 
 export interface LintDiagnostic {
   id: string;
@@ -50,7 +49,7 @@ class LintService {
   private static instance: LintService;
   private requestId = 0;
   private pendingRequests = new Map<string, (result: LintResult) => void>();
-  private unlistenFn: UnlistenFn | null = null;
+  private unlistenFn: (() => void) | null = null;
   private initialized = false;
   private cache = new Map<string, LintResult>();
   private readonly CACHE_DURATION = 5000; // 5 seconds
@@ -74,38 +73,48 @@ class LintService {
       return;
     }
 
+    if (!isTauriRuntime()) {
+      logger.info('[LintService] Web mode, skipping initialization');
+      this.initialized = true;
+      return;
+    }
+
     try {
       // Listen for lint results from the Rust backend
       logger.info('[LintService] Setting up lint-result event listener');
-      this.unlistenFn = await listen<RustLintResult>('lint-result', (event) => {
-        logger.info('[LintService] Received lint-result event', {
-          requestId: event.payload.request_id,
-          filePath: event.payload.file_path,
-          diagnosticsCount: event.payload.diagnostics.length,
-        });
+      const { listen } = await import('@tauri-apps/api/event');
+      this.unlistenFn = await listen<RustLintResult>(
+        'lint-result',
+        (event: { payload: RustLintResult }) => {
+          logger.info('[LintService] Received lint-result event', {
+            requestId: event.payload.request_id,
+            filePath: event.payload.file_path,
+            diagnosticsCount: event.payload.diagnostics.length,
+          });
 
-        const rustResult = event.payload;
-        const result = this.convertRustResult(rustResult);
+          const rustResult = event.payload;
+          const result = this.convertRustResult(rustResult);
 
-        // Cache the result
-        this.cache.set(rustResult.file_path, result);
+          // Cache the result
+          this.cache.set(rustResult.file_path, result);
 
-        // Resolve the pending promise if exists
-        const resolve = this.pendingRequests.get(rustResult.request_id);
-        logger.info('[LintService] Looking for pending request', {
-          requestId: rustResult.request_id,
-          found: !!resolve,
-          pendingRequestsCount: this.pendingRequests.size,
-        });
+          // Resolve the pending promise if exists
+          const resolve = this.pendingRequests.get(rustResult.request_id);
+          logger.info('[LintService] Looking for pending request', {
+            requestId: rustResult.request_id,
+            found: !!resolve,
+            pendingRequestsCount: this.pendingRequests.size,
+          });
 
-        if (resolve) {
-          resolve(result);
-          this.pendingRequests.delete(rustResult.request_id);
-          logger.info('[LintService] Resolved pending request', rustResult.request_id);
-        } else {
-          logger.warn('[LintService] No pending request found for', rustResult.request_id);
+          if (resolve) {
+            resolve(result);
+            this.pendingRequests.delete(rustResult.request_id);
+            logger.info('[LintService] Resolved pending request', rustResult.request_id);
+          } else {
+            logger.warn('[LintService] No pending request found for', rustResult.request_id);
+          }
         }
-      });
+      );
 
       this.initialized = true;
       logger.info('[LintService] Initialized successfully');
@@ -201,8 +210,21 @@ class LintService {
       });
 
       // Send request to Rust backend (fire-and-forget)
-      invoke('run_lint', { filePath, rootPath, requestId }).catch((error) => {
-        logger.error('[LintService] Failed to invoke run_lint:', error);
+      if (isTauriRuntime()) {
+        import('@tauri-apps/api/core').then(({ invoke }) => {
+          invoke('run_lint', { filePath, rootPath, requestId }).catch((error: unknown) => {
+            logger.error('[LintService] Failed to invoke run_lint:', error);
+            clearTimeout(timeoutId);
+            this.pendingRequests.delete(requestId);
+            resolve({
+              filePath,
+              diagnostics: [],
+              timestamp: Date.now(),
+            });
+          });
+        });
+      } else {
+        // Web mode: lint not available
         clearTimeout(timeoutId);
         this.pendingRequests.delete(requestId);
         resolve({
@@ -210,7 +232,7 @@ class LintService {
           diagnostics: [],
           timestamp: Date.now(),
         });
-      });
+      }
     });
   }
 

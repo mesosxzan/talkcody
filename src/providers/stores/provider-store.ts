@@ -1,9 +1,9 @@
 // src/providers/stores/provider-store.ts
 // Unified state management for providers and models
 
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriListen } from '@/lib/runtime-env';
 import { ensureModelsInitialized, refreshModelConfigs } from '@/providers/config/model-config';
 import {
   PROVIDERS_WITH_CODING_PLAN,
@@ -23,7 +23,7 @@ import type { AvailableModel } from '@/types/api-keys';
 import type { CustomProviderConfig } from '@/types/custom-provider';
 import type { ModelConfig } from '@/types/models';
 
-let modelsUpdateListener: Promise<UnlistenFn> | null = null;
+let modelsUpdateListener: Promise<() => void> | null = null;
 let modelsUpdateReady = false;
 
 // ===== Types =====
@@ -259,12 +259,14 @@ export const useProviderStore = create<ProviderStore>((set, get) => ({
       await ensureModelsInitialized();
 
       if (!modelsUpdateListener) {
-        modelsUpdateListener = listen('modelsUpdated', async () => {
-          if (modelsUpdateReady) {
-            await refreshModelConfigs();
-            await get().refresh();
-          }
-        });
+        modelsUpdateListener = isTauriRuntime()
+          ? tauriListen('modelsUpdated', async () => {
+              if (modelsUpdateReady) {
+                await refreshModelConfigs();
+                await get().refresh();
+              }
+            })
+          : Promise.resolve(() => {});
       }
 
       // Initialize remote skills sync service (non-blocking, for hot-reload)

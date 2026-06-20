@@ -1,10 +1,10 @@
 // src/stores/scheduled-task-store.ts
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 import { generateId } from '@/lib/utils';
+import { postJson } from '@/lib/web-platform';
 import { getLocale, type SupportedLocale } from '@/locales';
 import { useProviderStore } from '@/providers/stores/provider-store';
 import { agentRegistry } from '@/services/agents/agent-registry';
@@ -73,6 +73,13 @@ const DEFAULTS = {
   offlinePolicy: { enabled: false, minuteGranularity: 1 },
 };
 
+function scheduledInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauriRuntime()) {
+    return tauriInvoke<T>(command, args);
+  }
+  return postJson<T>(`/api/scheduled-tasks/${command}`, args ?? {});
+}
+
 export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   tasks: [],
   runs: new Map(),
@@ -83,7 +90,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   loadTasks: async (projectId?: string) => {
     set({ isLoading: true });
     try {
-      const tasks = await invoke<ScheduledTask[]>('list_scheduled_tasks', {
+      const tasks = await scheduledInvoke<ScheduledTask[]>('list_scheduled_tasks', {
         projectId: projectId ?? null,
       });
       set({ tasks });
@@ -95,7 +102,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   },
 
   createTask: async (data: CreateScheduledTaskInput) => {
-    const task = await invoke<ScheduledTask>('create_scheduled_task', {
+    const task = await scheduledInvoke<ScheduledTask>('create_scheduled_task', {
       request: {
         name: data.name,
         description: data.description ?? null,
@@ -139,7 +146,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
     if (patch.projectId !== undefined) {
       request.projectId = patch.projectId;
     }
-    const updated = await invoke<ScheduledTask>('update_scheduled_task', {
+    const updated = await scheduledInvoke<ScheduledTask>('update_scheduled_task', {
       id,
       request,
     });
@@ -149,7 +156,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   },
 
   deleteTask: async (id: string) => {
-    await invoke<void>('delete_scheduled_task', { id });
+    await scheduledInvoke<void>('delete_scheduled_task', { id });
     set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }));
     await get().syncOfflineRunner(
       get().tasks.some((task) => task.id !== id && task.offlinePolicy?.enabled)
@@ -159,22 +166,23 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
   enableTask: async (id: string) => get().updateTask(id, { status: 'enabled' }),
   disableTask: async (id: string) => get().updateTask(id, { status: 'disabled' }),
   pauseTask: async (id: string) => {
-    const updated = await invoke<ScheduledTask>('pause_scheduled_task', { id });
+    const updated = await scheduledInvoke<ScheduledTask>('pause_scheduled_task', { id });
     set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? updated : t)) }));
     return updated;
   },
   resumeTask: async (id: string) => {
-    const updated = await invoke<ScheduledTask>('resume_scheduled_task', { id });
+    const updated = await scheduledInvoke<ScheduledTask>('resume_scheduled_task', { id });
     set((state) => ({ tasks: state.tasks.map((t) => (t.id === id ? updated : t)) }));
     await get().syncOfflineRunner(get().tasks.some((task) => task.offlinePolicy?.enabled));
     return updated;
   },
 
-  triggerNow: async (id: string) => invoke<string>('trigger_scheduled_task_now', { jobId: id }),
+  triggerNow: async (id: string) =>
+    scheduledInvoke<string>('trigger_scheduled_task_now', { jobId: id }),
 
   loadRuns: async (jobId: string) => {
     try {
-      const runs = await invoke<ScheduledTaskRun[]>('list_scheduled_task_runs', {
+      const runs = await scheduledInvoke<ScheduledTaskRun[]>('list_scheduled_task_runs', {
         jobId,
         limit: 50,
       });
@@ -190,7 +198,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   loadStats: async () => {
     try {
-      const stats = await invoke<ScheduledTaskStatsSummary>('get_scheduled_task_stats');
+      const stats = await scheduledInvoke<ScheduledTaskStatsSummary>('get_scheduled_task_stats');
       set({ stats });
     } catch (err) {
       logger.error('[ScheduledTaskStore] loadStats error:', err);
@@ -202,7 +210,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
     executionPolicy?: { staggerMs?: number }
   ) => {
     try {
-      const cronPreview = await invoke<
+      const cronPreview = await scheduledInvoke<
         Array<{ rawAt: number; jitteredAt: number; jitterMs: number }>
       >('preview_scheduled_task_cron', {
         schedule,
@@ -221,7 +229,9 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   syncOfflineRunner: async (enabled: boolean) => {
     try {
-      await invoke('scheduled_task_runner_sync', { enabled });
+      if (isTauriRuntime()) {
+        await tauriInvoke('scheduled_task_runner_sync', { enabled });
+      }
     } catch (err) {
       logger.error('[ScheduledTaskStore] syncOfflineRunner error:', err);
     }
@@ -229,7 +239,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
 
   claimPendingRuns: async () => {
     try {
-      const runs = await invoke<ScheduledTaskRun[]>('claim_scheduled_task_runs');
+      const runs = await scheduledInvoke<ScheduledTaskRun[]>('claim_scheduled_task_runs');
       const tasks = get().tasks;
       for (const run of runs) {
         const job = tasks.find((task) => task.id === run.scheduledTaskId);
@@ -416,8 +426,12 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
         deliveryStatus: deliveryResult.status,
         deliveryError: deliveryResult.error,
       };
-      await invoke<void>('report_scheduled_task_run_complete', { payload: completePayload });
-      const updated = await invoke<ScheduledTask[]>('list_scheduled_tasks', { projectId: null });
+      await scheduledInvoke<void>('report_scheduled_task_run_complete', {
+        payload: completePayload,
+      });
+      const updated = await scheduledInvoke<ScheduledTask[]>('list_scheduled_tasks', {
+        projectId: null,
+      });
       set({ tasks: updated });
       await get().loadStats();
     } catch (err) {
@@ -439,7 +453,7 @@ export const useScheduledTaskStore = create<ScheduledTaskState>((set, get) => ({
         error: errMsg,
       };
       try {
-        await invoke<void>('report_scheduled_task_run_complete', { payload: failPayload });
+        await scheduledInvoke<void>('report_scheduled_task_run_complete', { payload: failPayload });
       } catch (reportErr) {
         logger.error('[ScheduledTaskStore] Failed to report run failure:', reportErr);
       }
@@ -454,9 +468,11 @@ export async function initScheduledTaskListener(): Promise<void> {
   if (listenerInitialized) return;
   listenerInitialized = true;
 
-  await listen<ScheduledTaskTriggerEvent>('scheduled-task-trigger', (event) => {
-    useScheduledTaskStore.getState()._onTrigger(event.payload);
-  });
+  if (isTauriRuntime()) {
+    await tauriListen<ScheduledTaskTriggerEvent>('scheduled-task-trigger', (payload) => {
+      useScheduledTaskStore.getState()._onTrigger(payload);
+    });
+  }
 
   await useScheduledTaskStore.getState().loadTasks();
   await useScheduledTaskStore.getState().loadStats();

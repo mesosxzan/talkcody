@@ -1,6 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
 import { readTextFile } from '@tauri-apps/plugin-fs';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import type { IndexingProgress } from '@/types/file-system';
 import {
   clearAllIndex,
@@ -143,7 +143,7 @@ class ProjectIndexer {
       // The glob search already respects .gitignore to exclude node_modules, etc.
       // Default max_results is 100 which is too low for indexing - we need all files.
       const globPromises = SUPPORTED_EXTENSIONS.map((ext) =>
-        invoke<GlobResult[]>('search_files_by_glob', {
+        tauriInvoke<GlobResult[]>('search_files_by_glob', {
           pattern: `**/*.${ext}`,
           path: rootPath,
           maxResults: 999999, // Effectively unlimited - rely on .gitignore filtering

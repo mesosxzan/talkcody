@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 
 // Module-level state for new window flag
 let isNewWindowFlag = false;
@@ -38,7 +38,7 @@ export class WindowManagerService {
     isNewWindow?: boolean
   ): Promise<string> {
     try {
-      const label = await invoke<string>('create_project_window', {
+      const label = await tauriInvoke<string>('create_project_window', {
         projectId,
         rootPath,
         isNewWindow,
@@ -80,8 +80,9 @@ export class WindowManagerService {
    * Get all open windows
    */
   static async getAllWindows(): Promise<WindowInfo[]> {
+    if (!isTauriRuntime()) return [];
     try {
-      const windows = await invoke<WindowInfo[]>('get_all_project_windows');
+      const windows = await tauriInvoke<WindowInfo[]>('get_all_project_windows');
       return windows;
     } catch (error) {
       logger.error('Failed to get all windows:', error);
@@ -94,7 +95,7 @@ export class WindowManagerService {
    */
   static async getCurrentWindowLabel(): Promise<string> {
     try {
-      const label = await invoke<string>('get_current_window_label');
+      const label = await tauriInvoke<string>('get_current_window_label');
       return label;
     } catch (error) {
       logger.error('Failed to get current window label:', error);
@@ -106,8 +107,9 @@ export class WindowManagerService {
    * Get window project information
    */
   static async getWindowInfo(): Promise<{ projectId?: string; rootPath?: string } | null> {
+    if (!isTauriRuntime()) return null;
     try {
-      const info = await invoke<[string, string] | null>('get_window_info');
+      const info = await tauriInvoke<[string, string] | null>('get_window_info');
       if (info) {
         return {
           projectId: info[0],
@@ -126,8 +128,9 @@ export class WindowManagerService {
    * Returns the window label if found, null otherwise
    */
   static async checkProjectWindowExists(rootPath: string): Promise<string | null> {
+    if (!isTauriRuntime()) return null;
     try {
-      const label = await invoke<string | null>('check_project_window_exists', {
+      const label = await tauriInvoke<string | null>('check_project_window_exists', {
         rootPath,
       });
       return label;
@@ -142,7 +145,7 @@ export class WindowManagerService {
    */
   static async focusWindow(label: string): Promise<void> {
     try {
-      await invoke('focus_project_window', { label });
+      await tauriInvoke('focus_project_window', { label });
     } catch (error) {
       logger.error('Failed to focus window:', error);
       throw error;
@@ -157,15 +160,15 @@ export class WindowManagerService {
     projectId?: string,
     rootPath?: string
   ): Promise<void> {
+    if (!isTauriRuntime()) return;
     try {
-      await invoke('update_window_project', {
+      await tauriInvoke('update_window_project', {
         label,
         projectId,
         rootPath,
       });
     } catch (error) {
       logger.error('Failed to update window project:', error);
-      throw error;
     }
   }
 
@@ -173,8 +176,9 @@ export class WindowManagerService {
    * Start file watching for a window
    */
   static async startWindowFileWatching(windowLabel: string, path: string): Promise<void> {
+    if (!isTauriRuntime()) return;
     try {
-      await invoke('start_window_file_watching', {
+      await tauriInvoke('start_window_file_watching', {
         windowLabel,
         path,
       });
@@ -188,8 +192,9 @@ export class WindowManagerService {
    * Stop file watching for a window
    */
   static async stopWindowFileWatching(windowLabel: string): Promise<void> {
+    if (!isTauriRuntime()) return;
     try {
-      await invoke('stop_window_file_watching', {
+      await tauriInvoke('stop_window_file_watching', {
         windowLabel,
       });
     } catch (error) {

@@ -1,6 +1,7 @@
 // src/stores/settings-store.ts
 import { create } from 'zustand';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { GROK_CODE_FAST } from '@/providers/config/model-config';
 import { PROVIDER_CONFIGS } from '@/providers/config/provider-config';
 import type { TursoClient } from '@/services/database/turso-client';
@@ -663,10 +664,10 @@ class SettingsDatabase {
     const entries = Object.entries(settings);
     const now = Date.now();
 
-    const statements = entries.map(([key, value]) => ({
-      sql: 'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)',
-      params: [key, value, now],
-    }));
+    const statements: Array<[string, unknown[]]> = entries.map(([key, value]) => [
+      'INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ($1, $2, $3)',
+      [key, value, now],
+    ]);
 
     await this.db.batch(statements);
   }
@@ -920,54 +921,60 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       });
 
       // Sync proxy settings to Rust backend on initialization
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = get();
-        await invoke('set_global_proxy', {
-          enabled: state.proxy_enabled,
-          url: state.proxy_url || null,
-          proxyType: state.proxy_type || null,
-          noProxy: state.proxy_no_proxy || null,
-        });
-        logger.info('[SettingsStore] Proxy settings synced to Rust backend on init');
-      } catch (error) {
-        logger.error(
-          '[SettingsStore] Failed to sync proxy settings to Rust backend on init:',
-          error
-        );
+      if (isTauriRuntime()) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const state = get();
+          await invoke('set_global_proxy', {
+            enabled: state.proxy_enabled,
+            url: state.proxy_url || null,
+            proxyType: state.proxy_type || null,
+            noProxy: state.proxy_no_proxy || null,
+          });
+          logger.info('[SettingsStore] Proxy settings synced to Rust backend on init');
+        } catch (error) {
+          logger.error(
+            '[SettingsStore] Failed to sync proxy settings to Rust backend on init:',
+            error
+          );
+        }
       }
 
       // Sync git executable path to Rust backend on initialization
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = get();
-        await invoke('set_git_executable', {
-          gitPath: state.git_executable_path || '',
-        });
-        logger.info('[SettingsStore] Git executable path synced to Rust backend on init');
-      } catch (error) {
-        logger.error(
-          '[SettingsStore] Failed to sync git executable path to Rust backend on init:',
-          error
-        );
+      if (isTauriRuntime()) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const state = get();
+          await invoke('set_git_executable', {
+            gitPath: state.git_executable_path || '',
+          });
+          logger.info('[SettingsStore] Git executable path synced to Rust backend on init');
+        } catch (error) {
+          logger.error(
+            '[SettingsStore] Failed to sync git executable path to Rust backend on init:',
+            error
+          );
+        }
       }
 
       // Sync git proxy settings to Rust backend on initialization
-      try {
-        const { invoke } = await import('@tauri-apps/api/core');
-        const state = get();
-        await invoke('set_git_proxy', {
-          enabled: state.git_proxy_enabled,
-          useGlobalProxy: state.git_proxy_use_global,
-          url: state.git_proxy_url || null,
-          proxyType: state.git_proxy_type || null,
-        });
-        logger.info('[SettingsStore] Git proxy settings synced to Rust backend on init');
-      } catch (error) {
-        logger.error(
-          '[SettingsStore] Failed to sync git proxy settings to Rust backend on init:',
-          error
-        );
+      if (isTauriRuntime()) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const state = get();
+          await invoke('set_git_proxy', {
+            enabled: state.git_proxy_enabled,
+            useGlobalProxy: state.git_proxy_use_global,
+            url: state.git_proxy_url || null,
+            proxyType: state.git_proxy_type || null,
+          });
+          logger.info('[SettingsStore] Git proxy settings synced to Rust backend on init');
+        } catch (error) {
+          logger.error(
+            '[SettingsStore] Failed to sync git proxy settings to Rust backend on init:',
+            error
+          );
+        }
       }
 
       logger.info('Settings store initialized');
@@ -1703,17 +1710,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
 
     // Sync to Rust backend for shell commands (git, etc.)
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('set_global_proxy', {
-        enabled: settings.enabled,
-        url: settings.url || null,
-        proxyType: settings.type || null,
-        noProxy: settings.noProxy || null,
-      });
-      logger.info('[SettingsStore] Proxy settings synced to Rust backend');
-    } catch (error) {
-      logger.error('[SettingsStore] Failed to sync proxy settings to Rust backend:', error);
+    if (isTauriRuntime()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_global_proxy', {
+          enabled: settings.enabled,
+          url: settings.url || null,
+          proxyType: settings.type || null,
+          noProxy: settings.noProxy || null,
+        });
+        logger.info('[SettingsStore] Proxy settings synced to Rust backend');
+      } catch (error) {
+        logger.error('[SettingsStore] Failed to sync proxy settings to Rust backend:', error);
+      }
     }
   },
 
@@ -1841,17 +1850,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     });
 
     // Sync to Rust backend for git commands
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('set_git_proxy', {
-        enabled: settings.enabled,
-        useGlobalProxy: settings.useGlobalProxy,
-        url: settings.url || null,
-        proxyType: settings.type || null,
-      });
-      logger.info('[SettingsStore] Git proxy settings synced to Rust backend');
-    } catch (error) {
-      logger.error('[SettingsStore] Failed to sync git proxy settings to Rust backend:', error);
+    if (isTauriRuntime()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_git_proxy', {
+          enabled: settings.enabled,
+          useGlobalProxy: settings.useGlobalProxy,
+          url: settings.url || null,
+          proxyType: settings.type || null,
+        });
+        logger.info('[SettingsStore] Git proxy settings synced to Rust backend');
+      } catch (error) {
+        logger.error('[SettingsStore] Failed to sync git proxy settings to Rust backend:', error);
+      }
     }
   },
 
@@ -1861,14 +1872,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ git_executable_path: path });
 
     // Sync to Rust backend
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      await invoke('set_git_executable', {
-        gitPath: path || '',
-      });
-      logger.info('[SettingsStore] Git executable path synced to Rust backend');
-    } catch (error) {
-      logger.error('[SettingsStore] Failed to sync git executable path to Rust backend:', error);
+    if (isTauriRuntime()) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_git_executable', {
+          gitPath: path || '',
+        });
+        logger.info('[SettingsStore] Git executable path synced to Rust backend');
+      } catch (error) {
+        logger.error('[SettingsStore] Failed to sync git executable path to Rust backend:', error);
+      }
     }
   },
 

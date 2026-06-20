@@ -1,6 +1,6 @@
 // src/lib/proxy-detector.ts
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 
 /**
  * Proxy configuration interface
@@ -137,7 +137,11 @@ function getDefaultPort(protocol: string): number {
  * Check if a local port is open (potential proxy server)
  */
 export async function checkLocalPort(port: number): Promise<boolean> {
+  if (!isTauriRuntime()) {
+    return false;
+  }
   try {
+    const { invoke } = await import('@tauri-apps/api/core');
     const isOpen = await invoke<boolean>('check_local_port', { port });
     return isOpen;
   } catch (error) {
@@ -150,7 +154,11 @@ export async function checkLocalPort(port: number): Promise<boolean> {
  * Get system proxy environment variables
  */
 export async function getSystemProxyEnv(): Promise<Record<string, string>> {
+  if (!isTauriRuntime()) {
+    return {};
+  }
   try {
+    const { invoke } = await import('@tauri-apps/api/core');
     const env = await invoke<Record<string, string>>('get_system_proxy_env');
     return env;
   } catch (error) {
@@ -385,6 +393,10 @@ export async function testProxyConnection(proxyUrl: string): Promise<{
     }
 
     // Use Tauri backend to test proxy connection
+    if (!isTauriRuntime()) {
+      return { success: false, error: 'Proxy testing not available in web mode' };
+    }
+    const { invoke } = await import('@tauri-apps/api/core');
     const result = await invoke<{ success: boolean; latency: number }>('test_proxy_connection', {
       proxyUrl,
     });

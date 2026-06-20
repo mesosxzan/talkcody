@@ -20,10 +20,8 @@ import type {
   WriteFileOutput,
 } from '@talkcody/shared/types/share-tools';
 import { formatToolInputSummary } from '@talkcody/shared/utils';
-import { getVersion } from '@tauri-apps/api/app';
-import { invoke } from '@tauri-apps/api/core';
-import { platform } from '@tauri-apps/plugin-os';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import { simpleFetch } from '@/lib/tauri-fetch';
 import { useFileChangesStore } from '@/stores/file-changes-store';
 import type { Task, UIMessage } from '@/types';
@@ -39,7 +37,10 @@ const API_BASE_URL =
  */
 async function getDeviceId(): Promise<string> {
   try {
-    return await invoke<string>('get_device_id');
+    if (!isTauriRuntime()) {
+      throw new Error('Device ID not available in web mode');
+    }
+    return await tauriInvoke<string>('get_device_id');
   } catch (error) {
     logger.error('[ShareService] Failed to get device ID:', error);
     throw new Error('Failed to get device ID');
@@ -398,8 +399,12 @@ function convertToShareMessage(message: UIMessage, taskId?: string): ShareMessag
  * Create a share snapshot from task and messages
  */
 async function createSnapshot(task: Task, messages: UIMessage[]): Promise<TaskShareSnapshot> {
-  const appVersion = await getVersion();
-  const platformName = platform();
+  const appVersion = isTauriRuntime()
+    ? await (await import('@tauri-apps/api/app')).getVersion()
+    : 'web';
+  const platformName = isTauriRuntime()
+    ? (await import('@tauri-apps/plugin-os')).platform()
+    : 'web';
 
   // Filter out system messages and empty messages
   const filteredMessages = messages.filter(

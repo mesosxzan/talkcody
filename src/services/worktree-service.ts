@@ -10,8 +10,8 @@
  * - Clean up worktrees
  */
 
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 import { useSettingsStore } from '@/stores/settings-store';
 import type {
   MergeResult,
@@ -52,7 +52,7 @@ class WorktreeService {
         force,
       });
 
-      const result = await invoke<WorktreeInfo>('git_acquire_worktree', {
+      const result = await tauriInvoke<WorktreeInfo>('git_acquire_worktree', {
         projectPath,
         poolIndex,
         taskId,
@@ -82,7 +82,7 @@ class WorktreeService {
         poolIndex,
       });
 
-      await invoke('git_release_worktree', {
+      await tauriInvoke('git_release_worktree', {
         projectPath,
         poolIndex,
       });
@@ -106,7 +106,7 @@ class WorktreeService {
         poolIndex,
       });
 
-      await invoke('git_remove_worktree', {
+      await tauriInvoke('git_remove_worktree', {
         projectPath,
         poolIndex,
         worktreeRoot: this.getWorktreeRoot(),
@@ -128,7 +128,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Listing worktrees', { projectPath });
 
-      const result = await invoke<WorktreePoolStatus>('git_list_worktrees', {
+      const result = await tauriInvoke<WorktreePoolStatus>('git_list_worktrees', {
         projectPath,
         worktreeRoot: this.getWorktreeRoot(),
       });
@@ -154,7 +154,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Getting worktree changes', { worktreePath });
 
-      const result = await invoke<WorktreeChanges>('git_get_worktree_changes', {
+      const result = await tauriInvoke<WorktreeChanges>('git_get_worktree_changes', {
         worktreePath,
       });
 
@@ -184,7 +184,7 @@ class WorktreeService {
         message,
       });
 
-      const commitHash = await invoke<string>('git_commit_worktree', {
+      const commitHash = await tauriInvoke<string>('git_commit_worktree', {
         worktreePath,
         message,
       });
@@ -215,7 +215,7 @@ class WorktreeService {
         commitMessage,
       });
 
-      const result = await invoke<MergeResult>('git_merge_worktree', {
+      const result = await tauriInvoke<MergeResult>('git_merge_worktree', {
         projectPath,
         poolIndex,
         commitMessage,
@@ -244,7 +244,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Aborting merge', { projectPath });
 
-      await invoke('git_abort_merge', {
+      await tauriInvoke('git_abort_merge', {
         projectPath,
       });
 
@@ -264,7 +264,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Continuing merge', { projectPath, message });
 
-      const result = await invoke<MergeResult>('git_continue_merge', {
+      const result = await tauriInvoke<MergeResult>('git_continue_merge', {
         projectPath,
         message,
       });
@@ -291,7 +291,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Cleaning up worktrees', { projectPath });
 
-      await invoke('git_cleanup_worktrees', {
+      await tauriInvoke('git_cleanup_worktrees', {
         projectPath,
         worktreeRoot: this.getWorktreeRoot(),
       });
@@ -316,7 +316,7 @@ class WorktreeService {
         poolIndex,
       });
 
-      const result = await invoke<SyncResult>('git_sync_worktree_from_main', {
+      const result = await tauriInvoke<SyncResult>('git_sync_worktree_from_main', {
         projectPath,
         poolIndex,
         worktreeRoot: this.getWorktreeRoot(),
@@ -344,7 +344,7 @@ class WorktreeService {
     try {
       logger.info('[WorktreeService] Aborting rebase', { worktreePath });
 
-      await invoke('git_abort_rebase', {
+      await tauriInvoke('git_abort_rebase', {
         worktreePath,
       });
 

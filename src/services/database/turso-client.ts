@@ -1,158 +1,120 @@
-// Turso Client Wrapper
-// Provides a unified interface compatible with the old Tauri SQL plugin API
-// Uses Tauri backend commands for database operations
+import { getRuntimeApiUrl, isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
+import { simpleFetch } from '@/lib/tauri-fetch';
 
-import { invoke } from '@tauri-apps/api/core';
-import { logger } from '@/lib/logger';
-
-/**
- * Database configuration options
- */
-export interface DatabaseConfig {
-  /** Database filename (for local mode) */
-  filename: string;
-  /** Optional remote URL (for Turso cloud mode) */
-  url?: string;
-  /** Optional auth token (for Turso cloud mode) */
-  authToken?: string;
+export interface QueryResult {
+  rows: Record<string, unknown>[];
+  columns: string[];
+  rowsAffected: number;
+  lastInsertId: number;
 }
 
 /**
- * Result set structure matching libsql
+ * Compatibility type for code that expects the old ResultSet interface.
+ * Extends QueryResult with array-like row access.
  */
-export interface ResultSet {
-  rows: unknown[];
-  rowsAffected?: number;
+export interface ResultSet extends QueryResult {
+  [index: number]: Record<string, unknown>;
+}
+
+function toResultSet(result: QueryResult): ResultSet {
+  const rs = result as ResultSet;
+  for (let i = 0; i < result.rows.length; i++) {
+    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    rs[i] = result.rows[i]!;
+  }
+  return rs;
+}
+
+async function dbPost<T>(path: string, body: unknown): Promise<T> {
+  const response = await simpleFetch(getRuntimeApiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+
+  return response.json() as Promise<T>;
 }
 
 /**
- * Turso Client Wrapper
- * Provides compatibility layer with old Tauri SQL plugin API
- * Uses Rust backend for actual database operations
+ * Database client that works in both Tauri and Web modes.
+ * - Tauri: uses invoke('db_query'/'db_execute'/'db_batch')
+ * - Web: uses HTTP POST to the Rust server
  */
 export class TursoClient {
-  private initialized = false;
+  private connected = false;
 
-  constructor(_config: DatabaseConfig) {
-    // Config is stored for future use if needed
-  }
-
-  /**
-   * Initialize the database connection
-   */
   async initialize(): Promise<void> {
-    if (this.initialized) {
-      return; // Already initialized
+    if (this.connected) return;
+
+    if (isTauriRuntime()) {
+      await tauriInvoke('db_connect');
     }
+    // Web mode: the server-side database is already initialized at startup.
+    // No client-side connect step needed.
 
-    try {
-      logger.info(`Initializing Turso client via Tauri backend`);
-
-      // Connect via Tauri command
-      await invoke('db_connect');
-
-      this.initialized = true;
-      logger.info('Turso client initialized successfully');
-    } catch (error) {
-      logger.error('Failed to initialize Turso client:', error);
-      throw error;
-    }
+    this.connected = true;
   }
 
-  /**
-   * Execute a SQL statement (INSERT, UPDATE, DELETE, CREATE, etc.)
-   * Compatible with old Tauri SQL plugin API
-   */
-  async execute(sql: string, params?: unknown[]): Promise<ResultSet> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    try {
-      logger.debug('Executing SQL:', sql, params);
-      const result = await invoke<ResultSet>('db_execute', {
-        sql,
-        params: params || [],
-      });
-      return result;
-    } catch (error) {
-      logger.error('SQL execute error:', error, sql, params);
-      throw error;
-    }
+  async execute(sql: string, params: unknown[] = []): Promise<ResultSet> {
+    const result = await this._rawExecute(sql, params);
+    return toResultSet(result);
   }
 
-  /**
-   * Execute a SELECT query and return results
-   * Compatible with old Tauri SQL plugin API
-   */
-  async select<T = unknown[]>(sql: string, params?: unknown[]): Promise<T> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    try {
-      logger.debug('Executing SELECT:', sql, params);
-      const result = await invoke<ResultSet>('db_query', {
-        sql,
-        params: params || [],
-      });
-
-      // Return rows for compatibility
-      return result.rows as T;
-    } catch (error) {
-      logger.error('SQL select error:', error, sql, params);
-      throw error;
-    }
+  async query(sql: string, params: unknown[] = []): Promise<ResultSet> {
+    const result = await this._rawQuery(sql, params);
+    return toResultSet(result);
   }
 
-  /**
-   * Execute multiple SQL statements in a transaction
-   */
-  async batch(statements: Array<{ sql: string; params?: unknown[] }>): Promise<ResultSet[]> {
-    if (!this.initialized) {
-      await this.initialize();
-    }
-
-    try {
-      logger.debug('Executing batch:', statements.length, 'statements');
-
-      const batchStatements = statements.map((stmt) => [stmt.sql, stmt.params || []]);
-
-      const results = await invoke<ResultSet[]>('db_batch', {
-        statements: batchStatements,
-      });
-
-      return results;
-    } catch (error) {
-      logger.error('SQL batch error:', error);
-      throw error;
-    }
+  async select<T = Record<string, unknown>[]>(sql: string, params: unknown[] = []): Promise<T> {
+    const result = await this._rawQuery(sql, params);
+    return result.rows as T;
   }
 
-  /**
-   * Close the database connection
-   */
-  async close(): Promise<void> {
-    if (this.initialized) {
-      this.initialized = false;
-      logger.info('Turso client connection state cleared');
+  async batch(statements: Array<[string, unknown[]]>): Promise<ResultSet[]> {
+    this.ensureInitialized();
+
+    if (isTauriRuntime()) {
+      const results = await tauriInvoke<QueryResult[]>('db_batch', { statements });
+      return results.map(toResultSet);
     }
+
+    const results = await dbPost<QueryResult[]>('/api/db/batch', { statements });
+    return results.map(toResultSet);
   }
 
-  /**
-   * Get the underlying client (for compatibility)
-   */
-  getClient(): unknown {
-    return this.initialized ? {} : null;
+  private async _rawExecute(sql: string, params: unknown[]): Promise<QueryResult> {
+    this.ensureInitialized();
+    if (isTauriRuntime()) {
+      return tauriInvoke<QueryResult>('db_execute', { sql, params });
+    }
+    return dbPost<QueryResult>('/api/db/execute', { sql, params });
+  }
+
+  private async _rawQuery(sql: string, params: unknown[]): Promise<QueryResult> {
+    this.ensureInitialized();
+    if (isTauriRuntime()) {
+      return tauriInvoke<QueryResult>('db_query', { sql, params });
+    }
+    return dbPost<QueryResult>('/api/db/query', { sql, params });
+  }
+
+  private ensureInitialized(): void {
+    if (!this.connected) {
+      throw new Error('Database not initialized');
+    }
   }
 }
 
-/**
- * Factory function to create database instance
- * Compatible with old Database.load() API
- */
-export async function loadDatabase(config: DatabaseConfig): Promise<TursoClient> {
-  const client = new TursoClient(config);
-  await client.initialize();
-  return client;
+let sharedClient: TursoClient | null = null;
+
+export async function loadDatabase(): Promise<TursoClient> {
+  if (!sharedClient) {
+    sharedClient = new TursoClient();
+    await sharedClient.initialize();
+  }
+  return sharedClient;
 }

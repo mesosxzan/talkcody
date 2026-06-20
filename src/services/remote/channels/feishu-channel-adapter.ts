@@ -1,6 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 import type {
   RemoteChannelAdapter,
   RemoteChannelCapabilities,
@@ -76,7 +75,7 @@ export class FeishuChannelAdapter implements RemoteChannelAdapter {
     maxMessageLength: 4000,
     streamMode: 'append',
   };
-  private inboundUnlisten: UnlistenFn | null = null;
+  private inboundUnlisten: (() => void) | null = null;
 
   async start(): Promise<void> {
     const settings = useSettingsStore.getState();
@@ -85,20 +84,26 @@ export class FeishuChannelAdapter implements RemoteChannelAdapter {
       return;
     }
 
+    if (!isTauriRuntime()) {
+      logger.warn('[FeishuChannelAdapter] Not available in web mode');
+      return;
+    }
+
     logger.info('[FeishuChannelAdapter] Starting gateway');
-    await invoke('feishu_set_config', { config: this.toRustConfig(settings) });
-    await invoke('feishu_start');
+    await tauriInvoke('feishu_set_config', { config: this.toRustConfig(settings) });
+    await tauriInvoke('feishu_start');
   }
 
   async stop(): Promise<void> {
     logger.info('[FeishuChannelAdapter] Stopping gateway');
-    await invoke('feishu_stop');
+    if (!isTauriRuntime()) return;
+    await tauriInvoke('feishu_stop');
   }
 
   onInbound(handler: (message: RemoteInboundMessage) => void): () => void {
-    const listenPromise = listen<FeishuInboundMessage>('feishu-inbound-message', (event) => {
-      logger.debug('[FeishuChannelAdapter] Inbound event received', event.payload);
-      handler(toRemoteInboundMessage(event.payload));
+    const listenPromise = tauriListen<FeishuInboundMessage>('feishu-inbound-message', (payload) => {
+      logger.debug('[FeishuChannelAdapter] Inbound event received', payload);
+      handler(toRemoteInboundMessage(payload));
     });
 
     listenPromise
@@ -122,7 +127,7 @@ export class FeishuChannelAdapter implements RemoteChannelAdapter {
       chatId: request.chatId,
       textLen: request.text.length,
     });
-    const response = await invoke<FeishuSendMessageResponse>('feishu_send_message', {
+    const response = await tauriInvoke<FeishuSendMessageResponse>('feishu_send_message', {
       request: toFeishuSendMessageRequest(request),
     });
     return { messageId: response.messageId };
@@ -134,13 +139,13 @@ export class FeishuChannelAdapter implements RemoteChannelAdapter {
       messageId: request.messageId,
       textLen: request.text.length,
     });
-    await invoke('feishu_edit_message', {
+    await tauriInvoke('feishu_edit_message', {
       request: toFeishuEditMessageRequest(request),
     });
   }
 
   async getStatus(): Promise<RemoteChannelStatus> {
-    const status = await invoke<FeishuGatewayStatus>('feishu_get_status');
+    const status = await tauriInvoke<FeishuGatewayStatus>('feishu_get_status');
     return {
       running: status.running,
       lastPollAtMs: status.lastEventAtMs ?? null,
@@ -153,7 +158,7 @@ export class FeishuChannelAdapter implements RemoteChannelAdapter {
   }
 
   async getConfig(): Promise<FeishuRemoteConfig> {
-    return invoke('feishu_get_config');
+    return tauriInvoke('feishu_get_config');
   }
 
   private toRustConfig(settings: ReturnType<typeof useSettingsStore.getState>): FeishuRemoteConfig {

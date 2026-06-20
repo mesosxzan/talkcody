@@ -8,6 +8,7 @@
 import { appDataDir, join } from '@tauri-apps/api/path';
 import { exists, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 
 /**
  * Active skills configuration structure
@@ -22,8 +23,25 @@ interface ActiveSkillsConfig {
 /**
  * Active Skills Config Service
  */
+const WEB_ACTIVE_SKILLS_KEY = 'talkcody-active-skills';
+
 class ActiveSkillsConfigService {
   private configPath: string | null = null;
+
+  private loadWebActiveSkills(): string[] {
+    const raw = localStorage.getItem(WEB_ACTIVE_SKILLS_KEY);
+    if (!raw) return [];
+    const config = JSON.parse(raw) as ActiveSkillsConfig;
+    return Array.isArray(config.activeSkills) ? config.activeSkills : [];
+  }
+
+  private saveWebActiveSkills(skillIds: string[]): void {
+    const config: ActiveSkillsConfig = {
+      activeSkills: skillIds,
+      lastUpdated: Date.now(),
+    };
+    localStorage.setItem(WEB_ACTIVE_SKILLS_KEY, JSON.stringify(config));
+  }
 
   /**
    * Get the path to the config file
@@ -56,6 +74,10 @@ class ActiveSkillsConfigService {
    */
   async loadActiveSkills(): Promise<string[]> {
     try {
+      if (!isTauriRuntime()) {
+        return this.loadWebActiveSkills();
+      }
+
       await this.ensureConfigFile();
       const configPath = await this.getConfigPath();
       const content = await readTextFile(configPath);
@@ -75,6 +97,11 @@ class ActiveSkillsConfigService {
    */
   async saveActiveSkills(skillIds: string[]): Promise<void> {
     try {
+      if (!isTauriRuntime()) {
+        this.saveWebActiveSkills(skillIds);
+        return;
+      }
+
       const configPath = await this.getConfigPath();
       const config: ActiveSkillsConfig = {
         activeSkills: skillIds,

@@ -1,8 +1,7 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type { Terminal } from '@xterm/xterm';
 import stripAnsi from 'strip-ansi';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 import { settingsManager } from '@/stores/settings-store';
 import { type TerminalSession, useTerminalStore } from '@/stores/terminal-store';
 
@@ -20,9 +19,9 @@ interface PtyCloseEvent {
 }
 
 class TerminalService {
-  private listeners: Map<string, UnlistenFn> = new Map();
-  private outputListener: UnlistenFn | null = null;
-  private closeListener: UnlistenFn | null = null;
+  private listeners: Map<string, () => void> = new Map();
+  private outputListener: (() => void) | null = null;
+  private closeListener: (() => void) | null = null;
   private dataListeners: Map<string, { dispose: () => void }> = new Map();
   // Buffer for outputs that arrive before session is created (race condition fix)
   private pendingOutputs: Map<string, string[]> = new Map();
@@ -40,15 +39,13 @@ class TerminalService {
     }
 
     // Listen for PTY output
-    this.outputListener = await listen<PtyOutput>('pty-output', (event) => {
-      const { pty_id, data } = event.payload;
+    this.outputListener = await tauriListen<PtyOutput>('pty-output', ({ pty_id, data }) => {
       this.handlePtyOutput(pty_id, data);
     });
     logger.info('PTY output listener registered');
 
     // Listen for PTY close events
-    this.closeListener = await listen<PtyCloseEvent>('pty-close', (event) => {
-      const { pty_id } = event.payload;
+    this.closeListener = await tauriListen<PtyCloseEvent>('pty-close', ({ pty_id }) => {
       this.handlePtyClose(pty_id);
     });
     logger.info('PTY close listener registered');
@@ -95,7 +92,7 @@ class TerminalService {
       const preferredShell = settingsManager.getTerminalShell();
       logger.info('Creating new terminal', { cwd, cols, rows, preferredShell });
 
-      const result = await invoke<PtySpawnResult>('pty_spawn', {
+      const result = await tauriInvoke<PtySpawnResult>('pty_spawn', {
         cwd,
         cols,
         rows,
@@ -142,7 +139,7 @@ class TerminalService {
   async writeToTerminal(ptyId: string, data: string): Promise<void> {
     try {
       logger.info('Writing to PTY', { ptyId, data, dataLength: data.length });
-      await invoke('pty_write', { ptyId, data });
+      await tauriInvoke('pty_write', { ptyId, data });
     } catch (error) {
       logger.error('Failed to write to terminal', { ptyId, error });
       throw error;
@@ -151,7 +148,7 @@ class TerminalService {
 
   async resizeTerminal(ptyId: string, cols: number, rows: number): Promise<void> {
     try {
-      await invoke('pty_resize', { ptyId, cols, rows });
+      await tauriInvoke('pty_resize', { ptyId, cols, rows });
     } catch (error) {
       logger.error('Failed to resize terminal', { ptyId, cols, rows, error });
       // Don't throw, resize is not critical
@@ -161,7 +158,7 @@ class TerminalService {
   async killTerminal(ptyId: string): Promise<void> {
     try {
       logger.info('Killing terminal', { ptyId });
-      await invoke('pty_kill', { ptyId });
+      await tauriInvoke('pty_kill', { ptyId });
 
       // Remove session from store
       const store = useTerminalStore.getState();

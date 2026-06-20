@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { CheckCircle, GitBranch, Loader2, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -17,6 +16,7 @@ import { Switch } from '@/components/ui/switch';
 import { useLocale } from '@/hooks/use-locale';
 import { logger } from '@/lib/logger';
 import { parseProxyUrl } from '@/lib/proxy-detector';
+import { tauriInvoke } from '@/lib/runtime-env';
 import { type GitProxySettings, settingsManager, useSettingsStore } from '@/stores/settings-store';
 
 /**
@@ -112,7 +112,7 @@ export function GitSettings() {
     setTestResult(null);
 
     try {
-      const version = await invoke<string>('test_git_executable', {
+      const version = await tauriInvoke<string>('test_git_executable', {
         gitPath: pathToTest || '',
       });
       setTestResult({

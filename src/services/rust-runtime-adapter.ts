@@ -9,8 +9,8 @@
  * message persistence, and streaming — the TS side only renders events.
  */
 
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { getRuntimeApiUrl, isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
+import { simpleFetch } from '@/lib/tauri-fetch';
 import { getToolMetadata } from '@/lib/tools';
 import type { MessageAttachment, UIMessage } from '@/types/agent';
 
@@ -101,7 +101,7 @@ export interface AgentLoopCallbacks {
 }
 
 export class RustRuntimeAdapter {
-  private unlisten?: UnlistenFn;
+  private unlisten?: () => void;
   private taskId: string | null = null;
   private sessionId: string | null = null;
   private fullText = '';
@@ -133,25 +133,55 @@ export class RustRuntimeAdapter {
       rejectCompletion = reject;
     });
 
-    // Subscribe to runtime events BEFORE starting the task to avoid races.
-    this.unlisten = await listen<RuntimeEventPayload>(
-      `runtime-event:${input.sessionId}`,
-      (event) => {
-        this.handleEvent(event.payload, callbacks, resolveCompletion, rejectCompletion);
-      }
-    );
+    const runtimeInput = {
+      sessionId: input.sessionId,
+      agentId: input.agentId ?? null,
+      projectId: input.projectId ?? null,
+      initialMessage: input.initialMessage,
+      settings: input.settings ?? null,
+      workspace: input.workspace ?? null,
+    };
 
     try {
-      this.taskId = await invoke<string>('runtime_start_task', {
-        input: {
-          sessionId: input.sessionId,
-          agentId: input.agentId ?? null,
-          projectId: input.projectId ?? null,
-          initialMessage: input.initialMessage,
-          settings: input.settings ?? null,
-          workspace: input.workspace ?? null,
-        },
-      });
+      if (isTauriRuntime()) {
+        // Subscribe to runtime events BEFORE starting the task to avoid races.
+        this.unlisten = await tauriListen<RuntimeEventPayload>(
+          `runtime-event:${input.sessionId}`,
+          (payload) => {
+            this.handleEvent(payload, callbacks, resolveCompletion, rejectCompletion);
+          }
+        );
+
+        this.taskId = await tauriInvoke<string>('runtime_start_task', {
+          input: runtimeInput,
+        });
+      } else {
+        const response = await simpleFetch(getRuntimeApiUrl('/api/runtime/tasks'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(runtimeInput),
+        });
+
+        if (!response.ok) {
+          throw new Error(await response.text());
+        }
+
+        const result = (await response.json()) as { taskId: string; sessionId: string };
+        this.taskId = result.taskId;
+
+        const eventSource = new EventSource(
+          getRuntimeApiUrl(`/api/runtime/tasks/${encodeURIComponent(this.taskId)}/events`)
+        );
+        eventSource.addEventListener('runtime-event', (event) => {
+          this.handleEvent(JSON.parse(event.data), callbacks, resolveCompletion, rejectCompletion);
+        });
+        eventSource.onerror = () => {
+          if (!this.settled) {
+            this.fail(new Error('Runtime event stream disconnected'), callbacks, rejectCompletion);
+          }
+        };
+        this.unlisten = () => eventSource.close();
+      }
 
       if (signal) {
         this.abortHandler = () => {
@@ -209,7 +239,23 @@ export class RustRuntimeAdapter {
         break;
     }
 
-    await invoke('runtime_send_action', { taskId: this.taskId, action: payload });
+    if (isTauriRuntime()) {
+      await tauriInvoke('runtime_send_action', { taskId: this.taskId, action: payload });
+      return;
+    }
+
+    const response = await simpleFetch(
+      getRuntimeApiUrl(`/api/runtime/tasks/${encodeURIComponent(this.taskId)}/actions`),
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: payload }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
   }
 
   /**
@@ -217,12 +263,34 @@ export class RustRuntimeAdapter {
    */
   async getTaskState(): Promise<string | null> {
     if (!this.taskId) return null;
-    return invoke<string | null>('runtime_get_task_state', { taskId: this.taskId });
+    if (isTauriRuntime()) {
+      return tauriInvoke<string | null>('runtime_get_task_state', { taskId: this.taskId });
+    }
+
+    const response = await simpleFetch(
+      getRuntimeApiUrl(`/api/runtime/tasks/${encodeURIComponent(this.taskId)}/state`)
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
+    const result = (await response.json()) as { state: string | null };
+    return result.state;
   }
 
   async cancel(): Promise<void> {
     if (!this.taskId) return;
-    await invoke('runtime_cancel_task', { taskId: this.taskId });
+    if (isTauriRuntime()) {
+      await tauriInvoke('runtime_cancel_task', { taskId: this.taskId });
+      return;
+    }
+
+    const response = await simpleFetch(
+      getRuntimeApiUrl(`/api/runtime/tasks/${encodeURIComponent(this.taskId)}/cancel`),
+      { method: 'POST' }
+    );
+    if (!response.ok) {
+      throw new Error(await response.text());
+    }
   }
 
   private belongsToCurrentExecution(payload: RuntimeEventPayload): boolean {

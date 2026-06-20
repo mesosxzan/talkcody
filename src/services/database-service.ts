@@ -44,9 +44,7 @@ export class DatabaseService {
     if (this.isInitialized) return;
 
     try {
-      this.db = await loadDatabase({
-        filename: 'talkcody.db',
-      });
+      this.db = await loadDatabase();
 
       await TursoDatabaseInit.initialize(this.db);
       await TursoDatabaseInit.runMigrations(this.db);

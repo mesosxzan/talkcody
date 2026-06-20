@@ -1,6 +1,5 @@
-import type { UnlistenFn } from '@tauri-apps/api/event';
-import { listen } from '@tauri-apps/api/event';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import type { StreamEvent } from './types';
 
 type EventHandler = (event: StreamEvent) => void;
@@ -24,11 +23,15 @@ type TransportFallbackAliasEvent = StreamEvent & {
 };
 
 export class LlmEventStream {
-  private unlisten: UnlistenFn | null = null;
+  private unlisten: (() => void) | null = null;
   private closed = false;
 
   async listen(eventName: string, handler: EventHandler): Promise<void> {
-    this.unlisten = await listen<StreamEvent>(eventName, (event) => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+    const { listen } = await import('@tauri-apps/api/event');
+    this.unlisten = await listen<StreamEvent>(eventName, (event: { payload: StreamEvent }) => {
       handler(event.payload);
     });
   }

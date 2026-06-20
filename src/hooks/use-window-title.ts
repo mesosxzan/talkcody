@@ -8,9 +8,9 @@
 //   at startup) when no project is resolved.
 // - Guards against stale async updates on rapid project switches.
 
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useRef } from 'react';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime } from '@/lib/runtime-env';
 import { useProjectStore } from '@/stores/project-store';
 import { DEFAULT_PROJECT, useSettingsStore } from '@/stores/settings-store';
 
@@ -38,6 +38,9 @@ export function useWindowTitle(): void {
 
     const syncTitle = async () => {
       try {
+        if (!isTauriRuntime()) return;
+
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
         const baseTitle = getBaseTitle();
 
         // No project selected or default project — use base title only.

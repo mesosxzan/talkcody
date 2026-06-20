@@ -51,6 +51,7 @@ authors = ["Kaisen Kang"]
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 futures-util = "0.3"
+tokio-stream = { version = "0.1", features = ["sync"] }
 async-trait = "0.1"
 async-stream = "0.3"
 

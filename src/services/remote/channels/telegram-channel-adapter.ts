@@ -1,6 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke, tauriListen } from '@/lib/runtime-env';
 import type {
   RemoteChannelAdapter,
   RemoteChannelCapabilities,
@@ -87,41 +86,50 @@ export class TelegramChannelAdapter implements RemoteChannelAdapter {
     maxMessageLength: 4096,
     streamMode: 'edit',
   };
-  private inboundUnlisten: UnlistenFn | null = null;
+  private inboundUnlisten: (() => void) | null = null;
 
   async start(): Promise<void> {
+    if (!isTauriRuntime()) {
+      logger.warn('[TelegramChannelAdapter] Not available in web mode');
+      return;
+    }
+
     const settings = useSettingsStore.getState();
     const config = this.toRustConfig(settings);
 
     // Always sync the latest UI state so Rust cannot keep polling with stale config.
-    await invoke('telegram_set_config', { config });
+    await tauriInvoke('telegram_set_config', { config });
 
     if (!config.enabled || !config.token) {
       logger.info('[TelegramChannelAdapter] Remote control disabled or missing token');
-      await invoke('telegram_stop');
+      await tauriInvoke('telegram_stop');
       return;
     }
 
     logger.info('[TelegramChannelAdapter] Starting gateway');
-    await invoke('telegram_start');
+    await tauriInvoke('telegram_start');
   }
 
   async stop(): Promise<void> {
     logger.info('[TelegramChannelAdapter] Stopping gateway');
-    await invoke('telegram_stop');
+    if (!isTauriRuntime()) return;
+    await tauriInvoke('telegram_stop');
   }
 
   onInbound(handler: (message: RemoteInboundMessage) => void): () => void {
-    const listenPromise = listen<TelegramInboundMessage>('telegram-inbound-message', (event) => {
-      logger.debug('[TelegramChannelAdapter] Inbound event received', event.payload);
-      handler(toRemoteInboundMessage(event.payload));
-    });
+    const listenPromise = tauriListen<TelegramInboundMessage>(
+      'telegram-inbound-message',
+      (payload) => {
+        logger.debug('[TelegramChannelAdapter] Inbound event received', payload);
+        handler(toRemoteInboundMessage(payload));
+      }
+    );
 
     listenPromise
       .then((unlisten) => {
         this.inboundUnlisten = unlisten;
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         logger.warn('[TelegramChannelAdapter] Failed to listen inbound', error);
       });
 
@@ -139,7 +147,7 @@ export class TelegramChannelAdapter implements RemoteChannelAdapter {
       textLen: request.text.length,
       replyToMessageId: request.replyToMessageId,
     });
-    const response = await invoke<TelegramSendMessageResponse>('telegram_send_message', {
+    const response = await tauriInvoke<TelegramSendMessageResponse>('telegram_send_message', {
       request: toTelegramSendMessageRequest(request),
     });
     return { messageId: String(response.messageId) };
@@ -151,13 +159,13 @@ export class TelegramChannelAdapter implements RemoteChannelAdapter {
       messageId: request.messageId,
       textLen: request.text.length,
     });
-    await invoke('telegram_edit_message', {
+    await tauriInvoke('telegram_edit_message', {
       request: toTelegramEditMessageRequest(request),
     });
   }
 
   async getStatus(): Promise<RemoteChannelStatus> {
-    const status = await invoke<TelegramGatewayStatus>('telegram_get_status');
+    const status = await tauriInvoke<TelegramGatewayStatus>('telegram_get_status');
     return {
       running: status.running,
       lastPollAtMs: status.lastPollAtMs ?? null,
@@ -171,7 +179,7 @@ export class TelegramChannelAdapter implements RemoteChannelAdapter {
   }
 
   async getConfig(): Promise<TelegramRemoteConfig> {
-    return invoke('telegram_get_config');
+    return tauriInvoke('telegram_get_config');
   }
 
   private toRustConfig(

@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
 import { logger } from '@/lib/logger';
+import { isTauriRuntime, tauriInvoke } from '@/lib/runtime-env';
 
 /** Result from the Rust execute_git command */
 interface TauriShellResult {
@@ -20,12 +20,12 @@ export interface GitResult {
 /**
  * Execute a git command using the `execute_git` Tauri command.
  *
- * Unlike shell-based execution, this invokes the git binary directly
+ * Unlike shell-based execution, this tauriInvokes the git binary directly
  * (no bash/cmd wrapper), which works reliably on all platforms.
  */
 async function gitCommand(args: string[], cwd?: string): Promise<GitResult> {
   try {
-    const result = await invoke<TauriShellResult>('execute_git', {
+    const result = await tauriInvoke<TauriShellResult>('execute_git', {
       args,
       cwd: cwd ?? null,
       timeoutMs: 30000,
