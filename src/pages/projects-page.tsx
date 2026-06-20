@@ -104,6 +104,10 @@ export function ProjectsPage() {
       });
 
       if (shouldDelete) {
+        // Reset local selection state if the deleted project was selected
+        if (currentProjectId === project.id) {
+          setCurrentProjectId(null);
+        }
         await deleteProjectFromStore(project.id);
         toast.success(t.Projects.page.deleteProjectSuccess(project.name));
       }

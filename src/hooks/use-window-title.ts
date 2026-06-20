@@ -32,6 +32,9 @@ export function useWindowTitle(): void {
 
   // Used to discard stale async operations after a newer one has started.
   const updateIdRef = useRef(0);
+  // Track the previous selectedProjectId to detect genuine changes
+  // (user switching projects) vs. projects list being updated after a delete.
+  const prevProjectIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const currentUpdateId = ++updateIdRef.current;
@@ -47,6 +50,7 @@ export function useWindowTitle(): void {
         if (!selectedProjectId || selectedProjectId === DEFAULT_PROJECT) {
           if (currentUpdateId !== updateIdRef.current) return;
           await getCurrentWindow().setTitle(baseTitle);
+          prevProjectIdRef.current = selectedProjectId;
           return;
         }
 
@@ -55,24 +59,35 @@ export function useWindowTitle(): void {
         if (found) {
           if (currentUpdateId !== updateIdRef.current) return;
           await getCurrentWindow().setTitle(`${found.name} - ${baseTitle}`);
+          prevProjectIdRef.current = selectedProjectId;
           return;
         }
 
-        // Slow path: project not yet in cache — load projects first.
-        // We call refreshProjects so the store stays up-to-date.
-        await useProjectStore.getState().refreshProjects();
+        // Slow path: project not in cache.
+        // Only trigger a DB refresh when the selected project ID actually changed
+        // (i.e. user switched to a different project). When the ID is the same but
+        // the project disappeared from the list (deleted elsewhere), skip refresh to
+        // avoid an infinite loop: refreshProjects → projects changes → re-trigger.
+        if (selectedProjectId !== prevProjectIdRef.current) {
+          prevProjectIdRef.current = selectedProjectId;
+          await useProjectStore.getState().refreshProjects();
 
-        // After refresh, look up again.
-        const refreshed = useProjectStore
-          .getState()
-          .projects.find((p) => p.id === selectedProjectId);
+          // After refresh, look up again.
+          const refreshed = useProjectStore
+            .getState()
+            .projects.find((p) => p.id === selectedProjectId);
 
-        if (currentUpdateId !== updateIdRef.current) return;
+          if (currentUpdateId !== updateIdRef.current) return;
 
-        if (refreshed) {
-          await getCurrentWindow().setTitle(`${refreshed.name} - ${baseTitle}`);
+          if (refreshed) {
+            await getCurrentWindow().setTitle(`${refreshed.name} - ${baseTitle}`);
+          } else {
+            // Project not found — fall back to base title.
+            await getCurrentWindow().setTitle(baseTitle);
+          }
         } else {
-          // Project id is unknown — fall back to base title.
+          // Project already once refreshed and still missing — use base title.
+          if (currentUpdateId !== updateIdRef.current) return;
           await getCurrentWindow().setTitle(baseTitle);
         }
       } catch (err) {

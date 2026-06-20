@@ -58,15 +58,17 @@ describe('useProjectStore', () => {
       expect(state.isLoading).toBe(false);
     });
 
-    it('should not reload if already initialized', async () => {
+    it('should reload even if already initialized', async () => {
       const { databaseService } = await import('@/services/database-service');
       vi.mocked(databaseService.getProjects).mockResolvedValue([]);
 
-      useProjectStore.setState({ isInitialized: true });
+      useProjectStore.setState({ isInitialized: true, isLoading: false });
 
       await useProjectStore.getState().loadProjects();
 
-      expect(databaseService.getProjects).not.toHaveBeenCalled();
+      // loadProjects now allows re-fetch when not currently loading,
+      // so it should call getProjects even if already initialized.
+      expect(databaseService.getProjects).toHaveBeenCalled();
     });
 
     it('should handle errors', async () => {
